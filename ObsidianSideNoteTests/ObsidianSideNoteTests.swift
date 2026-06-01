@@ -163,6 +163,18 @@ struct ObsidianSideNoteTests {
         #expect(components.queryItems?.contains(URLQueryItem(name: "silent", value: nil)) == true)
     }
 
+    @Test func ensureDailyURIUsesTemplateAwareDailyEndpoint() throws {
+        let url = try #require(ObsidianURIBuilder.ensureDaily(vaultName: "Personal Vault"))
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+
+        #expect(url.scheme == "obsidian")
+        #expect(url.host == "daily")
+        #expect(components.queryItems?.contains(URLQueryItem(name: "vault", value: "Personal Vault")) == true)
+        #expect(components.queryItems?.contains(URLQueryItem(name: "silent", value: nil)) == true)
+        #expect(components.queryItems?.contains(where: { $0.name == "content" }) == false)
+        #expect(components.queryItems?.contains(where: { $0.name == "append" }) == false)
+    }
+
     @Test func shortcutPreferencesStoreModifiersAndKey() {
         UserDefaults.standard.removeObject(forKey: ShortcutAction.newNote.preferenceKey)
         UserDefaults.standard.removeObject(forKey: ShortcutAction.newNote.modifierPreferenceKey)

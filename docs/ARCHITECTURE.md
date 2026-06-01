@@ -101,8 +101,9 @@ Edit Vault File mode:
 Append to Daily Note mode:
 
 1. The editor keeps a draft locally.
-2. The append action sends content to `obsidian://daily` with `append` and `silent`.
-3. The daily note is not opened as part of the append action.
+2. The append action first sends `obsidian://daily` with `silent` and no content. Obsidian creates the daily note through its Daily Notes plugin if it is missing, which preserves the configured folder, date format, and template.
+3. The app then sends content to `obsidian://daily` with `append` and `silent`.
+4. The daily note is not opened as part of the append action.
 
 ## Media Handling
 

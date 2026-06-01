@@ -70,6 +70,9 @@ struct ContentView: View {
         .onDisappear {
             removeSearchKeyMonitor()
         }
+        .onExitCommand {
+            closeWindow()
+        }
         .onChange(of: noteText) { oldValue, newValue in
             saveDraft()
             saveErrorMessage = nil
@@ -154,36 +157,38 @@ struct ContentView: View {
         guard !vaultName.isEmpty else { return }
         saveErrorMessage = nil
 
-        let url: URL?
-
         switch mode {
         case .appendDaily:
-            url = ObsidianURIBuilder.appendDaily(vaultName: vaultName, text: noteText)
+            appendToDailyNote()
+        case .newNote, .editVaultFile, .settings:
+            break
+        }
+    }
 
-        case .newNote:
-            return
+    private func appendToDailyNote() {
+        let textToAppend = noteText
 
-        case .editVaultFile:
-            return
-
-        case .settings:
-            return
+        if let createURL = ObsidianURIBuilder.ensureDaily(vaultName: vaultName) {
+            NSWorkspace.shared.open(createURL)
         }
 
-        if let url {
-            NSWorkspace.shared.open(url)
-        }
+        // Let Obsidian's Daily Notes plugin create the file and apply its template before appending.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            if let appendURL = ObsidianURIBuilder.appendDaily(vaultName: vaultName, text: textToAppend) {
+                NSWorkspace.shared.open(appendURL)
+            }
 
-        withAnimation(.spring(response: 0.3)) {
-            showSaveSuccess = true
-        }
+            withAnimation(.spring(response: 0.3)) {
+                showSaveSuccess = true
+            }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            noteText = ""
-            noteTitle = ""
-            showSaveSuccess = false
-            clearDraft()
-            closeWindow()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                noteText = ""
+                noteTitle = ""
+                showSaveSuccess = false
+                clearDraft()
+                closeWindow()
+            }
         }
     }
 

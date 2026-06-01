@@ -24,6 +24,7 @@ The app opens a small floating editor, supports focused global keyboard shortcut
 
 - Menu bar app: stays out of the Dock and is always available from the macOS menu bar.
 - Floating editor window: movable, compact, and visible above normal windows.
+- Escape to close: dismisses the active editor while keeping drafts recoverable.
 - Global keyboard shortcuts: Append, New Note, and Edit Vault File work even while another app is active.
 - Local app shortcuts: Settings and Quit stay local so they do not steal commands from apps such as Codex.
 - Shortcut recorder: click a shortcut in Settings, press a key combination, and the app stores it.
@@ -131,6 +132,10 @@ Shortcuts can be changed in Settings. Click the shortcut value on the right side
 Only Append to Daily Note, Create New Note, and Edit Vault File are registered globally. Settings is local-only and is handled only while Obsidian Side Note is active. Quit remains local to the app as well.
 
 Global note shortcuts default to `Control` + `Option` + `Command` plus the action key. The recorder rejects Command-only global shortcuts so the app does not steal common foreground-app commands such as New, Save, Quit, or Settings.
+
+### Daily Notes
+
+Before appending text, the app asks Obsidian to create or open today's daily note silently through the Daily Notes plugin. This preserves Obsidian's configured daily note folder, date format, and template. After that, the app appends your text silently.
 
 ### New Notes
 

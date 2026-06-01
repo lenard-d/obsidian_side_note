@@ -1,6 +1,13 @@
 import Foundation
 
 struct ObsidianURIBuilder {
+    static func ensureDaily(vaultName: String) -> URL? {
+        components(host: "daily", queryItems: [
+            URLQueryItem(name: "vault", value: vaultName),
+            URLQueryItem(name: "silent", value: nil)
+        ]).url
+    }
+
     static func appendDaily(vaultName: String, text: String) -> URL? {
         components(host: "daily", queryItems: [
             URLQueryItem(name: "vault", value: vaultName),
