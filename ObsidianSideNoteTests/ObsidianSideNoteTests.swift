@@ -164,10 +164,15 @@ struct ObsidianSideNoteTests {
     }
 
     @Test func shortcutPreferencesStoreModifiersAndKey() {
+        UserDefaults.standard.removeObject(forKey: ShortcutAction.newNote.preferenceKey)
+        UserDefaults.standard.removeObject(forKey: ShortcutAction.newNote.modifierPreferenceKey)
+
         defer {
             UserDefaults.standard.removeObject(forKey: ShortcutAction.newNote.preferenceKey)
             UserDefaults.standard.removeObject(forKey: ShortcutAction.newNote.modifierPreferenceKey)
         }
+
+        #expect(ShortcutPreference.definition(for: .newNote).modifiers == [.command, .option, .control])
 
         ShortcutPreference.set("c", modifiers: [.control, .option, .command], for: .newNote)
         let shortcut = ShortcutPreference.definition(for: .newNote)
@@ -196,6 +201,12 @@ struct ObsidianSideNoteTests {
     @Test func globalShortcutActionsExcludeLocalAppCommands() {
         #expect(ShortcutAction.globalActions == [.appendDaily, .newNote, .editVaultFile])
         #expect(!ShortcutAction.settings.isGlobal)
+    }
+
+    @Test func shortcutPolicyRejectsCommandOnlyGlobalShortcuts() {
+        #expect(ShortcutPolicy.validationMessage(for: .newNote, key: "n", modifiers: .command) != nil)
+        #expect(ShortcutPolicy.validationMessage(for: .newNote, key: "n", modifiers: [.command, .option]) == nil)
+        #expect(ShortcutPolicy.validationMessage(for: .settings, key: ",", modifiers: .command) == nil)
     }
 
     @Test func shortcutNormalizationKeepsSingleLowercaseKey() {

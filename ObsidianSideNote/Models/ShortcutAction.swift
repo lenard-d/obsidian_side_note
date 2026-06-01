@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 enum ShortcutAction: String, CaseIterable, Identifiable {
     case appendDaily
@@ -73,6 +73,15 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
             return "e"
         case .settings:
             return ","
+        }
+    }
+
+    var defaultModifiers: NSEvent.ModifierFlags {
+        switch self {
+        case .appendDaily, .newNote, .editVaultFile:
+            return [.command, .option, .control]
+        case .settings:
+            return .command
         }
     }
 

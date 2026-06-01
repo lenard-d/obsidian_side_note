@@ -53,9 +53,9 @@ The app opens a small floating editor, supports focused global keyboard shortcut
   <img src="screenshots/settings.png" alt="Settings" height="256">
 </p>
 
-## Logo Concepts
+## App Icon
 
-Four simple logo directions are available in [docs/assets/logo-concepts.png](docs/assets/logo-concepts.png). They are exploration assets only; the current app icon has not been replaced yet.
+The current app icon uses the top-left direction from [docs/assets/logo-concepts.png](docs/assets/logo-concepts.png): a simple Obsidian crystal plus note mark on a dark macOS-style tile.
 
 ## Requirements
 
@@ -129,6 +129,8 @@ The selected vault folder is stored with a security-scoped bookmark so the sandb
 Shortcuts can be changed in Settings. Click the shortcut value on the right side of a row, then press the full key combination you want to use.
 
 Only Append to Daily Note, Create New Note, and Edit Vault File are registered globally. Settings is local-only and is handled only while Obsidian Side Note is active. Quit remains local to the app as well.
+
+Global note shortcuts default to `Control` + `Option` + `Command` plus the action key. The recorder rejects Command-only global shortcuts so the app does not steal common foreground-app commands such as New, Save, Quit, or Settings.
 
 ### New Notes
 

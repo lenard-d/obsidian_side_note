@@ -15,7 +15,7 @@ struct ShortcutPreference {
     static func definition(for action: ShortcutAction) -> ShortcutDefinition {
         let storedKey = UserDefaults.standard.string(forKey: action.preferenceKey) ?? action.defaultKey
         let rawModifiers = UserDefaults.standard.integer(forKey: action.modifierPreferenceKey)
-        let modifiers = rawModifiers == 0 ? NSEvent.ModifierFlags.command : modifierFlags(from: rawModifiers)
+        let modifiers = rawModifiers == 0 ? action.defaultModifiers : modifierFlags(from: rawModifiers)
         return ShortcutDefinition(
             key: normalized(storedKey, fallback: action.defaultKey),
             modifiers: menuModifierFlags(from: modifiers)

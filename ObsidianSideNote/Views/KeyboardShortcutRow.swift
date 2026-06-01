@@ -6,6 +6,7 @@ struct KeyboardShortcutRow: View {
     @State private var shortcut: ShortcutDefinition
     @State private var isRecording = false
     @State private var eventMonitor: Any?
+    @State private var validationMessage: String?
 
     init(action: ShortcutAction) {
         self.action = action
@@ -23,6 +24,10 @@ struct KeyboardShortcutRow: View {
                     Text("Local only")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary.opacity(0.75))
+                } else if let validationMessage {
+                    Text(validationMessage)
+                        .font(.system(size: 10))
+                        .foregroundColor(.orange)
                 }
             }
 
@@ -71,6 +76,12 @@ struct KeyboardShortcutRow: View {
             }
 
             let key = ShortcutPreference.normalized(String(pressedKey), fallback: action.defaultKey)
+            if let message = ShortcutPolicy.validationMessage(for: action, key: key, modifiers: modifiers) {
+                validationMessage = message
+                return nil
+            }
+
+            validationMessage = nil
             shortcut = ShortcutDefinition(key: key, modifiers: modifiers)
             ShortcutPreference.set(key, modifiers: modifiers, for: action)
             stopRecording()

@@ -69,6 +69,8 @@ The app edits local Markdown files directly where possible. Obsidian URI is rese
 
 Only Append to Daily Note, Create New Note, and Edit Vault File are global. Settings and Quit are intentionally local to avoid stealing standard shortcuts from the foreground app.
 
+The global shortcut layer deliberately follows the pattern used by established launcher/menu-bar apps: globally trigger only explicit workflow commands, keep app-management commands local, store user choices in `UserDefaults`, and reject Command-only global shortcuts because they commonly collide with foreground-app menu commands.
+
 ## Views
 
 `Views/` contains SwiftUI surfaces:
