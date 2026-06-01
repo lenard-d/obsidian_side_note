@@ -140,6 +140,29 @@ struct ObsidianSideNoteTests {
         #expect(resolvedURL.path == temporaryVaultURL.appendingPathComponent("Attachments/Image.png").path)
     }
 
+    @Test func vaultStoreConfigurationReflectsSavedVault() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+        UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+        UserDefaults.standard.removeObject(forKey: "obsidianVault")
+
+        #expect(!VaultStore.isVaultConfigured)
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+
+        #expect(VaultStore.isVaultConfigured)
+        #expect(VaultStore.selectedVaultName == temporaryVaultURL.lastPathComponent)
+    }
+
     @Test func embeddedMediaParsesImagesAndVideos() throws {
         let image = try #require(EmbeddedMedia(markdownLine: "![Sketch](https://example.com/sketch.png)"))
         let video = try #require(EmbeddedMedia(markdownLine: "![Clip](Attachments/demo.mp4)"))

@@ -34,6 +34,10 @@ struct VaultStore {
             ?? ""
     }
 
+    static var isVaultConfigured: Bool {
+        selectedVaultURL != nil
+    }
+
     static func saveVaultURL(_ url: URL) {
         if let bookmarkData = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) {
             UserDefaults.standard.set(bookmarkData, forKey: bookmarkKey)
@@ -42,14 +46,14 @@ struct VaultStore {
         UserDefaults.standard.set(url.lastPathComponent, forKey: "obsidianVault")
     }
 
-    static func chooseVaultFolder() -> URL? {
+    static func chooseVaultFolder(message: String = "Choose your Obsidian vault folder.") -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
         panel.prompt = "Choose"
-        panel.message = "Choose your Obsidian vault folder."
+        panel.message = message
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return nil
