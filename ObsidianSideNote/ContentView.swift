@@ -318,8 +318,7 @@ struct ContentView: View {
     }
 
     private func insertMediaLink(_ relativePath: String) {
-        let escapedPath = relativePath.replacingOccurrences(of: ")", with: "%29")
-        let insertion = "![\(URL(fileURLWithPath: relativePath).deletingPathExtension().lastPathComponent)](\(escapedPath))"
+        let insertion = "![[\(relativePath)]]"
         if noteText.isEmpty || noteText.hasSuffix("\n") {
             noteText += insertion
         } else {

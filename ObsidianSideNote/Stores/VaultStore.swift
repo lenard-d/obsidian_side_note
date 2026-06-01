@@ -175,7 +175,7 @@ struct VaultStore {
             }
         }
 
-        let attachmentsURL = vaultURL.appendingPathComponent("Attachments", isDirectory: true)
+        let attachmentsURL = attachmentDirectoryURL(in: vaultURL)
         do {
             try FileManager.default.createDirectory(at: attachmentsURL, withIntermediateDirectories: true)
             let destinationURL = uniqueAttachmentURL(
@@ -185,7 +185,7 @@ struct VaultStore {
             )
             try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
             NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
-            return "Attachments/\(destinationURL.lastPathComponent)"
+            return vaultRelativePath(for: destinationURL, in: vaultURL)
         } catch {
             return nil
         }
@@ -206,13 +206,13 @@ struct VaultStore {
             }
         }
 
-        let attachmentsURL = vaultURL.appendingPathComponent("Attachments", isDirectory: true)
+        let attachmentsURL = attachmentDirectoryURL(in: vaultURL)
         do {
             try FileManager.default.createDirectory(at: attachmentsURL, withIntermediateDirectories: true)
             let destinationURL = uniqueAttachmentURL(in: attachmentsURL, baseName: suggestedName, fileExtension: "png")
             try pngData.write(to: destinationURL, options: .atomic)
             NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
-            return "Attachments/\(destinationURL.lastPathComponent)"
+            return vaultRelativePath(for: destinationURL, in: vaultURL)
         } catch {
             return nil
         }
@@ -225,7 +225,33 @@ struct VaultStore {
 
         guard let vaultURL = selectedVaultURL else { return nil }
         let cleanedPath = link.removingPercentEncoding ?? link
-        return vaultURL.appendingPathComponent(cleanedPath)
+        let directURL = vaultURL.appendingPathComponent(cleanedPath)
+        if FileManager.default.fileExists(atPath: directURL.path) {
+            return directURL
+        }
+
+        if let foundURL = findVaultFile(named: cleanedPath, in: vaultURL) {
+            return foundURL
+        }
+
+        if cleanedPath.contains("/") || !URL(fileURLWithPath: cleanedPath).pathExtension.isEmpty {
+            return directURL
+        }
+
+        return nil
+    }
+
+    static func url(forWikiLink link: String) -> URL? {
+        let target = wikiTarget(from: link)
+        if let url = url(forMarkdownLink: target) {
+            return url
+        }
+
+        guard URL(fileURLWithPath: target).pathExtension.isEmpty else {
+            return nil
+        }
+
+        return url(forMarkdownLink: "\(target).md")
     }
 
     private static func safeFileName(_ title: String) -> String {
@@ -236,6 +262,80 @@ struct VaultStore {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         return sanitized.isEmpty ? "Untitled" : sanitized
+    }
+
+    private static func attachmentDirectoryURL(in vaultURL: URL) -> URL {
+        guard let configuredPath = attachmentFolderPath(in: vaultURL), !configuredPath.isEmpty else {
+            return vaultURL
+        }
+
+        let normalizedPath = configuredPath
+            .replacingOccurrences(of: "\\", with: "/")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+        guard !normalizedPath.isEmpty, normalizedPath != "." else {
+            return vaultURL
+        }
+
+        return vaultURL.appendingPathComponent(normalizedPath, isDirectory: true)
+    }
+
+    private static func attachmentFolderPath(in vaultURL: URL) -> String? {
+        let configURL = vaultURL.appendingPathComponent(".obsidian/app.json")
+        guard let data = try? Data(contentsOf: configURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let path = object["attachmentFolderPath"] as? String else {
+            return nil
+        }
+
+        return path
+            .replacingOccurrences(of: #"^\./"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"^\.$"#, with: "", options: .regularExpression)
+    }
+
+    private static func vaultRelativePath(for fileURL: URL, in vaultURL: URL) -> String {
+        let vaultPath = vaultURL.standardizedFileURL.path
+        let filePath = fileURL.standardizedFileURL.path
+        guard filePath.hasPrefix(vaultPath + "/") else {
+            return fileURL.lastPathComponent
+        }
+
+        return String(filePath.dropFirst(vaultPath.count + 1))
+    }
+
+    private static func wikiTarget(from link: String) -> String {
+        let withoutAlias = link.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? link
+        return withoutAlias.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? withoutAlias
+    }
+
+    private static func findVaultFile(named target: String, in vaultURL: URL) -> URL? {
+        let decodedTarget = target.removingPercentEncoding ?? target
+        let targetFileName = URL(fileURLWithPath: decodedTarget).lastPathComponent.lowercased()
+        guard !targetFileName.isEmpty,
+              let enumerator = FileManager.default.enumerator(
+                at: vaultURL,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsPackageDescendants]
+              ) else {
+            return nil
+        }
+
+        for case let fileURL as URL in enumerator {
+            if fileURL.pathComponents.contains(".obsidian") || fileURL.pathComponents.contains(".trash") {
+                enumerator.skipDescendants()
+                continue
+            }
+
+            guard ((try? fileURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true),
+                  fileURL.lastPathComponent.lowercased() == targetFileName else {
+                continue
+            }
+
+            return fileURL
+        }
+
+        return nil
     }
 
     private static func uniqueAttachmentURL(in directoryURL: URL, baseName: String, fileExtension: String) -> URL {

@@ -140,6 +140,26 @@ struct ObsidianSideNoteTests {
         #expect(resolvedURL.path == temporaryVaultURL.appendingPathComponent("Attachments/Image.png").path)
     }
 
+    @Test func vaultStoreResolvesWikiLinksByFileName() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let nestedURL = temporaryVaultURL.appendingPathComponent("Notes", isDirectory: true)
+        try FileManager.default.createDirectory(at: nestedURL, withIntermediateDirectories: true)
+        let linkedURL = nestedURL.appendingPathComponent("Project Plan.md")
+        try "# Plan".write(to: linkedURL, atomically: true, encoding: .utf8)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let resolvedURL = try #require(VaultStore.url(forWikiLink: "Project Plan"))
+
+        #expect(resolvedURL.path == linkedURL.path)
+    }
+
     @Test func vaultStoreConfigurationReflectsSavedVault() throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -166,11 +186,17 @@ struct ObsidianSideNoteTests {
     @Test func embeddedMediaParsesImagesAndVideos() throws {
         let image = try #require(EmbeddedMedia(markdownLine: "![Sketch](https://example.com/sketch.png)"))
         let video = try #require(EmbeddedMedia(markdownLine: "![Clip](Attachments/demo.mp4)"))
+        let wikiImage = try #require(EmbeddedMedia(markdownLine: "![[Pasted Image.png]]"))
+        let wikiImageWithAlias = try #require(EmbeddedMedia(markdownLine: "![[assets/Pasted Image.png|Paste]]"))
 
         #expect(image.title == "Sketch")
         #expect(image.link == "https://example.com/sketch.png")
         #expect(video.title == "Clip")
         #expect(video.link == "Attachments/demo.mp4")
+        #expect(wikiImage.title == "Pasted Image")
+        #expect(wikiImage.link == "Pasted Image.png")
+        #expect(wikiImageWithAlias.title == "Paste")
+        #expect(wikiImageWithAlias.link == "assets/Pasted Image.png")
         #expect(EmbeddedMedia(markdownLine: "[Sketch](https://example.com/sketch.png)") == nil)
     }
 
@@ -200,9 +226,33 @@ struct ObsidianSideNoteTests {
         let relativePath = try #require(MediaAttachmentImporter.importFromPasteboard(pasteboard))
         let attachmentURL = temporaryVaultURL.appendingPathComponent(relativePath)
 
-        #expect(relativePath.hasPrefix("Attachments/"))
+        #expect(!relativePath.contains("Attachments/"))
         #expect(attachmentURL.pathExtension == "png")
         #expect(FileManager.default.fileExists(atPath: attachmentURL.path))
+    }
+
+    @Test func mediaImporterUsesConfiguredObsidianAttachmentFolder() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let obsidianConfigURL = temporaryVaultURL.appendingPathComponent(".obsidian", isDirectory: true)
+        try FileManager.default.createDirectory(at: obsidianConfigURL, withIntermediateDirectories: true)
+        try #"{"attachmentFolderPath":"./assets"}"#.write(
+            to: obsidianConfigURL.appendingPathComponent("app.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let relativePath = try #require(VaultStore.saveAttachmentImage(testImage()))
+
+        #expect(relativePath.hasPrefix("assets/"))
+        #expect(FileManager.default.fileExists(atPath: temporaryVaultURL.appendingPathComponent(relativePath).path))
     }
 
     @Test func appendDailyURIUsesSilentOfficialDailyEndpoint() throws {

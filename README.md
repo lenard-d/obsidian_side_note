@@ -41,8 +41,9 @@ The app opens a small floating editor, supports focused global keyboard shortcut
 - Autosave editing: selected vault files save on each editor change.
 - Markdown editing toolbar: bold, italic, strikethrough, links, lists, numbered lists, and tasks.
 - Markdown preview: render Markdown before or while editing.
-- Media embeds: render Markdown image/video embeds such as `![Title](url-or-relative-path)`.
-- Paste and drag media: pasted or dropped images and supported media files are copied into `Attachments/` and inserted as Markdown embeds.
+- Media embeds: render Markdown image/video embeds and Obsidian embeds such as `![[image.png]]`.
+- Wikilinks: render Obsidian-style links such as `[[Note]]` and `[[Note|Alias]]`.
+- Paste and drag media: pasted or dropped images and supported media files are copied into the vault attachment folder configured by Obsidian and inserted as Obsidian embeds.
 
 ## Screenshots
 
@@ -170,17 +171,28 @@ If the New Note window is already open and you choose `Create New Note` from the
 
 Changes autosave to the selected file. The open button next to the search field opens the selected note in Obsidian.
 
-### Media
+### Media And Wikilinks
 
-Markdown embeds are rendered in preview mode:
+Markdown and Obsidian embeds are rendered in preview mode:
 
 ```markdown
 ![Diagram](Attachments/diagram.png)
 ![Remote image](https://example.com/image.png)
 ![Demo video](Attachments/demo.mp4)
+![[Pasted Image.png]]
+![[assets/demo.mp4|Demo video]]
 ```
 
-Pasted images and supported dragged media files are copied into an `Attachments/` folder inside the selected vault and inserted as Markdown embeds. Plain text paste still behaves normally.
+Pasted images and supported dragged media files are copied into the attachment folder configured in Obsidian's vault settings and inserted as Obsidian embeds, for example `![[Pasted Image.png]]`. If the vault does not define a fixed attachment folder, the app stores the media at the vault root instead of assuming an `Attachments/` folder. Plain text paste still behaves normally.
+
+Wikilinks are also rendered:
+
+```markdown
+[[Project Plan]]
+[[Project Plan|Planning]]
+```
+
+Inline wikilinks open through Obsidian. Standalone wikilinks are shown as clickable note chips in the preview.
 
 Supported preview formats:
 
@@ -250,12 +262,13 @@ git diff --check
 - [ ] Window size preferences.
 - [ ] Multiple vault support.
 - [ ] Note templates.
-- [ ] Custom attachment folder preference.
 - [x] Custom global shortcuts.
 - [x] Local vault folder selection.
 - [x] Local vault search.
 - [x] Autosave editing.
 - [x] Media rendering and paste support.
+- [x] Obsidian attachment folder support.
+- [x] Wikilink rendering.
 
 ## Contributing
 
