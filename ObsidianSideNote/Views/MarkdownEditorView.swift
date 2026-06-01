@@ -1,12 +1,13 @@
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
 
 struct MarkdownEditorView: View {
     @Binding var text: String
     @FocusState.Binding var isFocused: Bool
     let insertMedia: (String) -> Void
     @State private var showPreview = false
+    @State private var isDropTargeted = false
+    @State private var pasteMonitor: Any?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -17,6 +18,25 @@ struct MarkdownEditorView: View {
                 preview
             } else {
                 editor
+            }
+        }
+        .onAppear {
+            installPasteMonitor()
+        }
+        .onDisappear {
+            removePasteMonitor()
+        }
+        .onDrop(
+            of: MediaAttachmentImporter.supportedDropTypes,
+            isTargeted: $isDropTargeted,
+            perform: handleDrop
+        )
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.accentColor, lineWidth: 2)
+                    .padding(8)
+                    .allowsHitTesting(false)
             }
         }
     }
@@ -73,7 +93,12 @@ struct MarkdownEditorView: View {
             .scrollContentBackground(.hidden)
             .padding(14)
             .background(Color(NSColor.textBackgroundColor).opacity(0.3))
-            .onPasteCommand(of: [.image, .fileURL, .movie]) { providers in
+            .onDrop(
+                of: MediaAttachmentImporter.supportedDropTypes,
+                isTargeted: $isDropTargeted,
+                perform: handleDrop
+            )
+            .onPasteCommand(of: MediaAttachmentImporter.supportedDropTypes) { providers in
                 handlePaste(providers)
             }
     }
@@ -95,51 +120,39 @@ struct MarkdownEditorView: View {
     }
 
     private func handlePaste(_ providers: [NSItemProvider]) {
-        for provider in providers {
-            if provider.canLoadObject(ofClass: NSImage.self) {
-                provider.loadObject(ofClass: NSImage.self) { object, _ in
-                    guard let image = object as? NSImage,
-                          let relativePath = VaultStore.saveAttachmentImage(image) else {
-                        return
-                    }
-
-                    DispatchQueue.main.async {
-                        insertMedia(relativePath)
-                    }
-                }
-                return
-            }
-
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                    let sourceURL: URL?
-                    if let url = item as? URL {
-                        sourceURL = url
-                    } else if let data = item as? Data,
-                              let url = URL(dataRepresentation: data, relativeTo: nil) {
-                        sourceURL = url
-                    } else {
-                        sourceURL = nil
-                    }
-
-                    guard let sourceURL,
-                          isSupportedMedia(sourceURL),
-                          let relativePath = VaultStore.copyAttachment(from: sourceURL) else {
-                        return
-                    }
-
-                    DispatchQueue.main.async {
-                        insertMedia(relativePath)
-                    }
-                }
-                return
+        MediaAttachmentImporter.importFirst(from: providers) { relativePath in
+            guard let relativePath else { return }
+            DispatchQueue.main.async {
+                insertMedia(relativePath)
             }
         }
     }
 
-    private func isSupportedMedia(_ url: URL) -> Bool {
-        let supportedExtensions = ["apng", "avif", "gif", "jpeg", "jpg", "m4v", "mov", "mp4", "png", "svg", "webp"]
-        return supportedExtensions.contains(url.pathExtension.lowercased())
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        handlePaste(providers)
+        return true
+    }
+
+    private func installPasteMonitor() {
+        guard pasteMonitor == nil else { return }
+        pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard isFocused,
+                  event.charactersIgnoringModifiers?.lowercased() == "v",
+                  ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == .command,
+                  let relativePath = MediaAttachmentImporter.importFromPasteboard() else {
+                return event
+            }
+
+            insertMedia(relativePath)
+            return nil
+        }
+    }
+
+    private func removePasteMonitor() {
+        if let pasteMonitor {
+            NSEvent.removeMonitor(pasteMonitor)
+            self.pasteMonitor = nil
+        }
     }
 }
 

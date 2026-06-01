@@ -151,6 +151,37 @@ struct ObsidianSideNoteTests {
         #expect(EmbeddedMedia(markdownLine: "[Sketch](https://example.com/sketch.png)") == nil)
     }
 
+    @Test func mediaImporterRecognizesSupportedImageAndVideoFiles() {
+        #expect(MediaAttachmentImporter.isSupportedMedia(URL(fileURLWithPath: "/tmp/paste.png")))
+        #expect(MediaAttachmentImporter.isSupportedMedia(URL(fileURLWithPath: "/tmp/drop.tiff")))
+        #expect(MediaAttachmentImporter.isSupportedMedia(URL(fileURLWithPath: "/tmp/clip.mov")))
+        #expect(!MediaAttachmentImporter.isSupportedMedia(URL(fileURLWithPath: "/tmp/readme.txt")))
+    }
+
+    @Test func mediaImporterSavesImageFromPasteboard() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name(UUID().uuidString))
+        pasteboard.clearContents()
+        #expect(pasteboard.writeObjects([testImage()]))
+
+        let relativePath = try #require(MediaAttachmentImporter.importFromPasteboard(pasteboard))
+        let attachmentURL = temporaryVaultURL.appendingPathComponent(relativePath)
+
+        #expect(relativePath.hasPrefix("Attachments/"))
+        #expect(attachmentURL.pathExtension == "png")
+        #expect(FileManager.default.fileExists(atPath: attachmentURL.path))
+    }
+
     @Test func appendDailyURIUsesSilentOfficialDailyEndpoint() throws {
         let url = try #require(ObsidianURIBuilder.appendDaily(vaultName: "Personal Vault", text: "Log entry"))
         let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
@@ -232,4 +263,13 @@ struct ObsidianSideNoteTests {
         #expect(ShortcutPreference.normalized("", fallback: "d") == "d")
     }
 
+}
+
+private func testImage() -> NSImage {
+    let image = NSImage(size: NSSize(width: 12, height: 12))
+    image.lockFocus()
+    NSColor.systemPurple.setFill()
+    NSBezierPath(rect: NSRect(x: 0, y: 0, width: 12, height: 12)).fill()
+    image.unlockFocus()
+    return image
 }

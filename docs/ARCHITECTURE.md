@@ -107,12 +107,13 @@ Append to Daily Note mode:
 
 ## Media Handling
 
-Paste handling lives in `MarkdownEditorView`.
+Paste and drag-and-drop handling live in `MarkdownEditorView` and are normalized by `MediaAttachmentImporter`.
 
 - Pasted images are converted to PNG.
-- Pasted media files are copied as-is when supported.
+- Pasted and dropped media files are copied as-is when supported.
 - Files are stored in `Attachments/` inside the selected vault.
 - The editor inserts a Markdown embed pointing at the vault-relative attachment path.
+- Plain text paste is left to the native text editor.
 
 Preview rendering lives in `RichMarkdownView`.
 
@@ -132,6 +133,7 @@ Preview rendering lives in `RichMarkdownView`.
 - Shortcut storage and hotkey mapping.
 - New Note resume interval.
 - Markdown media parsing.
+- Media attachment type detection.
 - Relative vault media URL resolution.
 
 Run:

@@ -41,7 +41,7 @@ The app opens a small floating editor, supports focused global keyboard shortcut
 - Markdown editing toolbar: bold, italic, strikethrough, links, lists, numbered lists, and tasks.
 - Markdown preview: render Markdown before or while editing.
 - Media embeds: render Markdown image/video embeds such as `![Title](url-or-relative-path)`.
-- Paste media: pasted images and supported media files are copied into `Attachments/` and inserted as Markdown embeds.
+- Paste and drag media: pasted or dropped images and supported media files are copied into `Attachments/` and inserted as Markdown embeds.
 
 ## Screenshots
 
@@ -164,7 +164,7 @@ Markdown embeds are rendered in preview mode:
 ![Demo video](Attachments/demo.mp4)
 ```
 
-Pasted images and supported media files are copied into an `Attachments/` folder inside the selected vault and inserted as Markdown embeds.
+Pasted images and supported dragged media files are copied into an `Attachments/` folder inside the selected vault and inserted as Markdown embeds. Plain text paste still behaves normally.
 
 Supported preview formats:
 
