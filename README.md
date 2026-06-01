@@ -69,11 +69,25 @@ The app uses SwiftUI, AppKit, Carbon global hotkeys, AVKit for video preview, an
 
 ## Installation
 
-There is not yet a packaged release installer in this repository. For now, build the app locally and copy the generated app bundle into `/Applications`.
+Download the latest `.dmg` from [GitHub Releases](https://github.com/lenard-d/obsidian_side_note/releases), open it, and drag `ObsidianSideNote.app` into `/Applications`.
 
-See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed build, install, and Login Items instructions.
+Current releases are signed for local distribution testing, but not yet Apple Developer ID notarized. On first launch, macOS may show a Gatekeeper warning saying Apple could not verify the app. To open it anyway:
 
-Quick local build:
+1. Open Finder and go to `/Applications`.
+2. Control-click `ObsidianSideNote.app`.
+3. Choose `Open`.
+4. Confirm `Open` in the macOS security dialog.
+
+If macOS still refuses to open the app after installing from the `.dmg`, remove the downloaded quarantine attribute:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/ObsidianSideNote.app
+open /Applications/ObsidianSideNote.app
+```
+
+See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed local build and Login Items instructions.
+
+Optional local build:
 
 ```bash
 xcodebuild \
