@@ -8,6 +8,12 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    static let globalActions: [ShortcutAction] = [
+        .appendDaily,
+        .newNote,
+        .editVaultFile
+    ]
+
     var hotKeyID: Int {
         switch self {
         case .appendDaily:
@@ -72,5 +78,9 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
 
     var shortcut: ShortcutDefinition {
         ShortcutPreference.definition(for: self)
+    }
+
+    var isGlobal: Bool {
+        Self.globalActions.contains(self)
     }
 }

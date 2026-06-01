@@ -2,7 +2,7 @@
 
 Obsidian Side Note is a lightweight macOS menu bar app for capturing and editing Markdown notes in an Obsidian vault without switching away from your current workspace.
 
-The app opens a small floating editor, supports global keyboard shortcuts, can append to the Obsidian daily note, creates local Markdown files with autosave, and can search and edit existing vault files directly.
+The app opens a small floating editor, supports focused global keyboard shortcuts for note workflows, can append to the Obsidian daily note, creates local Markdown files with autosave, and can search and edit existing vault files directly.
 
 > Attribution: this project is based on the original Obsidian Side Note app by Luke Smith. Original repository: [lukesmith96/obsidian_side_note](https://github.com/lukesmith96/obsidian_side_note).
 
@@ -24,7 +24,8 @@ The app opens a small floating editor, supports global keyboard shortcuts, can a
 
 - Menu bar app: stays out of the Dock and is always available from the macOS menu bar.
 - Floating editor window: movable, compact, and visible above normal windows.
-- Global keyboard shortcuts: configurable shortcuts work even while another app is active.
+- Global keyboard shortcuts: Append, New Note, and Edit Vault File work even while another app is active.
+- Local app shortcuts: Settings and Quit stay local so they do not steal commands from apps such as Codex.
 - Shortcut recorder: click a shortcut in Settings, press a key combination, and the app stores it.
 - Vault folder picker: select the Obsidian vault from Finder instead of typing its name manually.
 - Append to Daily Note: sends content to Obsidian's daily note endpoint silently.
@@ -51,6 +52,10 @@ The app opens a small floating editor, supports global keyboard shortcuts, can a
   <img src="screenshots/full_view_markdown.png" alt="Markdown preview" height="256">
   <img src="screenshots/settings.png" alt="Settings" height="256">
 </p>
+
+## Logo Concepts
+
+Four simple logo directions are available in [docs/assets/logo-concepts.png](docs/assets/logo-concepts.png). They are exploration assets only; the current app icon has not been replaced yet.
 
 ## Requirements
 
@@ -122,6 +127,8 @@ The selected vault folder is stored with a security-scoped bookmark so the sandb
 - `Command-Q`: Quit.
 
 Shortcuts can be changed in Settings. Click the shortcut value on the right side of a row, then press the full key combination you want to use.
+
+Only Append to Daily Note, Create New Note, and Edit Vault File are registered globally. Settings is local-only and is handled only while Obsidian Side Note is active. Quit remains local to the app as well.
 
 ### New Notes
 

@@ -63,14 +63,16 @@ After the next login, macOS launches the menu bar app automatically. The app run
 2. Click the menu bar icon.
 3. Choose `Settings`.
 4. Click `Choose...` and select your Obsidian vault folder.
-5. Confirm or change the global shortcuts.
+5. Confirm or change the shortcuts.
 6. Choose the New Note resume interval.
 
 ## Permissions
 
 The app is sandboxed and uses a security-scoped bookmark for the selected vault folder. Selecting the vault once in Settings grants persistent read/write access to that folder.
 
-Global keyboard shortcuts are registered through macOS hotkey APIs. If a shortcut does not fire, check whether another app already owns the same key combination and choose a different shortcut in Settings.
+Global keyboard shortcuts are registered through macOS hotkey APIs for Append to Daily Note, Create New Note, and Edit Vault File. Settings and Quit are local-only so they do not override shortcuts in the app you are currently using.
+
+If a global shortcut does not fire, check whether another app already owns the same key combination and choose a different shortcut in Settings.
 
 ## Updating the App
 

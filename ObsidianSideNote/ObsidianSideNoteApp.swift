@@ -29,6 +29,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsMenuItem: NSMenuItem?
     private var hotKeyManager: GlobalHotKeyManager?
     private var currentMode: NoteMode?
+    private var localShortcutMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         hotKeyManager = GlobalHotKeyManager { [weak self] action in
@@ -83,6 +84,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             name: .shortcutPreferencesDidChange,
             object: nil
         )
+
+        installLocalShortcutMonitor()
     }
 
     @objc func openAppendToDaily() {
@@ -217,7 +220,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .editVaultFile:
             openEditVaultFile()
         case .settings:
-            openSettings()
+            break
         }
     }
 
@@ -236,7 +239,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appendMenuItem?.applyShortcut(.appendDaily)
         newNoteMenuItem?.applyShortcut(.newNote)
         editFileMenuItem?.applyShortcut(.editVaultFile)
-        settingsMenuItem?.applyShortcut(.settings)
+        settingsMenuItem?.keyEquivalent = ""
+        settingsMenuItem?.keyEquivalentModifierMask = []
         hotKeyManager?.registerAll()
+    }
+
+    private func installLocalShortcutMonitor() {
+        localShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard NSApp.isActive else { return event }
+
+            if self?.matches(event, action: .settings) == true {
+                self?.openSettings()
+                return nil
+            }
+
+            if event.charactersIgnoringModifiers?.lowercased() == "q",
+               ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == .command {
+                NSApp.terminate(nil)
+                return nil
+            }
+
+            return event
+        }
+    }
+
+    private func matches(_ event: NSEvent, action: ShortcutAction) -> Bool {
+        let shortcut = action.shortcut
+        return ShortcutPreference.normalized(event.charactersIgnoringModifiers ?? "") == shortcut.key
+            && ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == shortcut.modifiers
     }
 }

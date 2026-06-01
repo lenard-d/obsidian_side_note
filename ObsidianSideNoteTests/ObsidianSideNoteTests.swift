@@ -193,6 +193,11 @@ struct ObsidianSideNoteTests {
         #expect(GlobalHotKeyManager.keyCode(for: "C") == 8)
     }
 
+    @Test func globalShortcutActionsExcludeLocalAppCommands() {
+        #expect(ShortcutAction.globalActions == [.appendDaily, .newNote, .editVaultFile])
+        #expect(!ShortcutAction.settings.isGlobal)
+    }
+
     @Test func shortcutNormalizationKeepsSingleLowercaseKey() {
         #expect(ShortcutPreference.normalized(" N ") == "n")
         #expect(ShortcutPreference.normalized("", fallback: "d") == "d")

@@ -31,7 +31,8 @@ The `AppDelegate` owns:
 - `NSStatusItem` menu-bar lifecycle.
 - Menu item creation.
 - Window creation and reuse.
-- Global shortcut dispatch.
+- Global shortcut dispatch for note workflows.
+- Local shortcut dispatch for Settings and Quit while the app is active.
 - New Note resume-versus-force-new behavior.
 
 The app uses a borderless `FloatingWindow` so the editor can stay compact, become key, and float above normal app windows.
@@ -61,10 +62,12 @@ Store types are static because the app currently has a single active vault and a
 
 `Services/` contains integrations that are not UI views:
 
-- `GlobalHotKeyManager`: registers configured shortcuts as global Carbon hotkeys.
+- `GlobalHotKeyManager`: registers configured note-workflow shortcuts as global Carbon hotkeys.
 - `ObsidianURIBuilder`: builds Obsidian URIs for Daily Note append and opening files in Obsidian.
 
 The app edits local Markdown files directly where possible. Obsidian URI is reserved for workflows that need Obsidian itself, such as appending to the daily note or opening a selected note.
+
+Only Append to Daily Note, Create New Note, and Edit Vault File are global. Settings and Quit are intentionally local to avoid stealing standard shortcuts from the foreground app.
 
 ## Views
 

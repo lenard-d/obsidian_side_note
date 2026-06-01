@@ -14,9 +14,17 @@ struct KeyboardShortcutRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(action.title)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(action.title)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+
+                if !action.isGlobal {
+                    Text("Local only")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary.opacity(0.75))
+                }
+            }
 
             Spacer()
 

@@ -21,14 +21,14 @@ final class GlobalHotKeyManager {
     func registerAll() {
         unregisterAll()
 
-        for action in ShortcutAction.allCases {
+        for action in ShortcutAction.globalActions {
             let shortcut = ShortcutPreference.definition(for: action)
             guard let keyCode = GlobalHotKeyManager.keyCode(for: shortcut.key) else {
                 continue
             }
 
             var hotKeyRef: EventHotKeyRef?
-            var hotKeyID = EventHotKeyID(
+            let hotKeyID = EventHotKeyID(
                 signature: GlobalHotKeyManager.signature,
                 id: UInt32(action.hotKeyID)
             )
