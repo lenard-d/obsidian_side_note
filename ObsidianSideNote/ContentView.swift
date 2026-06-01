@@ -7,95 +7,50 @@
 
 import SwiftUI
 import AppKit
-import MarkdownUI
 
 struct ContentView: View {
     let mode: NoteMode
     let closeWindow: () -> Void
-    
+
     @State private var noteText: String = ""
     @State private var noteTitle: String = ""
-    @State private var vaultName: String = UserDefaults.standard.string(forKey: "obsidianVault") ?? ""
+    @State private var vaultSearchQuery: String = ""
+    @State private var vaultName: String = VaultStore.selectedVaultName
+    @State private var vaultPath: String = UserDefaults.standard.string(forKey: VaultStore.pathKey) ?? ""
+    @State private var searchResults: [VaultNote] = []
+    @State private var selectedNote: VaultNote?
+    @State private var createdNewNote: VaultNote?
+    @State private var highlightedSearchIndex: Int = 0
+    @State private var searchKeyMonitor: Any?
+    @State private var isLoadingNote: Bool = false
     @State private var showSaveSuccess: Bool = false
+    @State private var saveErrorMessage: String?
     @FocusState private var isTextEditorFocused: Bool
-    
+    @FocusState private var isVaultSearchFocused: Bool
+
     var body: some View {
         VStack(spacing: 0) {
             if mode == .settings {
-                SettingsView(vaultName: $vaultName, closeWindow: closeWindow)
+                SettingsView(vaultName: $vaultName, vaultPath: $vaultPath, closeWindow: closeWindow)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                // Note taking interface
                 VStack(spacing: 0) {
-                    // Compact header with title
-                    if mode == .newNote {
-                        VStack(spacing: 0) {
-                            TextField("Title", text: $noteTitle)
-                                .textFieldStyle(.plain)
-                                .font(.system(size: 16, weight: .semibold))
-                                .padding(.horizontal, 16)
-                                .padding(.top, 16)
-                                .padding(.bottom, 12)
-                            
-                            Divider()
-                        }
-                        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                    header
+                    MarkdownEditorView(
+                        text: $noteText,
+                        isFocused: $isTextEditorFocused,
+                        insertMedia: insertMediaLink
+                    )
+
+                    if mode == .appendDaily {
+                        SaveActionBar(
+                            mode: mode,
+                            isSaveDisabled: isSaveDisabled,
+                            showSaveSuccess: showSaveSuccess,
+                            saveErrorMessage: saveErrorMessage,
+                            save: saveNote
+                        )
                     }
-                    
-                    // Markdown editor
-                    MarkdownEditorView(text: $noteText, isFocused: $isTextEditorFocused)
-                    
-                    // Bottom action bar
-                    HStack(spacing: 12) {
-                        Button(action: saveNote) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.down.circle.fill")
-                                Text("Save to Obsidian")
-                                    .font(.system(size: 13, weight: .medium))
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.accentColor)
-                            .cornerRadius(6)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(vaultName.isEmpty || noteText.isEmpty)
-                        .opacity(vaultName.isEmpty || noteText.isEmpty ? 0.5 : 1.0)
-                        
-                        Spacer()
-                        
-                        if showSaveSuccess {
-                            HStack(spacing: 4) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.green)
-                                Text("Saved!")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.secondary)
-                            }
-                            .transition(.scale.combined(with: .opacity))
-                        }
-                        
-                        Button(action: {
-                            noteText = ""
-                            noteTitle = ""
-                        }) {
-                            Image(systemName: "trash")
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Clear")
-                        
-                        Button(action: closeWindow) {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Close")
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
                 }
             }
         }
@@ -104,287 +59,280 @@ struct ContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .onAppear {
             if mode != .settings {
+                loadDraft()
+                refreshSearchResults()
                 DispatchQueue.main.asyncAfter(deadline: .now()) {
                     isTextEditorFocused = true
-                    }
+                }
+                installSearchKeyMonitor()
+            }
+        }
+        .onDisappear {
+            removeSearchKeyMonitor()
+        }
+        .onChange(of: noteText) { oldValue, newValue in
+            saveDraft()
+            saveErrorMessage = nil
+            autosaveSelectedNote()
+            autosaveNewNote()
+        }
+        .onChange(of: noteTitle) { oldValue, newValue in
+            saveDraft()
+        }
+        .onChange(of: vaultSearchQuery) { oldValue, newValue in
+            if mode == .editVaultFile {
+                UserDefaults.standard.set(newValue, forKey: "draft.editVaultFile.search")
+                refreshSearchResults()
             }
         }
     }
-    
-    private var titleText: String {
+
+    private var header: some View {
+        VStack(spacing: 0) {
+            NoteEditorHeader(mode: mode, closeWindow: closeWindow)
+
+            if mode == .newNote {
+                TextField("Title", text: $noteTitle)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 15, weight: .semibold))
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+            }
+
+            if mode == .editVaultFile {
+                VaultSearchPanel(
+                    query: $vaultSearchQuery,
+                    selectedNote: $selectedNote,
+                    highlightedIndex: $highlightedSearchIndex,
+                    isSearchFocused: $isVaultSearchFocused,
+                    vaultName: vaultName,
+                    filePath: noteTitle,
+                    results: searchResults,
+                    showsSuggestions: shouldShowSearchSuggestions,
+                    openInObsidian: openVaultFile,
+                    selectNote: selectNote
+                )
+            }
+
+            if shouldShowMissingVaultPrompt {
+                MissingVaultPrompt()
+            }
+
+            Divider()
+        }
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+    }
+
+    private var isSaveDisabled: Bool {
         switch mode {
         case .appendDaily:
-            return "Append to Daily Note"
-        case .newNote:
-            return "Create New Note"
-        case .settings:
-            return "Settings"
+            return vaultName.isEmpty || noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .newNote, .editVaultFile, .settings:
+            return true
         }
     }
-    
-    private func saveNote() {
-        guard !vaultName.isEmpty else { return }
-        
-        var urlString = "obsidian://adv-uri?vault=\(vaultName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
-        
+
+    private var shouldShowSearchSuggestions: Bool {
+        mode == .editVaultFile
+            && isVaultSearchFocused
+            && !vaultSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && selectedNote?.relativePath != vaultSearchQuery
+    }
+
+    private var shouldShowMissingVaultPrompt: Bool {
         switch mode {
         case .appendDaily:
-            urlString += "&daily=true"
-            urlString += "&mode=append"
-            urlString += "&data=\(("\n\n" + noteText).addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
-            
+            return vaultName.isEmpty
+        case .newNote, .editVaultFile:
+            return vaultPath.isEmpty
+        case .settings:
+            return false
+        }
+    }
+
+    private func saveNote() {
+        guard !vaultName.isEmpty else { return }
+        saveErrorMessage = nil
+
+        let url: URL?
+
+        switch mode {
+        case .appendDaily:
+            url = ObsidianURIBuilder.appendDaily(vaultName: vaultName, text: noteText)
+
         case .newNote:
-            let filename = noteTitle.isEmpty ? "Quick Note \(dateString())" : noteTitle
-            urlString += "&filename=\(filename.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
-            urlString += "&data=\(noteText.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
-            
+            return
+
+        case .editVaultFile:
+            return
+
         case .settings:
             return
         }
-        
-        if let url = URL(string: urlString) {
+
+        if let url {
             NSWorkspace.shared.open(url)
-            
-            withAnimation(.spring(response: 0.3)) {
-                showSaveSuccess = true
+        }
+
+        withAnimation(.spring(response: 0.3)) {
+            showSaveSuccess = true
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            noteText = ""
+            noteTitle = ""
+            showSaveSuccess = false
+            clearDraft()
+            closeWindow()
+        }
+    }
+
+    private func openVaultFile() {
+        let filePath = selectedNote?.relativePath ?? noteTitle
+        guard !vaultName.isEmpty, !filePath.isEmpty else { return }
+        if let url = ObsidianURIBuilder.openFile(vaultName: vaultName, filePath: filePath) {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func loadDraft() {
+        noteText = UserDefaults.standard.string(forKey: mode.draftTextKey) ?? ""
+        noteTitle = UserDefaults.standard.string(forKey: mode.draftTitleKey) ?? ""
+        vaultSearchQuery = UserDefaults.standard.string(forKey: "draft.editVaultFile.search") ?? ""
+        vaultName = VaultStore.selectedVaultName
+        vaultPath = UserDefaults.standard.string(forKey: VaultStore.pathKey) ?? ""
+
+        if mode == .newNote,
+           let relativePath = UserDefaults.standard.string(forKey: NewNotePreferences.draftFilePathKey) {
+            createdNewNote = VaultStore.note(relativePath: relativePath)
+        }
+    }
+
+    private func saveDraft() {
+        guard mode != .settings else { return }
+        UserDefaults.standard.set(noteText, forKey: mode.draftTextKey)
+        if !mode.draftTitleKey.isEmpty {
+            UserDefaults.standard.set(noteTitle, forKey: mode.draftTitleKey)
+        }
+    }
+
+    private func refreshSearchResults() {
+        guard mode == .editVaultFile else { return }
+        searchResults = VaultStore.markdownNotes(matching: vaultSearchQuery)
+        highlightedSearchIndex = min(highlightedSearchIndex, max(searchResults.prefix(8).count - 1, 0))
+        if let selectedNote, !searchResults.contains(selectedNote) {
+            self.selectedNote = nil
+        }
+    }
+
+    private func selectNote(_ note: VaultNote) {
+        isLoadingNote = true
+        selectedNote = note
+        noteTitle = note.relativePath
+        noteText = VaultStore.read(note)
+        vaultSearchQuery = note.relativePath
+        isVaultSearchFocused = false
+        isLoadingNote = false
+    }
+
+    private func selectHighlightedSearchResult() {
+        let visibleResults = Array(searchResults.prefix(8))
+        guard !visibleResults.isEmpty else { return }
+        let index = min(max(highlightedSearchIndex, 0), visibleResults.count - 1)
+        selectNote(visibleResults[index])
+    }
+
+    private func installSearchKeyMonitor() {
+        guard mode == .editVaultFile, searchKeyMonitor == nil else { return }
+        searchKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard shouldShowSearchSuggestions else {
+                return event
             }
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                noteText = ""
-                noteTitle = ""
-                showSaveSuccess = false
-                closeWindow()
+
+            let visibleCount = searchResults.prefix(8).count
+            guard visibleCount > 0 else {
+                return event
+            }
+
+            switch event.keyCode {
+            case 125:
+                highlightedSearchIndex = min(highlightedSearchIndex + 1, visibleCount - 1)
+                return nil
+            case 126:
+                highlightedSearchIndex = max(highlightedSearchIndex - 1, 0)
+                return nil
+            case 36, 48:
+                selectHighlightedSearchResult()
+                return nil
+            default:
+                return event
             }
         }
     }
-    
+
+    private func removeSearchKeyMonitor() {
+        if let searchKeyMonitor {
+            NSEvent.removeMonitor(searchKeyMonitor)
+            self.searchKeyMonitor = nil
+        }
+    }
+
+    private func autosaveSelectedNote() {
+        guard mode == .editVaultFile, !isLoadingNote, let selectedNote else { return }
+        VaultStore.write(noteText, to: selectedNote)
+    }
+
+    private func autosaveNewNote() {
+        guard mode == .newNote else { return }
+        let trimmedText = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmedText.isEmpty else {
+            if let createdNewNote {
+                VaultStore.write(noteText, to: createdNewNote)
+            } else {
+                UserDefaults.standard.removeObject(forKey: NewNotePreferences.draftFilePathKey)
+            }
+            return
+        }
+
+        if let createdNewNote {
+            VaultStore.write(noteText, to: createdNewNote)
+            return
+        }
+
+        guard let note = VaultStore.createOrUpdateNote(title: noteTitle, text: noteText, fallbackDate: dateString()) else {
+            saveErrorMessage = "Could not create note in selected vault."
+            return
+        }
+
+        createdNewNote = note
+        UserDefaults.standard.set(note.relativePath, forKey: NewNotePreferences.draftFilePathKey)
+    }
+
+    private func insertMediaLink(_ relativePath: String) {
+        let escapedPath = relativePath.replacingOccurrences(of: ")", with: "%29")
+        let insertion = "![\(URL(fileURLWithPath: relativePath).deletingPathExtension().lastPathComponent)](\(escapedPath))"
+        if noteText.isEmpty || noteText.hasSuffix("\n") {
+            noteText += insertion
+        } else {
+            noteText += "\n\(insertion)"
+        }
+    }
+
+    private func clearDraft() {
+        UserDefaults.standard.removeObject(forKey: mode.draftTextKey)
+        if !mode.draftTitleKey.isEmpty {
+            UserDefaults.standard.removeObject(forKey: mode.draftTitleKey)
+        }
+        if mode == .newNote {
+            UserDefaults.standard.removeObject(forKey: NewNotePreferences.draftFilePathKey)
+        }
+    }
+
     private func dateString() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH-mm"
         return formatter.string(from: Date())
-    }
-}
-
-struct SettingsView: View {
-    @Binding var vaultName: String
-    let closeWindow: () -> Void
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Settings")
-                    .font(.system(size: 18, weight: .semibold))
-                Spacer()
-                Button(action: closeWindow) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(16)
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
-            
-            Divider()
-            
-            // Content
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Obsidian Vault")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.secondary)
-                        
-                        TextField("vault-name", text: $vaultName)
-                            .textFieldStyle(.roundedBorder)
-                            .onChange(of: vaultName) { oldValue, newValue in
-                                UserDefaults.standard.set(newValue, forKey: "obsidianVault")
-                            }
-                        
-                        Text("Enter the exact name of your Obsidian vault")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Divider()
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Keyboard Shortcuts")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.secondary)
-                        
-                        KeyboardShortcutRow(key: "⌘D", description: "Append to Daily Note")
-                        KeyboardShortcutRow(key: "⌘N", description: "Create New Note")
-                        KeyboardShortcutRow(key: "⌘,", description: "Settings")
-                    }
-                }
-                .padding(16)
-            }
-            .background(Color(NSColor.textBackgroundColor).opacity(0.5))
-        }
-        .background(VisualEffectView(material: .sidebar, blendingMode: .behindWindow))
-        .clipShape(RoundedRectangle(cornerRadius: 12)) 
-    }
-}
-
-struct KeyboardShortcutRow: View {
-    let key: String
-    let description: String
-    
-    var body: some View {
-        HStack {
-            Text(key)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color(NSColor.controlBackgroundColor))
-                .cornerRadius(4)
-            
-            Text(description)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-            
-            Spacer()
-        }
-    }
-}
-
-struct MarkdownEditorView: View {
-    @Binding var text: String
-    @FocusState.Binding var isFocused: Bool
-    @State private var showPreview: Bool = false
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            // Toolbar with frosted glass effect
-            HStack(spacing: 0) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        MarkdownButton(symbol: "bold", action: { wrapSelection("**") }, tooltip: "Bold")
-                        MarkdownButton(symbol: "italic", action: { wrapSelection("*") }, tooltip: "Italic")
-                        MarkdownButton(symbol: "strikethrough", action: { wrapSelection("~~") }, tooltip: "Strikethrough")
-                        
-                        Divider()
-                            .frame(height: 16)
-                        
-                        MarkdownButton(symbol: "link", action: { insertLink() }, tooltip: "Link")
-                        MarkdownButton(symbol: "list.bullet", action: { insertPrefix("- ") }, tooltip: "Bullet List")
-                        MarkdownButton(symbol: "list.number", action: { insertPrefix("1. ") }, tooltip: "Numbered List")
-                        MarkdownButton(symbol: "checkmark.square", action: { insertPrefix("- [ ] ") }, tooltip: "Task List")
-                    }
-                    .padding(.vertical, 8)
-                }
-                .padding(.leading, 12)
-                
-                Spacer()
-                
-                Toggle(isOn: $showPreview) {
-                    Image(systemName: showPreview ? "pencil" : "eye")
-                        .foregroundColor(.secondary)
-                }
-                .toggleStyle(.button)
-                .buttonStyle(.plain)
-                .help(showPreview ? "Edit" : "Preview")
-                .padding(.trailing, 12)
-                .padding(.vertical, 8)
-            }
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
-            
-            Divider()
-            
-            // Editor or Preview
-            if showPreview {
-                ScrollView {
-                    Markdown(text)
-                        .markdownTextStyle(\.text) {
-                            FontSize(16)
-                            ForegroundColor(.primary)
-                        }
-                        .markdownTextStyle(\.code) {
-                            FontFamilyVariant(.monospaced)
-                            FontSize(14)
-                            BackgroundColor(Color(NSColor.controlBackgroundColor).opacity(0.5))
-                        }
-                        .markdownBlockStyle(\.codeBlock) { configuration in
-                            configuration.label
-                                .padding()
-                                .markdownTextStyle {
-                                    FontFamilyVariant(.monospaced)
-                                    FontSize(14)
-                                }
-                                .background(Color(NSColor.controlBackgroundColor).opacity(0.3))
-                                .cornerRadius(8)
-                        }
-                        .markdownBlockStyle(\.taskListMarker) { configuration in
-                            Image(systemName: configuration.isCompleted ? "checkmark.square.fill" : "square")
-                                .foregroundColor(configuration.isCompleted ? .green : .secondary)
-                        }
-                        .padding(16)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(NSColor.textBackgroundColor).opacity(0.3))
-            } else {
-                TextEditor(text: $text)
-                    .font(.system(size: 16))
-                    .focused($isFocused)
-                    .scrollContentBackground(.hidden)
-                    .padding(14)
-                    .background(Color(NSColor.textBackgroundColor).opacity(0.3))
-            }
-        }
-    }
-    
-    private func wrapSelection(_ wrapper: String) {
-        text += "\(wrapper)text\(wrapper)"
-    }
-    
-    private func insertLink() {
-        text += "[link text](url)"
-    }
-    
-    private func insertPrefix(_ prefix: String) {
-        if text.isEmpty || text.hasSuffix("\n") {
-            text += prefix
-        } else {
-            text += "\n\(prefix)"
-        }
-    }
-}
-
-struct MarkdownButton: View {
-    let symbol: String
-    let action: () -> Void
-    let tooltip: String
-    
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .foregroundColor(.secondary)
-                .frame(width: 24, height: 24)
-        }
-        .buttonStyle(.plain)
-        .help(tooltip)
-    }
-}
-
-// Visual Effect View for frosted glass background
-struct VisualEffectView: NSViewRepresentable {
-    let material: NSVisualEffectView.Material
-    let blendingMode: NSVisualEffectView.BlendingMode
-    
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blendingMode
-        view.state = .active
-        return view
-    }
-    
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = material
-        nsView.blendingMode = blendingMode
     }
 }
 
