@@ -70,7 +70,7 @@ After the next login, macOS launches the menu bar app automatically. The app run
 
 The app is sandboxed and uses a security-scoped bookmark for the selected vault folder. Selecting the vault once in Settings grants persistent read/write access to that folder.
 
-Global keyboard shortcuts are registered through macOS hotkey APIs for Append to Daily Note, Create New Note, and Edit Vault File. Their defaults use `Control` + `Option` + `Command` with the action key to avoid normal app shortcuts.
+Global keyboard shortcuts are registered through macOS hotkey APIs for Append to Daily Note, Create New Note, and Edit Vault File. Their defaults are `Control` + `Option` + `Command` + `D`, `N`, and `V` to avoid normal app shortcuts.
 
 Settings and Quit are local-only so they do not override shortcuts in the app you are currently using. The shortcut recorder rejects Command-only global shortcuts for the same reason.
 

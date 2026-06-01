@@ -70,7 +70,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .newNote:
             return "n"
         case .editVaultFile:
-            return "e"
+            return "v"
         case .settings:
             return ","
         }

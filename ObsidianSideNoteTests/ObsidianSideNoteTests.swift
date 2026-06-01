@@ -193,7 +193,7 @@ struct ObsidianSideNoteTests {
     @Test func globalHotKeyMappingSupportsDefaultAndRecordedKeys() {
         #expect(GlobalHotKeyManager.keyCode(for: "d") == 2)
         #expect(GlobalHotKeyManager.keyCode(for: "n") == 45)
-        #expect(GlobalHotKeyManager.keyCode(for: "e") == 14)
+        #expect(GlobalHotKeyManager.keyCode(for: "v") == 9)
         #expect(GlobalHotKeyManager.keyCode(for: ",") == 43)
         #expect(GlobalHotKeyManager.keyCode(for: "C") == 8)
     }
@@ -201,6 +201,12 @@ struct ObsidianSideNoteTests {
     @Test func globalShortcutActionsExcludeLocalAppCommands() {
         #expect(ShortcutAction.globalActions == [.appendDaily, .newNote, .editVaultFile])
         #expect(!ShortcutAction.settings.isGlobal)
+    }
+
+    @Test func globalShortcutsUseRequestedDefaultKeys() {
+        #expect(ShortcutAction.newNote.defaultKey == "n")
+        #expect(ShortcutAction.appendDaily.defaultKey == "d")
+        #expect(ShortcutAction.editVaultFile.defaultKey == "v")
     }
 
     @Test func shortcutPolicyRejectsCommandOnlyGlobalShortcuts() {

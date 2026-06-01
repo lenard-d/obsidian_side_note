@@ -120,9 +120,9 @@ The selected vault folder is stored with a security-scoped bookmark so the sandb
 
 ### Default Shortcuts
 
-- `Command-D`: Append to Daily Note.
-- `Command-N`: Create New Note.
-- `Command-E`: Edit Vault File.
+- `Control-Option-Command-D`: Append to Daily Note.
+- `Control-Option-Command-N`: Create New Note.
+- `Control-Option-Command-V`: Edit Vault File.
 - `Command-,`: Settings.
 - `Command-Q`: Quit.
 
