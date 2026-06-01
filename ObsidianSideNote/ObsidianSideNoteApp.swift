@@ -86,7 +86,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         installLocalShortcutMonitor()
-        promptForVaultOnFirstLaunchIfNeeded()
+        openSetupOnFirstLaunchIfNeeded()
     }
 
     @objc func openAppendToDaily() {
@@ -132,20 +132,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         showWindow()
     }
 
-    private func promptForVaultOnFirstLaunchIfNeeded() {
+    private func openSetupOnFirstLaunchIfNeeded() {
         guard !VaultStore.isVaultConfigured else { return }
 
         DispatchQueue.main.async { [weak self] in
             guard !VaultStore.isVaultConfigured else { return }
-
-            NSApp.activate(ignoringOtherApps: true)
-            let selectedURL = VaultStore.chooseVaultFolder(
-                message: "Choose your Obsidian vault folder to finish setup."
-            )
-
-            if selectedURL == nil {
-                self?.openSettings()
-            }
+            _ = self?.getOrBuildWindow(mode: .setup)
+            self?.showWindow()
         }
     }
 

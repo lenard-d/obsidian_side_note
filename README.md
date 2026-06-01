@@ -29,7 +29,7 @@ The app opens a small floating editor, supports focused global keyboard shortcut
 - Local app shortcuts: Settings and Quit stay local so they do not steal commands from apps such as Codex.
 - Shortcut recorder: click a shortcut in Settings, press a key combination, and the app stores it.
 - Vault folder picker: select the Obsidian vault from Finder instead of typing its name manually.
-- First-launch setup: if no vault is configured, the app asks for the vault folder immediately.
+- First-launch setup: if no vault is configured, the app opens a small setup screen with prerequisites, vault selection, and shortcut settings.
 - Append to Daily Note: sends content to Obsidian's daily note endpoint silently.
 - New Note editor: autosaves Markdown files into the selected vault once body content exists.
 - Empty-file protection: a note title without body content is stored only as local draft state.
@@ -116,10 +116,13 @@ To keep the app available after restarting your Mac, add it to Login Items:
 ## First Setup
 
 1. Launch `ObsidianSideNote.app`.
-2. Select your local Obsidian vault folder when the Finder picker appears.
-3. If you cancel the picker, click the note icon in the macOS menu bar and choose `Settings`.
-4. Adjust keyboard shortcuts if needed.
-5. Choose the New Note resume interval.
+2. Read the short setup checklist.
+3. In Obsidian, open `Settings -> Community plugins`, disable Restricted mode if needed, search for `Advanced URI`, then install and enable it.
+4. Enable the Daily notes core plugin if you want Append to Daily Note.
+5. Click `Choose...` and select your local Obsidian vault folder.
+6. Adjust keyboard shortcuts if needed.
+7. Choose the New Note resume interval.
+8. Click `Done`.
 
 The selected vault folder is stored with a security-scoped bookmark so the sandboxed app can keep read/write access across launches.
 

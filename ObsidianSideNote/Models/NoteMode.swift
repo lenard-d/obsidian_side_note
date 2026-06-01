@@ -5,6 +5,7 @@ enum NoteMode {
     case newNote
     case editVaultFile
     case settings
+    case setup
 
     var title: String {
         switch self {
@@ -16,6 +17,8 @@ enum NoteMode {
             return "Edit Vault File"
         case .settings:
             return "Settings"
+        case .setup:
+            return "Setup"
         }
     }
 
@@ -27,7 +30,7 @@ enum NoteMode {
             return "draft.newNote.text"
         case .editVaultFile:
             return "draft.editVaultFile.text"
-        case .settings:
+        case .settings, .setup:
             return ""
         }
     }
@@ -38,7 +41,7 @@ enum NoteMode {
             return "draft.newNote.title"
         case .editVaultFile:
             return "draft.editVaultFile.path"
-        default:
+        case .appendDaily, .settings, .setup:
             return ""
         }
     }

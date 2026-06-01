@@ -33,6 +33,9 @@ struct ContentView: View {
             if mode == .settings {
                 SettingsView(vaultName: $vaultName, vaultPath: $vaultPath, closeWindow: closeWindow)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if mode == .setup {
+                SetupView(vaultName: $vaultName, vaultPath: $vaultPath, closeWindow: closeWindow)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 VStack(spacing: 0) {
                     header
@@ -58,7 +61,7 @@ struct ContentView: View {
         .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .onAppear {
-            if mode != .settings {
+            if mode != .settings && mode != .setup {
                 loadDraft()
                 refreshSearchResults()
                 DispatchQueue.main.asyncAfter(deadline: .now()) {
@@ -130,7 +133,7 @@ struct ContentView: View {
         switch mode {
         case .appendDaily:
             return vaultName.isEmpty || noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .newNote, .editVaultFile, .settings:
+        case .newNote, .editVaultFile, .settings, .setup:
             return true
         }
     }
@@ -148,7 +151,7 @@ struct ContentView: View {
             return vaultName.isEmpty
         case .newNote, .editVaultFile:
             return vaultPath.isEmpty
-        case .settings:
+        case .settings, .setup:
             return false
         }
     }
@@ -160,7 +163,7 @@ struct ContentView: View {
         switch mode {
         case .appendDaily:
             appendToDailyNote()
-        case .newNote, .editVaultFile, .settings:
+        case .newNote, .editVaultFile, .settings, .setup:
             break
         }
     }
@@ -214,7 +217,7 @@ struct ContentView: View {
     }
 
     private func saveDraft() {
-        guard mode != .settings else { return }
+        guard mode != .settings && mode != .setup else { return }
         UserDefaults.standard.set(noteText, forKey: mode.draftTextKey)
         if !mode.draftTitleKey.isEmpty {
             UserDefaults.standard.set(noteTitle, forKey: mode.draftTitleKey)
