@@ -198,13 +198,6 @@ enum MarkdownEditorTextRenderer {
     private static let boldRegex = try? NSRegularExpression(pattern: #"\*\*([^*\n]+)\*\*"#)
     private static let strikethroughRegex = try? NSRegularExpression(pattern: #"~~([^~\n]+)~~"#)
     private static let italicRegex = try? NSRegularExpression(pattern: #"(?<!\*)\*([^*\n]+)\*(?!\*)"#)
-    private static let mediaCache: NSCache<NSString, NSImage> = {
-        let cache = NSCache<NSString, NSImage>()
-        cache.countLimit = 24
-        cache.totalCostLimit = 96 * 1024 * 1024
-        return cache
-    }()
-
     static func attributedString(from source: String, mediaWidth: CGFloat, activeLineIndex: Int? = nil) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let lines = source.components(separatedBy: .newlines)
@@ -445,37 +438,8 @@ enum MarkdownEditorTextRenderer {
         return nil
     }
 
-    private static func scaledImage(_ image: NSImage, maxWidth: CGFloat) -> NSImage {
-        guard image.size.width > maxWidth else { return image }
-
-        let scale = maxWidth / image.size.width
-        let targetSize = NSSize(width: maxWidth, height: image.size.height * scale)
-        let scaled = NSImage(size: targetSize)
-        scaled.lockFocus()
-        image.draw(in: NSRect(origin: .zero, size: targetSize), from: .zero, operation: .copy, fraction: 1)
-        scaled.unlockFocus()
-        return scaled
-    }
-
     private static func cachedImage(for link: String, maxWidth: CGFloat) -> NSImage? {
-        let roundedWidth = Int(maxWidth.rounded(.down))
-        let key = "\(link)|\(roundedWidth)" as NSString
-
-        if let cached = mediaCache.object(forKey: key) {
-            return cached
-        }
-
-        guard let image = VaultStore.image(forMediaLink: link) else {
-            return nil
-        }
-
-        let scaled = scaledImage(image, maxWidth: maxWidth)
-        mediaCache.setObject(scaled, forKey: key, cost: imageCost(scaled))
-        return scaled
-    }
-
-    private static func imageCost(_ image: NSImage) -> Int {
-        Int(image.size.width * image.size.height * 4)
+        VaultStore.image(forMediaLink: link, maxPixelWidth: maxWidth * 2)
     }
 }
 

@@ -1,9 +1,17 @@
 import AppKit
 import Foundation
+import ImageIO
 
 struct VaultStore {
     static let bookmarkKey = "obsidianVaultBookmark"
     static let pathKey = "obsidianVaultPath"
+    private static let mediaURLCache = NSCache<NSString, NSURL>()
+    private static let mediaImageCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 64
+        cache.totalCostLimit = 160 * 1024 * 1024
+        return cache
+    }()
 
     static var selectedVaultURL: URL? {
         if let bookmarkData = UserDefaults.standard.data(forKey: bookmarkKey) {
@@ -285,17 +293,24 @@ struct VaultStore {
         return url(forMarkdownLink: "\(target).md")
     }
 
-    static func image(forMediaLink link: String) -> NSImage? {
+    static func image(forMediaLink link: String, maxPixelWidth: CGFloat = 1600) -> NSImage? {
         return withSelectedVaultAccess {
-            guard let url = url(forWikiLink: link), url.isFileURL else {
+            guard let url = mediaFileURL(for: link), url.isFileURL else {
                 return nil
             }
 
-            guard let data = try? Data(contentsOf: url) else {
+            let cacheKey = mediaImageCacheKey(for: url, maxPixelWidth: maxPixelWidth)
+            if let cachedImage = mediaImageCache.object(forKey: cacheKey) {
+                return cachedImage
+            }
+
+            guard let image = downsampledImage(at: url, maxPixelWidth: maxPixelWidth)
+                ?? NSImage(contentsOf: url) else {
                 return nil
             }
 
-            return NSImage(data: data)
+            mediaImageCache.setObject(image, forKey: cacheKey, cost: imageCost(image))
+            return image
         }
     }
 
@@ -515,6 +530,49 @@ struct VaultStore {
         }
 
         return nil
+    }
+
+    private static func mediaFileURL(for link: String) -> URL? {
+        let cacheKey = "\(selectedVaultURL?.path ?? "")|\(link)" as NSString
+        if let cachedURL = mediaURLCache.object(forKey: cacheKey) {
+            return cachedURL as URL
+        }
+
+        guard let url = url(forWikiLink: link), url.isFileURL else {
+            return nil
+        }
+
+        mediaURLCache.setObject(url as NSURL, forKey: cacheKey)
+        return url
+    }
+
+    private static func mediaImageCacheKey(for url: URL, maxPixelWidth: CGFloat) -> NSString {
+        let modificationTime = ((try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)?.timeIntervalSince1970 ?? 0)
+        return "\(url.path)|\(Int(maxPixelWidth.rounded(.up)))|\(modificationTime)" as NSString
+    }
+
+    private static func downsampledImage(at url: URL, maxPixelWidth: CGFloat) -> NSImage? {
+        let options = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, options) else {
+            return nil
+        }
+
+        let thumbnailOptions = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(80, Int(maxPixelWidth.rounded(.up)))
+        ] as CFDictionary
+
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions) else {
+            return nil
+        }
+
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+    }
+
+    private static func imageCost(_ image: NSImage) -> Int {
+        Int(image.size.width * image.size.height * 4)
     }
 
     private static func uniqueAttachmentURL(in directoryURL: URL, baseName: String, fileExtension: String) -> URL {
