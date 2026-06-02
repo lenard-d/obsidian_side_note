@@ -11,7 +11,7 @@ enum ShortcutPolicy {
             modifiers: ShortcutPreference.menuModifierFlags(from: modifiers)
         )
 
-        if action.isGlobal, isCommandOnly(shortcut.modifiers) {
+        if action.isGlobal, !containsGlobalSafetyModifier(shortcut.modifiers) {
             return "Global shortcuts need Control or Option so they do not steal normal app commands."
         }
 
@@ -24,7 +24,8 @@ enum ShortcutPolicy {
         return nil
     }
 
-    private static func isCommandOnly(_ modifiers: NSEvent.ModifierFlags) -> Bool {
-        ShortcutPreference.menuModifierFlags(from: modifiers) == .command
+    private static func containsGlobalSafetyModifier(_ modifiers: NSEvent.ModifierFlags) -> Bool {
+        let normalizedModifiers = ShortcutPreference.menuModifierFlags(from: modifiers)
+        return normalizedModifiers.contains(.control) || normalizedModifiers.contains(.option)
     }
 }

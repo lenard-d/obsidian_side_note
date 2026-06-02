@@ -510,6 +510,18 @@ struct ObsidianSideNoteTests {
         #expect(ShortcutPreference.normalized("", fallback: "d") == "d")
     }
 
+    @Test func emptyModifierFlagsDoNotBecomeCommandShortcuts() {
+        #expect(ShortcutPreference.menuModifierFlags(from: []) == [])
+        #expect(ShortcutPreference.menuModifierFlags(from: .command) == .command)
+        #expect(ShortcutPreference.menuModifierFlags(from: [.command, .option]) == [.command, .option])
+    }
+
+    @Test func shortcutPolicyRejectsEmptyGlobalShortcutModifiers() {
+        let message = ShortcutPolicy.validationMessage(for: .newNote, key: "n", modifiers: [])
+
+        #expect(message == "Global shortcuts need Control or Option so they do not steal normal app commands.")
+    }
+
 }
 
 private func testImage() -> NSImage {

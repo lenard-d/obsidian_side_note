@@ -49,7 +49,7 @@ struct ShortcutPreference {
         if modifiers.contains(.option) { result.insert(.option) }
         if modifiers.contains(.control) { result.insert(.control) }
         if modifiers.contains(.shift) { result.insert(.shift) }
-        return result.isEmpty ? .command : result
+        return result
     }
 
     private static func rawValue(for modifiers: NSEvent.ModifierFlags) -> Int {
