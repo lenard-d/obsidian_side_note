@@ -69,6 +69,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private var mediaWidth: CGFloat = 560
         private var isRendering = false
         private var appliedCursorEndRequestID = 0
+        private var pendingMediaLoads: Set<String> = []
 
         init(
             text: Binding<String>,
@@ -100,6 +101,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             if isFocused, textView.window?.firstResponder !== textView {
                 textView.window?.makeFirstResponder(textView)
             }
+
+            preloadMissingMedia(in: source)
         }
 
         func textDidChange(_ notification: Notification) {
@@ -189,6 +192,27 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 textView.setSelectedRange(NSRange(location: selectedRange.location, length: replacement.utf16.count))
             }
         }
+
+        private func preloadMissingMedia(in source: String) {
+            let links = MarkdownEditorTextRenderer.imageLinksNeedingPreload(from: source, mediaWidth: mediaWidth)
+            guard !links.isEmpty else { return }
+
+            for link in links where !pendingMediaLoads.contains(link) {
+                pendingMediaLoads.insert(link)
+                let pixelWidth = mediaWidth * 2
+
+                DispatchQueue.global(qos: .utility).async { [weak self] in
+                    _ = VaultStore.image(forMediaLink: link, maxPixelWidth: pixelWidth)
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        self.pendingMediaLoads.remove(link)
+                        if self.renderedText == source {
+                            self.render(source)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -225,6 +249,23 @@ enum MarkdownEditorTextRenderer {
         }
 
         return result
+    }
+
+    static func imageLinksNeedingPreload(from source: String, mediaWidth: CGFloat) -> [String] {
+        var links: [String] = []
+        let pixelWidth = mediaWidth * 2
+
+        for line in source.components(separatedBy: .newlines) {
+            guard let media = EmbeddedMedia(markdownLine: line), media.type == .image else {
+                continue
+            }
+
+            if VaultStore.cachedImage(forMediaLink: media.link, maxPixelWidth: pixelWidth) == nil {
+                links.append(media.link)
+            }
+        }
+
+        return links
     }
 
     static func markdownString(from attributedString: NSAttributedString) -> String {
@@ -439,7 +480,7 @@ enum MarkdownEditorTextRenderer {
     }
 
     private static func cachedImage(for link: String, maxWidth: CGFloat) -> NSImage? {
-        VaultStore.image(forMediaLink: link, maxPixelWidth: maxWidth * 2)
+        VaultStore.cachedImage(forMediaLink: link, maxPixelWidth: maxWidth * 2)
     }
 }
 

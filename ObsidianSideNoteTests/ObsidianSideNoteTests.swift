@@ -103,6 +103,30 @@ struct ObsidianSideNoteTests {
         #expect(results.map(\.relativePath) == ["Projects/Project Plan.md"])
     }
 
+    @Test func vaultSearchIndexInvalidatesAfterWrite() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        #expect(VaultStore.markdownNotes().isEmpty)
+
+        let note = try #require(VaultStore.createOrUpdateNote(
+            title: "Indexed Later",
+            text: "Body",
+            fallbackDate: "2026-06-01 13-30"
+        ))
+
+        #expect(note.relativePath == "Indexed Later.md")
+        #expect(VaultStore.markdownNotes(matching: "later").map(\.relativePath) == ["Indexed Later.md"])
+    }
+
     @Test func vaultWriteUpdatesSelectedMarkdownFile() throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -298,11 +322,23 @@ struct ObsidianSideNoteTests {
 
         VaultStore.saveVaultURL(temporaryVaultURL)
         let relativePath = try #require(VaultStore.saveAttachmentImage(testImage()))
+        _ = VaultStore.image(forMediaLink: relativePath, maxPixelWidth: 800)
         let source = "![Pasted](\(relativePath))"
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400, activeLineIndex: 0)
 
         #expect(rendered.string.contains("\n"))
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
+    }
+
+    @Test func editorRendererReportsUncachedImagesForAsyncPreload() {
+        UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+        UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+        UserDefaults.standard.removeObject(forKey: "obsidianVault")
+
+        let source = "![Pasted](Attachments/pasted.png)\nText\n![[assets/other.jpg|Other]]"
+        let links = MarkdownEditorTextRenderer.imageLinksNeedingPreload(from: source, mediaWidth: 400)
+
+        #expect(links == ["Attachments/pasted.png", "assets/other.jpg"])
     }
 
     @Test func mediaImporterRecognizesSupportedImageAndVideoFiles() {

@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AppKit
+import OSLog
 
 @main
 struct ObsidianSideNoteApp: App {
@@ -36,6 +37,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+        AppLogger.app.info("Application did finish launching")
 
         hotKeyManager = GlobalHotKeyManager { [weak self] action in
             self?.performShortcutAction(action)
@@ -99,11 +101,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func openAppendToDaily() {
+        AppLogger.app.info("Opening daily note editor")
         _ = getOrBuildWindow(mode: .appendDaily)
         showWindow()
     }
 
     @objc func openNewNote() {
+        AppLogger.app.info("Opening new note editor")
         openNewNoteWindow(forceNew: false)
         showWindow()
     }
@@ -130,12 +134,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func openEditVaultFile() {
+        AppLogger.app.info("Opening vault file editor")
         _ = getOrBuildWindow(mode: .editVaultFile)
         showWindow()
     }
 
     @objc func openSettings() {
         // Open window in "settings" mode
+        AppLogger.app.info("Opening settings")
         _ = getOrBuildWindow(mode: .settings)
         showWindow()
     }
@@ -145,6 +151,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         DispatchQueue.main.async { [weak self] in
             guard !VaultStore.isVaultConfigured else { return }
+            AppLogger.app.info("Opening first-run setup")
             _ = self?.getOrBuildWindow(mode: .setup)
             self?.showWindow()
         }

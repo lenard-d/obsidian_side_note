@@ -1,11 +1,13 @@
 import AppKit
 import Foundation
 import ImageIO
+import OSLog
 
 struct VaultStore {
     static let bookmarkKey = "obsidianVaultBookmark"
     static let pathKey = "obsidianVaultPath"
     private static let mediaURLCache = NSCache<NSString, NSURL>()
+    private static var notesIndexCache: NotesIndexCache?
     private static let mediaImageCache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
         cache.countLimit = 64
@@ -46,12 +48,26 @@ struct VaultStore {
         selectedVaultURL != nil
     }
 
+    static var canAccessSelectedVault: Bool {
+        guard let vaultURL = selectedVaultURL else { return false }
+        let didAccess = vaultURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                vaultURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        return FileManager.default.fileExists(atPath: vaultURL.path)
+    }
+
     static func saveVaultURL(_ url: URL) {
         if let bookmarkData = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) {
             UserDefaults.standard.set(bookmarkData, forKey: bookmarkKey)
         }
         UserDefaults.standard.set(url.path, forKey: pathKey)
         UserDefaults.standard.set(url.lastPathComponent, forKey: "obsidianVault")
+        invalidateCaches()
+        AppLogger.vault.info("Selected vault \(url.path, privacy: .public)")
     }
 
     static func chooseVaultFolder(message: String = "Choose your Obsidian vault folder.") -> URL? {
@@ -73,6 +89,32 @@ struct VaultStore {
 
     static func markdownNotes(matching query: String = "") -> [VaultNote] {
         guard let vaultURL = selectedVaultURL else { return [] }
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let notes = indexedMarkdownNotes(in: vaultURL)
+
+        guard !normalizedQuery.isEmpty else {
+            return notes
+        }
+
+        return notes.filter { note in
+            "\(note.title) \(note.relativePath)".lowercased().contains(normalizedQuery)
+        }
+    }
+
+    static func rebuildMarkdownIndex() {
+        invalidateNotesIndex()
+        _ = markdownNotes()
+    }
+
+    private static func indexedMarkdownNotes(in vaultURL: URL) -> [VaultNote] {
+        let vaultPath = vaultURL.standardizedFileURL.path
+        if let cachedIndex = notesIndexCache,
+           cachedIndex.vaultPath == vaultPath,
+           Date().timeIntervalSince(cachedIndex.createdAt) < 30 {
+            return cachedIndex.notes
+        }
+
+        let startTime = CFAbsoluteTimeGetCurrent()
         let didAccess = vaultURL.startAccessingSecurityScopedResource()
         defer {
             if didAccess {
@@ -89,7 +131,6 @@ struct VaultStore {
             return []
         }
 
-        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var notes: [VaultNote] = []
 
         for case let fileURL as URL in enumerator {
@@ -105,14 +146,14 @@ struct VaultStore {
 
             let relativePath = fileURL.path.replacingOccurrences(of: vaultURL.path + "/", with: "")
             let title = fileURL.deletingPathExtension().lastPathComponent
-            let haystack = "\(title) \(relativePath)".lowercased()
-
-            if normalizedQuery.isEmpty || haystack.contains(normalizedQuery) {
-                notes.append(VaultNote(relativePath: relativePath, title: title, url: fileURL))
-            }
+            notes.append(VaultNote(relativePath: relativePath, title: title, url: fileURL))
         }
 
-        return notes.sorted { $0.relativePath.localizedCaseInsensitiveCompare($1.relativePath) == .orderedAscending }
+        let sortedNotes = notes.sorted { $0.relativePath.localizedCaseInsensitiveCompare($1.relativePath) == .orderedAscending }
+        notesIndexCache = NotesIndexCache(vaultPath: vaultPath, createdAt: Date(), notes: sortedNotes)
+        let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+        AppLogger.vault.info("Indexed \(sortedNotes.count) markdown notes in \(elapsed, privacy: .public)s")
+        return sortedNotes
     }
 
     static func read(_ note: VaultNote) -> String {
@@ -138,6 +179,7 @@ struct VaultStore {
 
         try? text.write(to: note.url, atomically: true, encoding: .utf8)
         if let vaultURL {
+            invalidateNotesIndex()
             NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
         }
     }
@@ -159,6 +201,7 @@ struct VaultStore {
 
         do {
             try text.write(to: fileURL, atomically: true, encoding: .utf8)
+            invalidateNotesIndex()
             NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
         } catch {
             return nil
@@ -192,6 +235,7 @@ struct VaultStore {
                 fileExtension: sourceURL.pathExtension
             )
             try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+            invalidateMediaCaches()
             NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
             return vaultRelativePath(for: destinationURL, in: vaultURL)
         } catch {
@@ -217,6 +261,7 @@ struct VaultStore {
             try FileManager.default.createDirectory(at: attachmentsURL, withIntermediateDirectories: true)
             let destinationURL = uniqueAttachmentURL(in: attachmentsURL, baseName: suggestedName, fileExtension: "png")
             try pngData.write(to: destinationURL, options: .atomic)
+            invalidateMediaCaches()
             NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
             return vaultRelativePath(for: destinationURL, in: vaultURL)
         } catch {
@@ -242,6 +287,7 @@ struct VaultStore {
                 fileExtension: fileExtension
             )
             try data.write(to: destinationURL, options: .atomic)
+            invalidateMediaCaches()
             NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
             return vaultRelativePath(for: destinationURL, in: vaultURL)
         } catch {
@@ -310,7 +356,18 @@ struct VaultStore {
             }
 
             mediaImageCache.setObject(image, forKey: cacheKey, cost: imageCost(image))
+            AppLogger.media.info("Loaded media image \(url.lastPathComponent, privacy: .public)")
             return image
+        }
+    }
+
+    static func cachedImage(forMediaLink link: String, maxPixelWidth: CGFloat = 1600) -> NSImage? {
+        return withSelectedVaultAccess {
+            guard let url = mediaFileURL(for: link), url.isFileURL else {
+                return nil
+            }
+
+            return mediaImageCache.object(forKey: mediaImageCacheKey(for: url, maxPixelWidth: maxPixelWidth))
         }
     }
 
@@ -357,6 +414,7 @@ struct VaultStore {
                     withIntermediateDirectories: true
                 )
                 try dailyTemplateText(in: vaultURL).write(to: fileURL, atomically: true, encoding: .utf8)
+                invalidateNotesIndex()
                 NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
                 return note
             } catch {
@@ -573,6 +631,26 @@ struct VaultStore {
 
     private static func imageCost(_ image: NSImage) -> Int {
         Int(image.size.width * image.size.height * 4)
+    }
+
+    private static func invalidateCaches() {
+        invalidateNotesIndex()
+        invalidateMediaCaches()
+    }
+
+    private static func invalidateNotesIndex() {
+        notesIndexCache = nil
+    }
+
+    private static func invalidateMediaCaches() {
+        mediaURLCache.removeAllObjects()
+        mediaImageCache.removeAllObjects()
+    }
+
+    private struct NotesIndexCache {
+        let vaultPath: String
+        let createdAt: Date
+        let notes: [VaultNote]
     }
 
     private static func uniqueAttachmentURL(in directoryURL: URL, baseName: String, fileExtension: String) -> URL {

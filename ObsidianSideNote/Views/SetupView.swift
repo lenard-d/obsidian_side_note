@@ -6,6 +6,7 @@ struct SetupView: View {
     @Binding var vaultPath: String
     let closeWindow: () -> Void
     @State private var resumeIntervalMinutes = NewNotePreferences.resumeIntervalMinutes
+    @State private var launchAtLogin = LoginItemStore.isEnabled
 
     private var hasVault: Bool {
         !vaultPath.isEmpty
@@ -20,7 +21,9 @@ struct SetupView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     introSection
                     prerequisitesSection
+                    diagnosticsSection
                     vaultSection
+                    appSection
                     shortcutsSection
                     newNoteSection
                 }
@@ -114,6 +117,56 @@ struct SetupView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
+        }
+    }
+
+    private var diagnosticsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Status")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            diagnosticRow("Vault access", SetupDiagnostics.vaultAccessStatus)
+            diagnosticRow("Obsidian", SetupDiagnostics.obsidianStatus)
+            diagnosticRow("Advanced URI", SetupDiagnostics.advancedURIStatus)
+            diagnosticRow("Global shortcuts", SetupDiagnostics.globalShortcutStatus)
+            diagnosticRow("Start on login", SetupDiagnostics.launchAtLoginStatus)
+        }
+    }
+
+    private func diagnosticRow(_ title: String, _ value: String) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 12))
+            Spacer()
+            Text(value)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(diagnosticColor(value))
+        }
+    }
+
+    private func diagnosticColor(_ value: String) -> Color {
+        switch value {
+        case "Ready", "Detected", "Enabled":
+            return .green
+        case "Manual check", "Off":
+            return .secondary
+        default:
+            return .orange
+        }
+    }
+
+    private var appSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("App")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            Toggle("Start on login", isOn: $launchAtLogin)
+                .onChange(of: launchAtLogin) { oldValue, newValue in
+                    LoginItemStore.isEnabled = newValue
+                    launchAtLogin = LoginItemStore.isEnabled
+                }
         }
     }
 

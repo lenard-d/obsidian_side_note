@@ -6,6 +6,7 @@ struct SettingsView: View {
     @Binding var vaultPath: String
     let closeWindow: () -> Void
     @State private var resumeIntervalMinutes = NewNotePreferences.resumeIntervalMinutes
+    @State private var launchAtLogin = LoginItemStore.isEnabled
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,6 +31,8 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     vaultSection
+                    Divider()
+                    appSection
                     Divider()
                     newNoteSection
                     Divider()
@@ -91,6 +94,24 @@ struct SettingsView: View {
             }
 
             Text("Within this window, reopening New Note keeps the current draft unless you use the shortcut.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var appSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("App")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            Toggle("Start on login", isOn: $launchAtLogin)
+                .onChange(of: launchAtLogin) { oldValue, newValue in
+                    LoginItemStore.isEnabled = newValue
+                    launchAtLogin = LoginItemStore.isEnabled
+                }
+
+            Text(LoginItemStore.statusDescription)
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
         }
