@@ -55,6 +55,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         if context.coordinator.renderedText != text {
             context.coordinator.render(text)
         }
+        context.coordinator.applyFocusIfNeeded()
         context.coordinator.applyCursorEndRequestIfNeeded()
     }
 
@@ -98,9 +99,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             (textView as? MediaTextView)?.resizeToFitTextContent()
             isRendering = false
 
-            if isFocused, textView.window?.firstResponder !== textView {
-                textView.window?.makeFirstResponder(textView)
-            }
+            applyFocusIfNeeded()
 
             preloadMissingMedia(in: source)
         }
@@ -143,6 +142,17 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             let end = textView.string.utf16.count
             textView.setSelectedRange(NSRange(location: end, length: 0))
             textView.scrollRangeToVisible(NSRange(location: end, length: 0))
+        }
+
+        func applyFocusIfNeeded() {
+            guard isFocused,
+                  let textView,
+                  let window = textView.window,
+                  window.firstResponder !== textView else {
+                return
+            }
+
+            window.makeFirstResponder(textView)
         }
 
         fileprivate func mediaTextViewDidRequestPasteMedia(_ textView: MediaTextView) -> Bool {

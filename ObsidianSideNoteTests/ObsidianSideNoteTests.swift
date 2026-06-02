@@ -258,6 +258,17 @@ struct ObsidianSideNoteTests {
     }
 
     @MainActor
+    @Test func mediaTextViewKeepsEditableStateAfterEmptyRender() {
+        let textView = MediaTextView()
+        textView.setRenderedAttributedString(NSAttributedString(string: ""))
+
+        #expect(textView.string.isEmpty)
+        #expect(textView.isEditable)
+        #expect(textView.isSelectable)
+        #expect(textView.selectedRange().location == 0)
+    }
+
+    @MainActor
     @Test func mediaTextViewExpandsDocumentHeightForScrolling() {
         let textView = MediaTextView()
         textView.configureForVerticalScrolling(contentSize: NSSize(width: 320, height: 160))
