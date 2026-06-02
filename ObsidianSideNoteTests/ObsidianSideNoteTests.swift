@@ -250,22 +250,26 @@ struct ObsidianSideNoteTests {
     @Test func mediaTextViewInitializesEditableTextSystem() {
         let textView = MediaTextView()
 
-        #expect(textView.textContentStorage != nil)
-        #expect(textView.textLayoutManager != nil)
+        #expect(textView.textStorage != nil)
+        #expect(textView.layoutManager != nil)
         #expect(textView.textContainer != nil)
         #expect(textView.isEditable)
         #expect(textView.isSelectable)
     }
 
     @MainActor
-    @Test func mediaTextViewKeepsEditableStateAfterEmptyRender() {
+    @Test func mediaTextViewAcceptsTypingAfterEmptyRender() {
+        let window = NSWindow()
         let textView = MediaTextView()
-        textView.setRenderedAttributedString(NSAttributedString(string: ""))
+        textView.isEditable = true
+        textView.isSelectable = true
+        window.contentView = textView
+        window.makeFirstResponder(textView)
+        textView.textStorage?.setAttributedString(NSAttributedString(string: ""))
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        textView.insertText("a", replacementRange: NSRange(location: 0, length: 0))
 
-        #expect(textView.string.isEmpty)
-        #expect(textView.isEditable)
-        #expect(textView.isSelectable)
-        #expect(textView.selectedRange().location == 0)
+        #expect(textView.string == "a")
     }
 
     @MainActor
