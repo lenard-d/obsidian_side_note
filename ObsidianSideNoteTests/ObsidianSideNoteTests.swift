@@ -81,6 +81,58 @@ struct ObsidianSideNoteTests {
         #expect((try? String(contentsOf: note.url, encoding: .utf8)) == "# Plan")
     }
 
+    @Test func newNoteUsesConfiguredObsidianDefaultFolder() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let configURL = temporaryVaultURL.appendingPathComponent(".obsidian", isDirectory: true)
+        try FileManager.default.createDirectory(at: configURL, withIntermediateDirectories: true)
+        try #"{"newFileLocation":"folder","newFileFolderPath":"Inbox"}"#.write(
+            to: configURL.appendingPathComponent("app.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let note = try #require(VaultStore.createOrUpdateNote(
+            title: "",
+            text: "Capture",
+            fallbackDate: "2026-06-01 13-30"
+        ))
+
+        #expect(note.relativePath == "Inbox/QuickNote 2026-06-01 13-30.md")
+        #expect(FileManager.default.fileExists(atPath: temporaryVaultURL.appendingPathComponent(note.relativePath).path))
+    }
+
+    @Test func newNoteTitleRenameUpdatesExistingFile() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let original = try #require(VaultStore.createOrUpdateNote(
+            title: "QuickNote 2026-06-01 13-30",
+            text: "Capture",
+            fallbackDate: "2026-06-01 13-30"
+        ))
+        let renamed = try #require(VaultStore.rename(original, toTitle: "Meeting Notes"))
+
+        #expect(renamed.relativePath == "Meeting Notes.md")
+        #expect(!FileManager.default.fileExists(atPath: original.url.path))
+        #expect((try? String(contentsOf: renamed.url, encoding: .utf8)) == "Capture")
+    }
+
     @Test func vaultSearchFindsMarkdownAndSkipsObsidianMetadata() throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -286,7 +338,7 @@ struct ObsidianSideNoteTests {
     }
 
     @Test func editorRendererStylesBasicInlineMarkdownWithoutChangingSource() throws {
-        let source = "This is ==marked==, **bold**, *italic*, ~~gone~~, and `code`."
+        let source = "This is ==marked==, **bold**, *italic*, ~~plain~~, and `code`."
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
 
         #expect(rendered.string == source)
@@ -295,7 +347,7 @@ struct ObsidianSideNoteTests {
         let markedRange = (source as NSString).range(of: "==marked==")
         let boldRange = (source as NSString).range(of: "**bold**")
         let italicRange = (source as NSString).range(of: "*italic*")
-        let strikeRange = (source as NSString).range(of: "~~gone~~")
+        let strikeRange = (source as NSString).range(of: "~~plain~~")
         let codeRange = (source as NSString).range(of: "`code`")
 
         #expect(rendered.attribute(.backgroundColor, at: markedRange.location + 2, effectiveRange: nil) != nil)
@@ -306,8 +358,7 @@ struct ObsidianSideNoteTests {
         let italicFont = try #require(rendered.attribute(.font, at: italicRange.location + 1, effectiveRange: nil) as? NSFont)
         #expect(NSFontManager.shared.traits(of: italicFont).contains(.italicFontMask))
 
-        let strikeStyle = try #require(rendered.attribute(.strikethroughStyle, at: strikeRange.location + 2, effectiveRange: nil) as? Int)
-        #expect(strikeStyle == NSUnderlineStyle.single.rawValue)
+        #expect(rendered.attribute(.strikethroughStyle, at: strikeRange.location + 2, effectiveRange: nil) == nil)
 
         let codeFont = try #require(rendered.attribute(.font, at: codeRange.location + 1, effectiveRange: nil) as? NSFont)
         #expect(codeFont.isFixedPitch)
@@ -319,6 +370,8 @@ struct ObsidianSideNoteTests {
 
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
         #expect(rendered.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == NSColor.clear)
+        let hiddenFont = try #require(rendered.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        #expect(hiddenFont.pointSize == 16)
 
         let activeLineLocation = (source as NSString).range(of: "==shown==").location
         #expect(rendered.attribute(.foregroundColor, at: activeLineLocation, effectiveRange: nil) as? NSColor != NSColor.clear)

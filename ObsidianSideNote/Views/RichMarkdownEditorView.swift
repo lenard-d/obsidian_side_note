@@ -233,7 +233,6 @@ enum MarkdownEditorTextRenderer {
     private static let inlineCodeRegex = try? NSRegularExpression(pattern: #"`([^`\n]+)`"#)
     private static let highlightRegex = try? NSRegularExpression(pattern: #"==([^=\n]+)=="#)
     private static let boldRegex = try? NSRegularExpression(pattern: #"\*\*([^*\n]+)\*\*"#)
-    private static let strikethroughRegex = try? NSRegularExpression(pattern: #"~~([^~\n]+)~~"#)
     private static let italicRegex = try? NSRegularExpression(pattern: #"(?<!\*)\*([^*\n]+)\*(?!\*)"#)
     static func attributedString(from source: String, mediaWidth: CGFloat, activeLineIndex: Int? = nil) -> NSAttributedString {
         let result = NSMutableAttributedString()
@@ -387,13 +386,6 @@ enum MarkdownEditorTextRenderer {
             }
         }
 
-        apply(regex: strikethroughRegex, to: attributedLine, in: line) { _, range in
-            attributedLine.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: range)
-            if !revealSyntax {
-                hideSyntaxRanges([NSRange(location: range.location, length: 2), NSRange(location: range.upperBound - 2, length: 2)], in: attributedLine)
-            }
-        }
-
         apply(regex: italicRegex, to: attributedLine, in: line) { _, range in
             applyFontTrait(.italicFontMask, to: attributedLine, range: range)
             if !revealSyntax {
@@ -437,8 +429,7 @@ enum MarkdownEditorTextRenderer {
         for range in ranges where NSMaxRange(range) <= attributedLine.length {
             attributedLine.addAttributes(
                 [
-                    .foregroundColor: NSColor.clear,
-                    .font: NSFont.systemFont(ofSize: 1)
+                    .foregroundColor: NSColor.clear
                 ],
                 range: range
             )
@@ -634,9 +625,6 @@ final class MediaTextView: NSTextView {
             return true
         case "i":
             markdownCommandDelegate?.mediaTextView(self, didRequestMarkdownWrapper: "*")
-            return true
-        case "s":
-            markdownCommandDelegate?.mediaTextView(self, didRequestMarkdownWrapper: "~~")
             return true
         case "h":
             markdownCommandDelegate?.mediaTextView(self, didRequestMarkdownWrapper: "==")

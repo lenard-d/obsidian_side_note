@@ -79,6 +79,7 @@ struct ContentView: View {
         }
         .onChange(of: noteTitle) { oldValue, newValue in
             saveDraft()
+            autosaveNewNote()
         }
         .onChange(of: vaultSearchQuery) { oldValue, newValue in
             if mode == .editVaultFile {
@@ -93,9 +94,7 @@ struct ContentView: View {
             NoteEditorHeader(mode: mode, closeWindow: closeWindow)
 
             if mode == .newNote {
-                TextField("Title", text: $noteTitle)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 15, weight: .semibold))
+                SelectAllOnFocusTextField(placeholder: "Title", text: $noteTitle)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
             }
@@ -186,6 +185,9 @@ struct ContentView: View {
 
         noteText = UserDefaults.standard.string(forKey: mode.draftTextKey) ?? ""
         noteTitle = UserDefaults.standard.string(forKey: mode.draftTitleKey) ?? ""
+        if mode == .newNote, noteTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            noteTitle = VaultStore.defaultQuickNoteTitle(fallbackDate: dateString())
+        }
         vaultSearchQuery = UserDefaults.standard.string(forKey: "draft.editVaultFile.search") ?? ""
         vaultName = VaultStore.selectedVaultName
         vaultPath = UserDefaults.standard.string(forKey: VaultStore.pathKey) ?? ""
@@ -326,6 +328,13 @@ struct ContentView: View {
         }
 
         if let createdNewNote {
+            if noteTitle.trimmingCharacters(in: .whitespacesAndNewlines) != createdNewNote.title,
+               let renamedNote = VaultStore.rename(createdNewNote, toTitle: noteTitle) {
+                self.createdNewNote = renamedNote
+                UserDefaults.standard.set(renamedNote.relativePath, forKey: NewNotePreferences.draftFilePathKey)
+                VaultStore.write(noteText, to: renamedNote)
+                return
+            }
             VaultStore.write(noteText, to: createdNewNote)
             return
         }
@@ -360,8 +369,61 @@ struct ContentView: View {
 
     private func dateString() -> String {
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH-mm"
         return formatter.string(from: Date())
+    }
+}
+
+private struct SelectAllOnFocusTextField: NSViewRepresentable {
+    let placeholder: String
+    @Binding var text: String
+
+    func makeNSView(context: Context) -> NSTextField {
+        let textField = NSTextField()
+        textField.placeholderString = placeholder
+        textField.isBordered = false
+        textField.drawsBackground = false
+        textField.focusRingType = .none
+        textField.font = .systemFont(ofSize: 15, weight: .semibold)
+        textField.textColor = .labelColor
+        textField.delegate = context.coordinator
+        textField.target = context.coordinator
+        textField.action = #selector(Coordinator.textDidCommit(_:))
+        return textField
+    }
+
+    func updateNSView(_ textField: NSTextField, context: Context) {
+        if textField.stringValue != text {
+            textField.stringValue = text
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        @Binding private var text: String
+
+        init(text: Binding<String>) {
+            _text = text
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let textField = notification.object as? NSTextField else { return }
+            text = textField.stringValue
+        }
+
+        func controlTextDidBeginEditing(_ notification: Notification) {
+            guard let textField = notification.object as? NSTextField,
+                  let editor = textField.currentEditor() else { return }
+            editor.selectAll(nil)
+        }
+
+        @objc func textDidCommit(_ sender: NSTextField) {
+            text = sender.stringValue
+        }
     }
 }
 

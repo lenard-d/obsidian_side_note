@@ -190,8 +190,7 @@ struct VaultStore {
         guard !trimmedText.isEmpty else { return nil }
 
         let rawTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filename = safeFileName(rawTitle.isEmpty ? "Quick Note \(fallbackDate)" : rawTitle)
-        let fileURL = vaultURL.appendingPathComponent(filename).appendingPathExtension("md")
+        let filename = safeFileName(rawTitle.isEmpty ? defaultQuickNoteTitle(fallbackDate: fallbackDate) : rawTitle)
         let didAccess = vaultURL.startAccessingSecurityScopedResource()
         defer {
             if didAccess {
@@ -200,14 +199,39 @@ struct VaultStore {
         }
 
         do {
+            let noteDirectoryURL = newNoteDirectoryURL(in: vaultURL)
+            try FileManager.default.createDirectory(at: noteDirectoryURL, withIntermediateDirectories: true)
+            let fileURL = uniqueNoteURL(in: noteDirectoryURL, filename: filename)
             try text.write(to: fileURL, atomically: true, encoding: .utf8)
             invalidateNotesIndex()
             NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
+            return vaultNote(for: fileURL, in: vaultURL)
         } catch {
             return nil
         }
+    }
 
-        return VaultNote(relativePath: fileURL.lastPathComponent, title: filename, url: fileURL)
+    static func rename(_ note: VaultNote, toTitle title: String) -> VaultNote? {
+        guard let vaultURL = selectedVaultURL else { return nil }
+        let filename = safeFileName(title.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard !filename.isEmpty, filename != note.title else { return note }
+
+        let didAccess = vaultURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                vaultURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let destinationURL = uniqueNoteURL(in: note.url.deletingLastPathComponent(), filename: filename, excluding: note.url)
+        do {
+            try FileManager.default.moveItem(at: note.url, to: destinationURL)
+            invalidateNotesIndex()
+            NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
+            return vaultNote(for: destinationURL, in: vaultURL)
+        } catch {
+            return nil
+        }
     }
 
     static func note(relativePath: String) -> VaultNote? {
@@ -433,6 +457,22 @@ struct VaultStore {
         return sanitized.isEmpty ? "Untitled" : sanitized
     }
 
+    static func defaultQuickNoteTitle(fallbackDate: String) -> String {
+        "QuickNote \(fallbackDate)"
+    }
+
+    private static func newNoteDirectoryURL(in vaultURL: URL) -> URL {
+        let settings = appSettings(in: vaultURL)
+        guard settings.newFileLocation == "folder",
+              let folderPath = settings.newFileFolderPath,
+              !folderPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return vaultURL
+        }
+
+        let normalizedPath = normalizedVaultRelativePath(folderPath)
+        return normalizedPath.isEmpty ? vaultURL : vaultURL.appendingPathComponent(normalizedPath, isDirectory: true)
+    }
+
     private static func pngData(from image: NSImage) -> Data? {
         var proposedRect = NSRect(origin: .zero, size: image.size)
         guard let cgImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil) else {
@@ -449,10 +489,7 @@ struct VaultStore {
             return vaultURL
         }
 
-        let normalizedPath = configuredPath
-            .replacingOccurrences(of: "\\", with: "/")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let normalizedPath = normalizedVaultRelativePath(configuredPath)
 
         guard !normalizedPath.isEmpty, normalizedPath != "." else {
             return vaultURL
@@ -472,6 +509,16 @@ struct VaultStore {
         return path
             .replacingOccurrences(of: #"^\./"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"^\.$"#, with: "", options: .regularExpression)
+    }
+
+    private static func appSettings(in vaultURL: URL) -> ObsidianAppSettings {
+        let configURL = vaultURL.appendingPathComponent(".obsidian/app.json")
+        guard let data = try? Data(contentsOf: configURL),
+              let settings = try? JSONDecoder().decode(ObsidianAppSettings.self, from: data) else {
+            return ObsidianAppSettings()
+        }
+
+        return settings
     }
 
     private static func dailyNoteRelativePath(now: Date, in vaultURL: URL) -> String {
@@ -554,6 +601,21 @@ struct VaultStore {
         }
 
         return String(filePath.dropFirst(vaultPath.count + 1))
+    }
+
+    private static func vaultNote(for fileURL: URL, in vaultURL: URL) -> VaultNote {
+        let relativePath = vaultRelativePath(for: fileURL, in: vaultURL)
+        let title = fileURL.deletingPathExtension().lastPathComponent
+        return VaultNote(relativePath: relativePath, title: title, url: fileURL)
+    }
+
+    private static func normalizedVaultRelativePath(_ path: String) -> String {
+        path
+            .replacingOccurrences(of: "\\", with: "/")
+            .replacingOccurrences(of: #"^\./"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"^\.$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
     private static func wikiTarget(from link: String) -> String {
@@ -670,6 +732,35 @@ struct VaultStore {
 
         return candidate
     }
+
+    private static func uniqueNoteURL(in directoryURL: URL, filename: String, excluding excludedURL: URL? = nil) -> URL {
+        var candidate = directoryURL
+            .appendingPathComponent(filename)
+            .appendingPathExtension("md")
+        var index = 2
+
+        while FileManager.default.fileExists(atPath: candidate.path),
+              candidate.standardizedFileURL != excludedURL?.standardizedFileURL {
+            candidate = directoryURL
+                .appendingPathComponent("\(filename) \(index)")
+                .appendingPathExtension("md")
+            index += 1
+        }
+
+        return candidate
+    }
+}
+
+private struct ObsidianAppSettings: Decodable {
+    var newFileLocation: String = ""
+    var newFileFolderPath: String?
+
+    enum CodingKeys: String, CodingKey {
+        case newFileLocation
+        case newFileFolderPath
+    }
+
+    init() {}
 }
 
 private struct DailyNoteSettings: Decodable {

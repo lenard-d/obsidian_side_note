@@ -35,7 +35,6 @@ struct MarkdownEditorView: View {
                 HStack(spacing: 8) {
                     MarkdownButton(symbol: "bold", action: { wrapSelection("**") }, tooltip: "Bold")
                     MarkdownButton(symbol: "italic", action: { wrapSelection("*") }, tooltip: "Italic")
-                    MarkdownButton(symbol: "strikethrough", action: { wrapSelection("~~") }, tooltip: "Strikethrough")
                     MarkdownButton(symbol: "highlighter", action: { wrapSelection("==") }, tooltip: "Highlight")
                     MarkdownButton(symbol: "curlybraces", action: { wrapSelection("`") }, tooltip: "Inline Code")
 
