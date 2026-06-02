@@ -191,11 +191,9 @@ struct VaultStore {
         }
     }
 
-    static func saveAttachmentImage(_ image: NSImage, suggestedName: String = "Pasted Image") -> String? {
+    static func saveAttachmentImage(_ image: NSImage, suggestedName: String = pastedImageBaseName()) -> String? {
         guard let vaultURL = selectedVaultURL,
-              let tiffData = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiffData),
-              let pngData = bitmap.representation(using: .png, properties: [:]) else {
+              let pngData = pngData(from: image) else {
             return nil
         }
 
@@ -216,6 +214,39 @@ struct VaultStore {
         } catch {
             return nil
         }
+    }
+
+    static func saveAttachmentData(_ data: Data, suggestedName: String, fileExtension: String) -> String? {
+        guard let vaultURL = selectedVaultURL else { return nil }
+        let didAccess = vaultURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                vaultURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let attachmentsURL = attachmentDirectoryURL(in: vaultURL)
+        do {
+            try FileManager.default.createDirectory(at: attachmentsURL, withIntermediateDirectories: true)
+            let destinationURL = uniqueAttachmentURL(
+                in: attachmentsURL,
+                baseName: suggestedName,
+                fileExtension: fileExtension
+            )
+            try data.write(to: destinationURL, options: .atomic)
+            NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
+            return vaultRelativePath(for: destinationURL, in: vaultURL)
+        } catch {
+            return nil
+        }
+    }
+
+    static func pastedImageBaseName(now: Date = Date()) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyyMMdd HHmmss"
+        return "Pasted image \(formatter.string(from: now))"
     }
 
     static func url(forMarkdownLink link: String) -> URL? {
@@ -254,6 +285,71 @@ struct VaultStore {
         return url(forMarkdownLink: "\(target).md")
     }
 
+    static func image(forMediaLink link: String) -> NSImage? {
+        return withSelectedVaultAccess {
+            guard let url = url(forWikiLink: link), url.isFileURL else {
+                return nil
+            }
+
+            guard let data = try? Data(contentsOf: url) else {
+                return nil
+            }
+
+            return NSImage(data: data)
+        }
+    }
+
+    static func withSelectedVaultAccess<T>(_ operation: () -> T) -> T {
+        guard let vaultURL = selectedVaultURL else {
+            return operation()
+        }
+
+        let didAccess = vaultURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                vaultURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        return operation()
+    }
+
+    static func dailyNoteForToday(now: Date = Date()) -> VaultNote? {
+        guard let vaultURL = selectedVaultURL else { return nil }
+        return withSelectedVaultAccess {
+            let relativePath = dailyNoteRelativePath(now: now, in: vaultURL)
+            let note = note(relativePath: relativePath)
+            guard FileManager.default.fileExists(atPath: note?.url.path ?? "") else { return nil }
+            return note
+        }
+    }
+
+    static func ensureDailyNoteForToday(now: Date = Date()) -> VaultNote? {
+        guard let vaultURL = selectedVaultURL else { return nil }
+        return withSelectedVaultAccess {
+            let relativePath = dailyNoteRelativePath(now: now, in: vaultURL)
+            let fileURL = vaultURL.appendingPathComponent(relativePath)
+            let title = fileURL.deletingPathExtension().lastPathComponent
+            let note = VaultNote(relativePath: relativePath, title: title, url: fileURL)
+
+            guard !FileManager.default.fileExists(atPath: fileURL.path) else {
+                return note
+            }
+
+            do {
+                try FileManager.default.createDirectory(
+                    at: fileURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try dailyTemplateText(in: vaultURL).write(to: fileURL, atomically: true, encoding: .utf8)
+                NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
+                return note
+            } catch {
+                return nil
+            }
+        }
+    }
+
     private static func safeFileName(_ title: String) -> String {
         let invalidCharacters = CharacterSet(charactersIn: "/\\:?%*|\"<>")
         let sanitized = title
@@ -262,6 +358,17 @@ struct VaultStore {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         return sanitized.isEmpty ? "Untitled" : sanitized
+    }
+
+    private static func pngData(from image: NSImage) -> Data? {
+        var proposedRect = NSRect(origin: .zero, size: image.size)
+        guard let cgImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil) else {
+            return nil
+        }
+
+        let bitmap = NSBitmapImageRep(cgImage: cgImage)
+        bitmap.size = image.size
+        return bitmap.representation(using: .png, properties: [:])
     }
 
     private static func attachmentDirectoryURL(in vaultURL: URL) -> URL {
@@ -292,6 +399,78 @@ struct VaultStore {
         return path
             .replacingOccurrences(of: #"^\./"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"^\.$"#, with: "", options: .regularExpression)
+    }
+
+    private static func dailyNoteRelativePath(now: Date, in vaultURL: URL) -> String {
+        let settings = dailyNoteSettings(in: vaultURL)
+        let formatter = DateFormatter()
+        formatter.locale = Locale.current
+        formatter.timeZone = .current
+        formatter.dateFormat = swiftDateFormat(fromObsidianFormat: settings.format)
+
+        let fileName = formatter.string(from: now)
+        let folder = settings.folder.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let path = folder.isEmpty ? fileName : "\(folder)/\(fileName)"
+        return path.hasSuffix(".md") ? path : "\(path).md"
+    }
+
+    private static func dailyTemplateText(in vaultURL: URL) -> String {
+        let template = dailyNoteSettings(in: vaultURL).template
+        guard !template.isEmpty else { return "" }
+
+        let templatePath = URL(fileURLWithPath: template).pathExtension.isEmpty ? "\(template).md" : template
+        let templateURL = vaultURL.appendingPathComponent(templatePath)
+        return (try? String(contentsOf: templateURL, encoding: .utf8)) ?? ""
+    }
+
+    private static func dailyNoteSettings(in vaultURL: URL) -> DailyNoteSettings {
+        let configURL = vaultURL.appendingPathComponent(".obsidian/daily-notes.json")
+        guard let data = try? Data(contentsOf: configURL),
+              let settings = try? JSONDecoder().decode(DailyNoteSettings.self, from: data) else {
+            return DailyNoteSettings()
+        }
+
+        return settings
+    }
+
+    private static func swiftDateFormat(fromObsidianFormat format: String) -> String {
+        let replacements: [String: String] = [
+            "YYYY": "yyyy",
+            "YY": "yy",
+            "MMMM": "MMMM",
+            "MMM": "MMM",
+            "MM": "MM",
+            "M": "M",
+            "DD": "dd",
+            "D": "d",
+            "dddd": "EEEE",
+            "ddd": "EEE",
+            "dd": "EE",
+            "d": "e",
+            "HH": "HH",
+            "H": "H",
+            "hh": "hh",
+            "h": "h",
+            "mm": "mm",
+            "m": "m",
+            "ss": "ss",
+            "s": "s"
+        ]
+        let tokens = replacements.keys.sorted { $0.count > $1.count }
+        var result = ""
+        var index = format.startIndex
+
+        while index < format.endIndex {
+            if let token = tokens.first(where: { format[index...].hasPrefix($0) }) {
+                result += replacements[token] ?? token
+                index = format.index(index, offsetBy: token.count)
+            } else {
+                result.append(format[index])
+                index = format.index(after: index)
+            }
+        }
+
+        return result.isEmpty ? "yyyy-MM-dd" : result
     }
 
     private static func vaultRelativePath(for fileURL: URL, in vaultURL: URL) -> String {
@@ -354,5 +533,26 @@ struct VaultStore {
         }
 
         return candidate
+    }
+}
+
+private struct DailyNoteSettings: Decodable {
+    var folder: String = ""
+    var template: String = ""
+    var format: String = "YYYY-MM-DD"
+
+    enum CodingKeys: String, CodingKey {
+        case folder
+        case template
+        case format
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        folder = try container.decodeIfPresent(String.self, forKey: .folder) ?? ""
+        template = try container.decodeIfPresent(String.self, forKey: .template) ?? ""
+        format = try container.decodeIfPresent(String.self, forKey: .format) ?? "YYYY-MM-DD"
     }
 }

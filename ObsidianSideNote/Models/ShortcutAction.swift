@@ -45,7 +45,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .appendDaily:
-            return "Append to Daily Note"
+            return "Daily Note"
         case .newNote:
             return "Create New Note"
         case .editVaultFile:

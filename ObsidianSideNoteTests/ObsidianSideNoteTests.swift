@@ -200,6 +200,111 @@ struct ObsidianSideNoteTests {
         #expect(EmbeddedMedia(markdownLine: "[Sketch](https://example.com/sketch.png)") == nil)
     }
 
+    @Test func editorRendererStylesMarkdownHeadingsWithoutChangingSource() throws {
+        let source = "# One\n### Three\n###### Six\n#NoSpace"
+        let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
+
+        #expect(rendered.string == source)
+        #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
+
+        let h1TextLocation = (source as NSString).range(of: "One").location
+        let h1Font = try #require(rendered.attribute(.font, at: h1TextLocation, effectiveRange: nil) as? NSFont)
+        let h3Location = (source as NSString).range(of: "### Three").location
+        let h3Font = try #require(rendered.attribute(.font, at: h3Location + 4, effectiveRange: nil) as? NSFont)
+        let h6Location = (source as NSString).range(of: "###### Six").location
+        let h6Font = try #require(rendered.attribute(.font, at: h6Location + 7, effectiveRange: nil) as? NSFont)
+        let plainLocation = (source as NSString).range(of: "#NoSpace").location
+        let plainFont = try #require(rendered.attribute(.font, at: plainLocation, effectiveRange: nil) as? NSFont)
+
+        #expect(h1Font.pointSize > h3Font.pointSize)
+        #expect(h3Font.pointSize > h6Font.pointSize)
+        #expect(plainFont.pointSize == 16)
+        #expect(rendered.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == NSColor.clear)
+    }
+
+    @MainActor
+    @Test func mediaTextViewInitializesEditableTextSystem() {
+        let textView = MediaTextView()
+
+        #expect(textView.textStorage != nil)
+        #expect(textView.layoutManager != nil)
+        #expect(textView.textContainer != nil)
+        #expect(textView.isEditable)
+        #expect(textView.isSelectable)
+    }
+
+    @MainActor
+    @Test func mediaTextViewExpandsDocumentHeightForScrolling() {
+        let textView = MediaTextView()
+        textView.configureForVerticalScrolling(contentSize: NSSize(width: 320, height: 160))
+        textView.string = (0..<80).map { "Line \($0)" }.joined(separator: "\n")
+        textView.resizeToFitTextContent()
+
+        #expect(textView.isVerticallyResizable)
+        #expect(!textView.isHorizontallyResizable)
+        #expect(textView.textContainer?.heightTracksTextView == false)
+        #expect(textView.frame.height > 160)
+    }
+
+    @Test func editorRendererStylesBasicInlineMarkdownWithoutChangingSource() throws {
+        let source = "This is ==marked==, **bold**, *italic*, ~~gone~~, and `code`."
+        let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
+
+        #expect(rendered.string == source)
+        #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
+
+        let markedRange = (source as NSString).range(of: "==marked==")
+        let boldRange = (source as NSString).range(of: "**bold**")
+        let italicRange = (source as NSString).range(of: "*italic*")
+        let strikeRange = (source as NSString).range(of: "~~gone~~")
+        let codeRange = (source as NSString).range(of: "`code`")
+
+        #expect(rendered.attribute(.backgroundColor, at: markedRange.location + 2, effectiveRange: nil) != nil)
+
+        let boldFont = try #require(rendered.attribute(.font, at: boldRange.location + 2, effectiveRange: nil) as? NSFont)
+        #expect(NSFontManager.shared.traits(of: boldFont).contains(.boldFontMask))
+
+        let italicFont = try #require(rendered.attribute(.font, at: italicRange.location + 1, effectiveRange: nil) as? NSFont)
+        #expect(NSFontManager.shared.traits(of: italicFont).contains(.italicFontMask))
+
+        let strikeStyle = try #require(rendered.attribute(.strikethroughStyle, at: strikeRange.location + 2, effectiveRange: nil) as? Int)
+        #expect(strikeStyle == NSUnderlineStyle.single.rawValue)
+
+        let codeFont = try #require(rendered.attribute(.font, at: codeRange.location + 1, effectiveRange: nil) as? NSFont)
+        #expect(codeFont.isFixedPitch)
+    }
+
+    @Test func editorRendererRevealsInlineMarkdownSyntaxOnActiveLineOnly() throws {
+        let source = "==hidden==\n==shown=="
+        let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400, activeLineIndex: 1)
+
+        #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
+        #expect(rendered.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == NSColor.clear)
+
+        let activeLineLocation = (source as NSString).range(of: "==shown==").location
+        #expect(rendered.attribute(.foregroundColor, at: activeLineLocation, effectiveRange: nil) as? NSColor != NSColor.clear)
+    }
+
+    @Test func editorRendererKeepsActiveImagePreviewOutOfMarkdownSource() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let relativePath = try #require(VaultStore.saveAttachmentImage(testImage()))
+        let source = "![Pasted](\(relativePath))"
+        let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400, activeLineIndex: 0)
+
+        #expect(rendered.string.contains("\n"))
+        #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
+    }
+
     @Test func mediaImporterRecognizesSupportedImageAndVideoFiles() {
         #expect(MediaAttachmentImporter.isSupportedMedia(URL(fileURLWithPath: "/tmp/paste.png")))
         #expect(MediaAttachmentImporter.isSupportedMedia(URL(fileURLWithPath: "/tmp/drop.tiff")))
@@ -231,6 +336,13 @@ struct ObsidianSideNoteTests {
         #expect(FileManager.default.fileExists(atPath: attachmentURL.path))
     }
 
+    @Test func pastedImageBaseNameUsesCompactTimestamp() {
+        let date = Date(timeIntervalSince1970: 1_780_328_430)
+        let name = VaultStore.pastedImageBaseName(now: date)
+
+        #expect(name.contains(#/Pasted image \d{8} \d{6}/#))
+    }
+
     @Test func mediaImporterUsesConfiguredObsidianAttachmentFolder() throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -252,7 +364,59 @@ struct ObsidianSideNoteTests {
         let relativePath = try #require(VaultStore.saveAttachmentImage(testImage()))
 
         #expect(relativePath.hasPrefix("assets/"))
+        #expect(relativePath.contains(#/Pasted image \d{8} \d{6}\.png/#))
         #expect(FileManager.default.fileExists(atPath: temporaryVaultURL.appendingPathComponent(relativePath).path))
+    }
+
+    @Test func vaultStoreLoadsImageDataForEmbeddedMedia() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let relativePath = try #require(VaultStore.saveAttachmentImage(testImage()))
+        let image = try #require(VaultStore.image(forMediaLink: relativePath))
+
+        #expect(image.size.width > 0)
+        #expect(image.size.height > 0)
+    }
+
+    @Test func vaultStoreCreatesDailyNoteFromObsidianSettingsAndTemplate() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let obsidianConfigURL = temporaryVaultURL.appendingPathComponent(".obsidian", isDirectory: true)
+        let templatesURL = temporaryVaultURL.appendingPathComponent("Templates", isDirectory: true)
+        try FileManager.default.createDirectory(at: obsidianConfigURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: templatesURL, withIntermediateDirectories: true)
+        try #"{"folder":"Journal","template":"Templates/Daily","format":"YYYY-MM-DD"}"#.write(
+            to: obsidianConfigURL.appendingPathComponent("daily-notes.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "Template body".write(
+            to: templatesURL.appendingPathComponent("Daily.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let note = try #require(VaultStore.ensureDailyNoteForToday(now: Date(timeIntervalSince1970: 1_780_328_430)))
+
+        #expect(note.relativePath.hasPrefix("Journal/"))
+        #expect(note.relativePath.hasSuffix(".md"))
+        #expect(VaultStore.read(note) == "Template body")
     }
 
     @Test func appendDailyURIUsesSilentOfficialDailyEndpoint() throws {
@@ -277,6 +441,16 @@ struct ObsidianSideNoteTests {
         #expect(components.queryItems?.contains(URLQueryItem(name: "silent", value: nil)) == true)
         #expect(components.queryItems?.contains(where: { $0.name == "content" }) == false)
         #expect(components.queryItems?.contains(where: { $0.name == "append" }) == false)
+    }
+
+    @Test func openDailyURIUsesVisibleDailyEndpoint() throws {
+        let url = try #require(ObsidianURIBuilder.openDaily(vaultName: "Personal Vault"))
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+
+        #expect(url.scheme == "obsidian")
+        #expect(url.host == "daily")
+        #expect(components.queryItems?.contains(URLQueryItem(name: "vault", value: "Personal Vault")) == true)
+        #expect(components.queryItems?.contains(where: { $0.name == "silent" }) == false)
     }
 
     @Test func shortcutPreferencesStoreModifiersAndKey() {

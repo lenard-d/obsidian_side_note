@@ -25,12 +25,12 @@ The app opens a small floating editor, supports focused global keyboard shortcut
 - Menu bar app: stays out of the Dock and is always available from the macOS menu bar.
 - Floating editor window: movable, compact, and visible above normal windows.
 - Escape to close: dismisses the active editor while keeping drafts recoverable.
-- Global keyboard shortcuts: Append, New Note, and Edit Vault File work even while another app is active.
+- Global keyboard shortcuts: Daily Note, New Note, and Edit Vault File work even while another app is active.
 - Local app shortcuts: Settings and Quit stay local so they do not steal commands from apps such as Codex.
 - Shortcut recorder: click a shortcut in Settings, press a key combination, and the app stores it.
 - Vault folder picker: select the Obsidian vault from Finder instead of typing its name manually.
 - First-launch setup: if no vault is configured, the app opens a small setup screen with prerequisites, vault selection, and shortcut settings.
-- Append to Daily Note: sends content to Obsidian's daily note endpoint silently.
+- Daily Note: opens today's daily note in the editor, respects Obsidian's daily note settings, and places the cursor at the end.
 - New Note editor: autosaves Markdown files into the selected vault once body content exists.
 - Empty-file protection: a note title without body content is stored only as local draft state.
 - Draft recovery: closing the editor does not discard unfinished text.
@@ -64,7 +64,7 @@ The current app icon uses the top-left direction from [docs/assets/logo-concepts
 
 - macOS with Xcode support for the current project target.
 - Xcode 26 or newer is recommended because the project currently targets `MACOSX_DEPLOYMENT_TARGET = 26.0`.
-- Obsidian installed if you want Daily Note append and "Open in Obsidian" behavior.
+- Obsidian installed if you want Daily Note creation and "Open in Obsidian" behavior.
 - An existing local Obsidian vault folder.
 
 The app uses SwiftUI, AppKit, Carbon global hotkeys, AVKit for video preview, and [swift-markdown-ui](https://github.com/gonzalezreal/swift-markdown-ui) for Markdown rendering.
@@ -119,7 +119,7 @@ To keep the app available after restarting your Mac, add it to Login Items:
 1. Launch `ObsidianSideNote.app`.
 2. Read the short setup checklist.
 3. In Obsidian, open `Settings -> Community plugins`, disable Restricted mode if needed, search for `Advanced URI`, then install and enable it.
-4. Enable the Daily notes core plugin if you want Append to Daily Note.
+4. Enable the Daily notes core plugin if you want Daily Note.
 5. Click `Choose...` and select your local Obsidian vault folder.
 6. Adjust keyboard shortcuts if needed.
 7. Choose the New Note resume interval.
@@ -131,14 +131,14 @@ The selected vault folder is stored with a security-scoped bookmark so the sandb
 
 ### Menu Actions
 
-- `Append to Daily Note`: open a scratch editor and send text to Obsidian's daily note endpoint.
+- `Daily Note`: open today's daily note in the editor and continue writing at the end.
 - `Create New Note`: open the Quick Note editor for a new Markdown file.
 - `Edit Vault File`: search existing Markdown files and edit the selected file.
 - `Settings`: choose the vault folder, configure shortcuts, and set the resume interval.
 
 ### Default Shortcuts
 
-- `Control-Option-Command-D`: Append to Daily Note.
+- `Control-Option-Command-D`: Daily Note.
 - `Control-Option-Command-N`: Create New Note.
 - `Control-Option-Command-V`: Edit Vault File.
 - `Command-,`: Settings.
@@ -146,13 +146,13 @@ The selected vault folder is stored with a security-scoped bookmark so the sandb
 
 Shortcuts can be changed in Settings. Click the shortcut value on the right side of a row, then press the full key combination you want to use.
 
-Only Append to Daily Note, Create New Note, and Edit Vault File are registered globally. Settings is local-only and is handled only while Obsidian Side Note is active. Quit remains local to the app as well.
+Only Daily Note, Create New Note, and Edit Vault File are registered globally. Settings, Close Window, and Quit are handled only while Obsidian Side Note is active.
 
 Global note shortcuts default to `Control` + `Option` + `Command` plus the action key. The recorder rejects Command-only global shortcuts so the app does not steal common foreground-app commands such as New, Save, Quit, or Settings.
 
 ### Daily Notes
 
-Before appending text, the app asks Obsidian to create or open today's daily note silently through the Daily Notes plugin. This preserves Obsidian's configured daily note folder, date format, and template. After that, the app appends your text silently.
+The app asks Obsidian to create today's daily note silently through the Daily Notes plugin, then loads that file into the editor and moves the cursor to the end. If the file still does not exist, the app falls back to Obsidian's configured daily note folder, date format, and template from `.obsidian/daily-notes.json`.
 
 ### New Notes
 

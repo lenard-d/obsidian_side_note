@@ -4,27 +4,15 @@ import AppKit
 struct MarkdownEditorView: View {
     @Binding var text: String
     @FocusState.Binding var isFocused: Bool
+    @Binding var cursorEndRequestID: Int
     let insertMedia: (String) -> Void
-    @State private var showPreview = false
     @State private var isDropTargeted = false
-    @State private var pasteMonitor: Any?
 
     var body: some View {
         VStack(spacing: 0) {
             toolbar
             Divider()
-
-            if showPreview {
-                preview
-            } else {
-                editor
-            }
-        }
-        .onAppear {
-            installPasteMonitor()
-        }
-        .onDisappear {
-            removePasteMonitor()
+            editor
         }
         .onDrop(
             of: MediaAttachmentImporter.supportedDropTypes,
@@ -48,6 +36,8 @@ struct MarkdownEditorView: View {
                     MarkdownButton(symbol: "bold", action: { wrapSelection("**") }, tooltip: "Bold")
                     MarkdownButton(symbol: "italic", action: { wrapSelection("*") }, tooltip: "Italic")
                     MarkdownButton(symbol: "strikethrough", action: { wrapSelection("~~") }, tooltip: "Strikethrough")
+                    MarkdownButton(symbol: "highlighter", action: { wrapSelection("==") }, tooltip: "Highlight")
+                    MarkdownButton(symbol: "curlybraces", action: { wrapSelection("`") }, tooltip: "Inline Code")
 
                     Divider()
                         .frame(height: 16)
@@ -60,38 +50,18 @@ struct MarkdownEditorView: View {
                 .padding(.vertical, 8)
             }
             .padding(.leading, 12)
-
-            Spacer()
-
-            Toggle(isOn: $showPreview) {
-                Image(systemName: showPreview ? "pencil" : "eye")
-                    .foregroundColor(.secondary)
-            }
-            .toggleStyle(.button)
-            .buttonStyle(.plain)
-            .help(showPreview ? "Edit" : "Preview")
-            .padding(.trailing, 12)
-            .padding(.vertical, 8)
         }
         .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
     }
 
-    private var preview: some View {
-        ScrollView {
-            RichMarkdownView(text: text)
-                .padding(16)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(NSColor.textBackgroundColor).opacity(0.3))
-    }
-
     private var editor: some View {
-        TextEditor(text: $text)
-            .font(.system(size: 16))
-            .focused($isFocused)
-            .scrollContentBackground(.hidden)
-            .padding(14)
+        RichMarkdownEditorView(
+            text: $text,
+            isFocused: $isFocused,
+            cursorEndRequestID: $cursorEndRequestID,
+            insertMedia: insertMedia,
+            didInsertMedia: {}
+        )
             .background(Color(NSColor.textBackgroundColor).opacity(0.3))
             .onDrop(
                 of: MediaAttachmentImporter.supportedDropTypes,
@@ -131,28 +101,6 @@ struct MarkdownEditorView: View {
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
         handlePaste(providers)
         return true
-    }
-
-    private func installPasteMonitor() {
-        guard pasteMonitor == nil else { return }
-        pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard isFocused,
-                  event.charactersIgnoringModifiers?.lowercased() == "v",
-                  ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == .command,
-                  let relativePath = MediaAttachmentImporter.importFromPasteboard() else {
-                return event
-            }
-
-            insertMedia(relativePath)
-            return nil
-        }
-    }
-
-    private func removePasteMonitor() {
-        if let pasteMonitor {
-            NSEvent.removeMonitor(pasteMonitor)
-            self.pasteMonitor = nil
-        }
     }
 }
 

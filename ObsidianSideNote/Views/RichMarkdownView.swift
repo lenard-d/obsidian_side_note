@@ -248,30 +248,28 @@ private struct EmbeddedMediaView: View {
 
     @ViewBuilder
     private var embeddedImage: some View {
-        if let url = VaultStore.url(forWikiLink: media.link) {
-            if url.isFileURL, let image = NSImage(contentsOf: url) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFit()
-                    case .failure:
-                        mediaFallback
-                    case .empty:
-                        ProgressView()
-                            .frame(maxWidth: .infinity, minHeight: 120)
-                    @unknown default:
-                        mediaFallback
-                    }
-                }
+        if let image = VaultStore.image(forMediaLink: media.link) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else if let url = VaultStore.url(forWikiLink: media.link), !url.isFileURL {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFit()
+                case .failure:
+                    mediaFallback
+                case .empty:
+                    ProgressView()
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                @unknown default:
+                    mediaFallback
+                }
             }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         } else {
             mediaFallback
         }

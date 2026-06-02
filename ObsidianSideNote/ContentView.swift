@@ -23,8 +23,9 @@ struct ContentView: View {
     @State private var highlightedSearchIndex: Int = 0
     @State private var searchKeyMonitor: Any?
     @State private var isLoadingNote: Bool = false
-    @State private var showSaveSuccess: Bool = false
     @State private var saveErrorMessage: String?
+    @State private var openNoteKeyMonitor: Any?
+    @State private var cursorEndRequestID: Int = 0
     @FocusState private var isTextEditorFocused: Bool
     @FocusState private var isVaultSearchFocused: Bool
 
@@ -42,36 +43,30 @@ struct ContentView: View {
                     MarkdownEditorView(
                         text: $noteText,
                         isFocused: $isTextEditorFocused,
+                        cursorEndRequestID: $cursorEndRequestID,
                         insertMedia: insertMediaLink
                     )
-
-                    if mode == .appendDaily {
-                        SaveActionBar(
-                            mode: mode,
-                            isSaveDisabled: isSaveDisabled,
-                            showSaveSuccess: showSaveSuccess,
-                            saveErrorMessage: saveErrorMessage,
-                            save: saveNote
-                        )
-                    }
                 }
             }
         }
-        .frame(minWidth: 350, minHeight: 400)
+        .frame(minWidth: 175, minHeight: 263)
         .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .onAppear {
             if mode != .settings && mode != .setup {
                 loadDraft()
                 refreshSearchResults()
+                loadDailyNoteIfNeeded()
                 DispatchQueue.main.asyncAfter(deadline: .now()) {
                     isTextEditorFocused = true
                 }
                 installSearchKeyMonitor()
+                installOpenNoteKeyMonitor()
             }
         }
         .onDisappear {
             removeSearchKeyMonitor()
+            removeOpenNoteKeyMonitor()
         }
         .onExitCommand {
             closeWindow()
@@ -124,18 +119,18 @@ struct ContentView: View {
                 MissingVaultPrompt()
             }
 
+            if let saveErrorMessage {
+                Text(saveErrorMessage)
+                    .font(.system(size: 11))
+                    .foregroundColor(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+            }
+
             Divider()
         }
         .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
-    }
-
-    private var isSaveDisabled: Bool {
-        switch mode {
-        case .appendDaily:
-            return vaultName.isEmpty || noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .newNote, .editVaultFile, .settings, .setup:
-            return true
-        }
     }
 
     private var shouldShowSearchSuggestions: Bool {
@@ -148,50 +143,11 @@ struct ContentView: View {
     private var shouldShowMissingVaultPrompt: Bool {
         switch mode {
         case .appendDaily:
-            return vaultName.isEmpty
+            return vaultPath.isEmpty
         case .newNote, .editVaultFile:
             return vaultPath.isEmpty
         case .settings, .setup:
             return false
-        }
-    }
-
-    private func saveNote() {
-        guard !vaultName.isEmpty else { return }
-        saveErrorMessage = nil
-
-        switch mode {
-        case .appendDaily:
-            appendToDailyNote()
-        case .newNote, .editVaultFile, .settings, .setup:
-            break
-        }
-    }
-
-    private func appendToDailyNote() {
-        let textToAppend = noteText
-
-        if let createURL = ObsidianURIBuilder.ensureDaily(vaultName: vaultName) {
-            NSWorkspace.shared.open(createURL)
-        }
-
-        // Let Obsidian's Daily Notes plugin create the file and apply its template before appending.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            if let appendURL = ObsidianURIBuilder.appendDaily(vaultName: vaultName, text: textToAppend) {
-                NSWorkspace.shared.open(appendURL)
-            }
-
-            withAnimation(.spring(response: 0.3)) {
-                showSaveSuccess = true
-            }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                noteText = ""
-                noteTitle = ""
-                showSaveSuccess = false
-                clearDraft()
-                closeWindow()
-            }
         }
     }
 
@@ -203,7 +159,31 @@ struct ContentView: View {
         }
     }
 
+    private func openCurrentNoteInObsidian() {
+        switch mode {
+        case .appendDaily:
+            guard !vaultName.isEmpty, let url = ObsidianURIBuilder.openDaily(vaultName: vaultName) else { return }
+            NSWorkspace.shared.open(url)
+        case .newNote:
+            autosaveNewNote()
+            guard let createdNewNote,
+                  !vaultName.isEmpty,
+                  let url = ObsidianURIBuilder.openFile(vaultName: vaultName, filePath: createdNewNote.relativePath) else { return }
+            NSWorkspace.shared.open(url)
+        case .editVaultFile:
+            openVaultFile()
+        case .settings, .setup:
+            break
+        }
+    }
+
     private func loadDraft() {
+        guard mode != .appendDaily else {
+            vaultName = VaultStore.selectedVaultName
+            vaultPath = UserDefaults.standard.string(forKey: VaultStore.pathKey) ?? ""
+            return
+        }
+
         noteText = UserDefaults.standard.string(forKey: mode.draftTextKey) ?? ""
         noteTitle = UserDefaults.standard.string(forKey: mode.draftTitleKey) ?? ""
         vaultSearchQuery = UserDefaults.standard.string(forKey: "draft.editVaultFile.search") ?? ""
@@ -214,6 +194,27 @@ struct ContentView: View {
            let relativePath = UserDefaults.standard.string(forKey: NewNotePreferences.draftFilePathKey) {
             createdNewNote = VaultStore.note(relativePath: relativePath)
         }
+    }
+
+    private func loadDailyNoteIfNeeded() {
+        guard mode == .appendDaily else { return }
+
+        loadDailyNoteFromVault()
+    }
+
+    private func loadDailyNoteFromVault() {
+        guard mode == .appendDaily else { return }
+        guard let note = VaultStore.ensureDailyNoteForToday() else {
+            saveErrorMessage = "Could not open today's daily note."
+            return
+        }
+
+        isLoadingNote = true
+        selectedNote = note
+        noteTitle = note.relativePath
+        noteText = VaultStore.read(note)
+        cursorEndRequestID += 1
+        isLoadingNote = false
     }
 
     private func saveDraft() {
@@ -278,6 +279,20 @@ struct ContentView: View {
         }
     }
 
+    private func installOpenNoteKeyMonitor() {
+        guard openNoteKeyMonitor == nil else { return }
+        openNoteKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard NSApp.isActive,
+                  ShortcutPreference.normalized(event.charactersIgnoringModifiers ?? "") == "o",
+                  ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == .command else {
+                return event
+            }
+
+            openCurrentNoteInObsidian()
+            return nil
+        }
+    }
+
     private func removeSearchKeyMonitor() {
         if let searchKeyMonitor {
             NSEvent.removeMonitor(searchKeyMonitor)
@@ -285,8 +300,15 @@ struct ContentView: View {
         }
     }
 
+    private func removeOpenNoteKeyMonitor() {
+        if let openNoteKeyMonitor {
+            NSEvent.removeMonitor(openNoteKeyMonitor)
+            self.openNoteKeyMonitor = nil
+        }
+    }
+
     private func autosaveSelectedNote() {
-        guard mode == .editVaultFile, !isLoadingNote, let selectedNote else { return }
+        guard (mode == .editVaultFile || mode == .appendDaily), !isLoadingNote, let selectedNote else { return }
         VaultStore.write(noteText, to: selectedNote)
     }
 

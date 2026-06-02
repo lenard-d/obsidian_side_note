@@ -58,7 +58,7 @@ struct SetupView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Quick setup")
                 .font(.system(size: 18, weight: .semibold))
-            Text("Capture quick notes, append to your daily note, and edit Markdown files in your vault without switching context.")
+            Text("Capture quick notes, edit your daily note, and work with Markdown files in your vault without switching context.")
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -74,7 +74,7 @@ struct SetupView: View {
             setupStep("Install Obsidian and create or open your vault.")
             setupStep("In Obsidian, open Settings -> Community plugins.")
             setupStep("Turn off Restricted mode, search for Advanced URI, then install and enable it.")
-            setupStep("Enable the Daily notes core plugin if you want Append to Daily Note.")
+            setupStep("Enable the Daily notes core plugin if you want Daily Note.")
         }
     }
 

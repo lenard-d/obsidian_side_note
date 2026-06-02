@@ -16,6 +16,9 @@ struct ObsidianSideNoteApp: App {
         Settings {
             EmptyView()
         }
+        .commands {
+            CommandGroup(replacing: .appSettings) {}
+        }
     }
 }
 
@@ -32,6 +35,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var localShortcutMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+
         hotKeyManager = GlobalHotKeyManager { [weak self] action in
             self?.performShortcutAction(action)
         }
@@ -47,7 +52,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu = NSMenu()
 
         // Add menu items
-        let appendItem = NSMenuItem(title: "Append to Daily Note", action: #selector(openAppendToDaily), keyEquivalent: "")
+        let appendItem = NSMenuItem(title: "Daily Note", action: #selector(openAppendToDaily), keyEquivalent: "")
         let newNoteItem = NSMenuItem(title: "Create New Note", action: #selector(openNewNote), keyEquivalent: "")
         let editFileItem = NSMenuItem(title: "Edit Vault File", action: #selector(openEditVaultFile), keyEquivalent: "")
         menu?.addItem(appendItem)
@@ -89,8 +94,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         openSetupOnFirstLaunchIfNeeded()
     }
 
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
+        true
+    }
+
     @objc func openAppendToDaily() {
-        // Open window in "append to daily" mode
         _ = getOrBuildWindow(mode: .appendDaily)
         showWindow()
     }
@@ -147,6 +155,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // If window exists, just update the content view with new mode
         if let existingWindow = window {
+            configureLocalKeyEquivalents(for: existingWindow)
             existingWindow.contentView = NSHostingView(rootView: ContentView(mode: mode, closeWindow: { [weak self] in
                 self?.window?.orderOut(nil)
             }))
@@ -162,6 +171,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Define window size
         let windowWidth: CGFloat = 350
         let windowHeight: CGFloat = 525
+        let minimumWindowSize = NSSize(width: windowWidth * 0.5, height: windowHeight * 0.5)
 
         // Calculate position for top right (with some padding from edge)
         let padding: CGFloat = 10
@@ -176,10 +186,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create a custom floating window - this allows it to become key and accept input
         let window = FloatingWindow(
             contentRect: NSRect(x: xPosition, y: yPosition, width: windowWidth, height: windowHeight),
-            styleMask: [.borderless, .fullSizeContentView],
+            styleMask: [.borderless, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
+        configureLocalKeyEquivalents(for: window)
 
         // Set window properties for floating behavior
         window.level = .floating
@@ -189,6 +200,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.isOpaque = false
         window.hasShadow = true
         window.isMovableByWindowBackground = true
+        window.minSize = minimumWindowSize
+        window.isRestorable = false
 
         // Enable transparency and vibrancy
         window.titlebarAppearsTransparent = true
@@ -270,6 +283,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return nil
             }
 
+            if event.charactersIgnoringModifiers?.lowercased() == "w",
+               ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == .command {
+                self?.window?.orderOut(nil)
+                return nil
+            }
+
             return event
         }
     }
@@ -278,5 +297,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let shortcut = action.shortcut
         return ShortcutPreference.normalized(event.charactersIgnoringModifiers ?? "") == shortcut.key
             && ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == shortcut.modifiers
+    }
+
+    private func configureLocalKeyEquivalents(for window: NSWindow) {
+        guard let floatingWindow = window as? FloatingWindow else { return }
+        floatingWindow.keyEquivalentHandler = { [weak self] event in
+            guard let self else { return false }
+
+            if self.matches(event, action: .settings) {
+                self.openSettings()
+                return true
+            }
+
+            guard ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == .command else {
+                return false
+            }
+
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case "w":
+                self.window?.orderOut(nil)
+                return true
+            case "q":
+                NSApp.terminate(nil)
+                return true
+            default:
+                return false
+            }
+        }
     }
 }

@@ -20,11 +20,7 @@ struct KeyboardShortcutRow: View {
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
 
-                if !action.isGlobal {
-                    Text("Local only")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary.opacity(0.75))
-                } else if let validationMessage {
+                if let validationMessage {
                     Text(validationMessage)
                         .font(.system(size: 10))
                         .foregroundColor(.orange)
