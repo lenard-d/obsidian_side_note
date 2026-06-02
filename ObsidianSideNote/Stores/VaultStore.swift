@@ -7,6 +7,8 @@ struct VaultStore {
     static let bookmarkKey = "obsidianVaultBookmark"
     static let pathKey = "obsidianVaultPath"
     private static let mediaURLCache = NSCache<NSString, NSURL>()
+    private static let mediaCacheLock = NSLock()
+    private static var missingMediaURLCache: Set<String> = []
     private static var notesIndexCache: NotesIndexCache?
     private static let mediaImageCache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
@@ -364,35 +366,47 @@ struct VaultStore {
     }
 
     static func image(forMediaLink link: String, maxPixelWidth: CGFloat = 1600) -> NSImage? {
-        return withSelectedVaultAccess {
-            guard let url = mediaFileURL(for: link), url.isFileURL else {
-                return nil
+        guard let vaultURL = selectedVaultURL else { return nil }
+        let didAccess = vaultURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                vaultURL.stopAccessingSecurityScopedResource()
             }
-
-            let cacheKey = mediaImageCacheKey(for: url, maxPixelWidth: maxPixelWidth)
-            if let cachedImage = mediaImageCache.object(forKey: cacheKey) {
-                return cachedImage
-            }
-
-            guard let image = downsampledImage(at: url, maxPixelWidth: maxPixelWidth)
-                ?? NSImage(contentsOf: url) else {
-                return nil
-            }
-
-            mediaImageCache.setObject(image, forKey: cacheKey, cost: imageCost(image))
-            AppLogger.media.info("Loaded media image \(url.lastPathComponent, privacy: .public)")
-            return image
         }
+
+        guard let url = mediaFileURL(for: link, in: vaultURL, allowVaultScan: true), url.isFileURL else {
+            return nil
+        }
+
+        let cacheKey = mediaImageCacheKey(for: url, maxPixelWidth: maxPixelWidth)
+        if let cachedImage = mediaImageCache.object(forKey: cacheKey) {
+            return cachedImage
+        }
+
+        guard let image = downsampledImage(at: url, maxPixelWidth: maxPixelWidth)
+            ?? NSImage(contentsOf: url) else {
+            return nil
+        }
+
+        mediaImageCache.setObject(image, forKey: cacheKey, cost: imageCost(image))
+        AppLogger.media.info("Loaded media image \(url.lastPathComponent, privacy: .public)")
+        return image
     }
 
     static func cachedImage(forMediaLink link: String, maxPixelWidth: CGFloat = 1600) -> NSImage? {
-        return withSelectedVaultAccess {
-            guard let url = mediaFileURL(for: link), url.isFileURL else {
-                return nil
+        guard let vaultURL = selectedVaultURL else { return nil }
+        let didAccess = vaultURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                vaultURL.stopAccessingSecurityScopedResource()
             }
-
-            return mediaImageCache.object(forKey: mediaImageCacheKey(for: url, maxPixelWidth: maxPixelWidth))
         }
+
+        guard let url = mediaFileURL(for: link, in: vaultURL, allowVaultScan: false), url.isFileURL else {
+            return nil
+        }
+
+        return mediaImageCache.object(forKey: mediaImageCacheKey(for: url, maxPixelWidth: maxPixelWidth))
     }
 
     static func withSelectedVaultAccess<T>(_ operation: () -> T) -> T {
@@ -652,18 +666,65 @@ struct VaultStore {
         return nil
     }
 
-    private static func mediaFileURL(for link: String) -> URL? {
-        let cacheKey = "\(selectedVaultURL?.path ?? "")|\(link)" as NSString
-        if let cachedURL = mediaURLCache.object(forKey: cacheKey) {
+    private static func mediaFileURL(for link: String, in vaultURL: URL, allowVaultScan: Bool) -> URL? {
+        let cacheKeyString = "\(vaultURL.standardizedFileURL.path)|\(link)"
+        let cacheKey = cacheKeyString as NSString
+
+        mediaCacheLock.lock()
+        let cachedURL = mediaURLCache.object(forKey: cacheKey)
+        let isKnownMissing = missingMediaURLCache.contains(cacheKeyString)
+        mediaCacheLock.unlock()
+
+        if let cachedURL {
             return cachedURL as URL
         }
-
-        guard let url = url(forWikiLink: link), url.isFileURL else {
+        if isKnownMissing {
             return nil
         }
 
+        guard let url = resolvedMediaFileURL(for: link, in: vaultURL, allowVaultScan: allowVaultScan), url.isFileURL else {
+            if allowVaultScan {
+                mediaCacheLock.lock()
+                missingMediaURLCache.insert(cacheKeyString)
+                mediaCacheLock.unlock()
+            }
+            return nil
+        }
+
+        mediaCacheLock.lock()
         mediaURLCache.setObject(url as NSURL, forKey: cacheKey)
+        mediaCacheLock.unlock()
         return url
+    }
+
+    private static func resolvedMediaFileURL(for link: String, in vaultURL: URL, allowVaultScan: Bool) -> URL? {
+        if let url = URL(string: link), url.scheme != nil {
+            return url
+        }
+
+        let rawTarget = wikiTarget(from: link)
+        let decodedTarget = (rawTarget.removingPercentEncoding ?? rawTarget)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !decodedTarget.isEmpty else { return nil }
+
+        let directURL = vaultURL.appendingPathComponent(decodedTarget)
+        if FileManager.default.fileExists(atPath: directURL.path) {
+            return directURL
+        }
+
+        guard allowVaultScan else {
+            return nil
+        }
+
+        if let foundURL = findVaultFile(named: decodedTarget, in: vaultURL) {
+            return foundURL
+        }
+
+        guard URL(fileURLWithPath: decodedTarget).pathExtension.isEmpty else {
+            return nil
+        }
+
+        return findVaultFile(named: "\(decodedTarget).md", in: vaultURL)
     }
 
     private static func mediaImageCacheKey(for url: URL, maxPixelWidth: CGFloat) -> NSString {
@@ -705,7 +766,10 @@ struct VaultStore {
     }
 
     private static func invalidateMediaCaches() {
+        mediaCacheLock.lock()
         mediaURLCache.removeAllObjects()
+        missingMediaURLCache.removeAll()
+        mediaCacheLock.unlock()
         mediaImageCache.removeAllObjects()
     }
 

@@ -409,6 +409,29 @@ struct ObsidianSideNoteTests {
         #expect(links == ["Attachments/pasted.png", "assets/other.jpg"])
     }
 
+    @Test func cachedMediaLookupDoesNotScanVaultBeforeBackgroundPreload() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let nestedURL = temporaryVaultURL.appendingPathComponent("Deep", isDirectory: true)
+        try FileManager.default.createDirectory(at: nestedURL, withIntermediateDirectories: true)
+        try #require(pngData(from: testImage())).write(
+            to: nestedURL.appendingPathComponent("Image.png"),
+            options: .atomic
+        )
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+
+        #expect(VaultStore.cachedImage(forMediaLink: "Image.png", maxPixelWidth: 800) == nil)
+        #expect(VaultStore.image(forMediaLink: "Image.png", maxPixelWidth: 800) != nil)
+        #expect(VaultStore.cachedImage(forMediaLink: "Image.png", maxPixelWidth: 800) != nil)
+    }
+
     @Test func mediaImporterRecognizesSupportedImageAndVideoFiles() {
         #expect(MediaAttachmentImporter.isSupportedMedia(URL(fileURLWithPath: "/tmp/paste.png")))
         #expect(MediaAttachmentImporter.isSupportedMedia(URL(fileURLWithPath: "/tmp/drop.tiff")))
@@ -683,4 +706,13 @@ private func testImage() -> NSImage {
     NSBezierPath(rect: NSRect(x: 0, y: 0, width: 12, height: 12)).fill()
     image.unlockFocus()
     return image
+}
+
+private func pngData(from image: NSImage) -> Data? {
+    guard let tiffData = image.tiffRepresentation,
+          let bitmap = NSBitmapImageRep(data: tiffData) else {
+        return nil
+    }
+
+    return bitmap.representation(using: .png, properties: [:])
 }

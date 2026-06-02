@@ -26,6 +26,7 @@ struct ContentView: View {
     @State private var saveErrorMessage: String?
     @State private var openNoteKeyMonitor: Any?
     @State private var cursorEndRequestID: Int = 0
+    @State private var pendingSelectedNoteAutosave: DispatchWorkItem?
     @FocusState private var isTextEditorFocused: Bool
     @FocusState private var isVaultSearchFocused: Bool
 
@@ -65,6 +66,7 @@ struct ContentView: View {
             }
         }
         .onDisappear {
+            flushSelectedNoteAutosave()
             removeSearchKeyMonitor()
             removeOpenNoteKeyMonitor()
         }
@@ -74,7 +76,7 @@ struct ContentView: View {
         .onChange(of: noteText) { oldValue, newValue in
             saveDraft()
             saveErrorMessage = nil
-            autosaveSelectedNote()
+            scheduleSelectedNoteAutosave()
             autosaveNewNote()
         }
         .onChange(of: noteTitle) { oldValue, newValue in
@@ -237,6 +239,7 @@ struct ContentView: View {
     }
 
     private func selectNote(_ note: VaultNote) {
+        flushSelectedNoteAutosave()
         isLoadingNote = true
         selectedNote = note
         noteTitle = note.relativePath
@@ -309,8 +312,22 @@ struct ContentView: View {
         }
     }
 
-    private func autosaveSelectedNote() {
+    private func scheduleSelectedNoteAutosave() {
         guard (mode == .editVaultFile || mode == .appendDaily), !isLoadingNote, let selectedNote else { return }
+        pendingSelectedNoteAutosave?.cancel()
+        let textSnapshot = noteText
+        let noteSnapshot = selectedNote
+        let workItem = DispatchWorkItem {
+            VaultStore.write(textSnapshot, to: noteSnapshot)
+        }
+        pendingSelectedNoteAutosave = workItem
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.35, execute: workItem)
+    }
+
+    private func flushSelectedNoteAutosave() {
+        guard (mode == .editVaultFile || mode == .appendDaily), !isLoadingNote, let selectedNote else { return }
+        pendingSelectedNoteAutosave?.cancel()
+        pendingSelectedNoteAutosave = nil
         VaultStore.write(noteText, to: selectedNote)
     }
 
