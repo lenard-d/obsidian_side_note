@@ -6,4 +6,9 @@ extension NSMenuItem {
         keyEquivalent = shortcut.key
         keyEquivalentModifierMask = shortcut.modifiers
     }
+
+    func removeShortcut() {
+        keyEquivalent = ""
+        keyEquivalentModifierMask = []
+    }
 }

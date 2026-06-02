@@ -260,17 +260,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func applyShortcutPreferences() {
-        appendMenuItem?.applyShortcut(.appendDaily)
-        newNoteMenuItem?.applyShortcut(.newNote)
-        editFileMenuItem?.applyShortcut(.editVaultFile)
-        settingsMenuItem?.keyEquivalent = ""
-        settingsMenuItem?.keyEquivalentModifierMask = []
+        appendMenuItem?.removeShortcut()
+        newNoteMenuItem?.removeShortcut()
+        editFileMenuItem?.removeShortcut()
+        settingsMenuItem?.removeShortcut()
         hotKeyManager?.registerAll()
     }
 
     private func installLocalShortcutMonitor() {
         localShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard NSApp.isActive else { return event }
+            guard KeyboardEventRouting.shouldHandleLocalShortcut(event) else { return event }
 
             if self?.matches(event, action: .settings) == true {
                 self?.openSettings()
@@ -303,6 +303,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let floatingWindow = window as? FloatingWindow else { return }
         floatingWindow.keyEquivalentHandler = { [weak self] event in
             guard let self else { return false }
+            guard KeyboardEventRouting.shouldHandleLocalShortcut(event) else { return false }
 
             if self.matches(event, action: .settings) {
                 self.openSettings()

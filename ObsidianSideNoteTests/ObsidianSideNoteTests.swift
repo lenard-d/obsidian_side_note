@@ -522,6 +522,54 @@ struct ObsidianSideNoteTests {
         #expect(message == "Global shortcuts need Control or Option so they do not steal normal app commands.")
     }
 
+    @Test @MainActor func keyboardRoutingLetsFocusedTextInputReceivePlainLetters() {
+        let window = NSWindow()
+        let textView = NSTextView()
+        textView.isEditable = true
+        window.contentView = textView
+        window.makeFirstResponder(textView)
+
+        let plainEvent = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "w",
+            charactersIgnoringModifiers: "w",
+            isARepeat: false,
+            keyCode: 13
+        )
+
+        #expect(plainEvent != nil)
+        #expect(KeyboardEventRouting.shouldHandleLocalShortcut(plainEvent!) == false)
+    }
+
+    @Test @MainActor func keyboardRoutingStillHandlesModifiedShortcutsInTextInput() {
+        let window = NSWindow()
+        let textView = NSTextView()
+        textView.isEditable = true
+        window.contentView = textView
+        window.makeFirstResponder(textView)
+
+        let commandEvent = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: .command,
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "w",
+            charactersIgnoringModifiers: "w",
+            isARepeat: false,
+            keyCode: 13
+        )
+
+        #expect(commandEvent != nil)
+        #expect(KeyboardEventRouting.shouldHandleLocalShortcut(commandEvent!) == true)
+    }
+
 }
 
 private func testImage() -> NSImage {
