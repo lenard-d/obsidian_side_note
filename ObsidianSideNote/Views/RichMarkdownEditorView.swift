@@ -89,11 +89,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             isRendering = true
             renderedText = source
             let selectedRange = textView.selectedRange()
-            textView.textStorage?.setAttributedString(
-                MarkdownEditorTextRenderer.attributedString(
-                    from: source,
-                    mediaWidth: mediaWidth
-                )
+            (textView as? MediaTextView)?.setRenderedAttributedString(
+                MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: mediaWidth)
             )
             textView.typingAttributes = MarkdownEditorTextRenderer.typingAttributes
             textView.setSelectedRange(Self.clamped(range: selectedRange, length: textView.string.utf16.count))
@@ -503,19 +500,20 @@ private protocol MarkdownCommandTextViewDelegate: AnyObject {
 final class MediaTextView: NSTextView {
     fileprivate weak var mediaDelegate: MediaTextViewDelegate?
     fileprivate weak var markdownCommandDelegate: MarkdownCommandTextViewDelegate?
+    private var retainedTextContentStorage: NSTextContentStorage?
 
     init() {
-        let textStorage = NSTextStorage()
-        let layoutManager = NSLayoutManager()
+        let contentStorage = NSTextContentStorage()
+        let textLayoutManager = NSTextLayoutManager()
         let textContainer = NSTextContainer(
             containerSize: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         )
 
-        textContainer.widthTracksTextView = true
-        textStorage.addLayoutManager(layoutManager)
-        layoutManager.addTextContainer(textContainer)
+        contentStorage.addTextLayoutManager(textLayoutManager)
+        textLayoutManager.textContainer = textContainer
 
         super.init(frame: .zero, textContainer: textContainer)
+        retainedTextContentStorage = contentStorage
     }
 
     override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
@@ -524,6 +522,14 @@ final class MediaTextView: NSTextView {
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
+    }
+
+    func setRenderedAttributedString(_ attributedString: NSAttributedString) {
+        if let textContentStorage = retainedTextContentStorage ?? textContentStorage {
+            textContentStorage.attributedString = attributedString
+        } else {
+            textStorage?.setAttributedString(attributedString)
+        }
     }
 
     func configureForVerticalScrolling(contentSize: NSSize) {
@@ -554,10 +560,22 @@ final class MediaTextView: NSTextView {
     }
 
     func resizeToFitTextContent() {
-        guard let layoutManager, let textContainer else { return }
+        let usedRect: CGRect
+        if let textLayoutManager {
+            textLayoutManager.ensureLayout(
+                for: CGRect(
+                    origin: .zero,
+                    size: CGSize(width: max(80, frame.width), height: CGFloat.greatestFiniteMagnitude)
+                )
+            )
+            usedRect = textLayoutManager.usageBoundsForTextContainer
+        } else if let layoutManager, let textContainer {
+            layoutManager.ensureLayout(for: textContainer)
+            usedRect = layoutManager.usedRect(for: textContainer)
+        } else {
+            return
+        }
 
-        layoutManager.ensureLayout(for: textContainer)
-        let usedRect = layoutManager.usedRect(for: textContainer)
         let requiredHeight = ceil(usedRect.height + textContainerInset.height * 2)
         let height = max(minSize.height, requiredHeight)
 

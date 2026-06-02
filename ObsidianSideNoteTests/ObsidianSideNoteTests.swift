@@ -226,8 +226,8 @@ struct ObsidianSideNoteTests {
     @Test func mediaTextViewInitializesEditableTextSystem() {
         let textView = MediaTextView()
 
-        #expect(textView.textStorage != nil)
-        #expect(textView.layoutManager != nil)
+        #expect(textView.textContentStorage != nil)
+        #expect(textView.textLayoutManager != nil)
         #expect(textView.textContainer != nil)
         #expect(textView.isEditable)
         #expect(textView.isSelectable)
