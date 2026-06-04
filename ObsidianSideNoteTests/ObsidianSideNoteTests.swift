@@ -377,12 +377,36 @@ struct ObsidianSideNoteTests {
         #expect(rendered.attribute(.foregroundColor, at: activeLineLocation, effectiveRange: nil) as? NSColor != NSColor.clear)
     }
 
+    @Test func editorRendererDisplaysTaskListMarkersAsCheckboxesWithoutChangingSource() throws {
+        let source = "- [ ] Open\n- [x] Done\n  - [X] Nested"
+        let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
+
+        #expect(rendered.string == "\u{2610} Open\n\u{2611} Done\n  \u{2611} Nested")
+        #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
+
+        let openCheckboxLocation = (rendered.string as NSString).range(of: "\u{2610}").location
+        let checkedCheckboxLocation = (rendered.string as NSString).range(of: "\u{2611}").location
+        #expect(rendered.attribute(.foregroundColor, at: openCheckboxLocation, effectiveRange: nil) as? NSColor == NSColor.secondaryLabelColor)
+        #expect(rendered.attribute(.foregroundColor, at: checkedCheckboxLocation, effectiveRange: nil) as? NSColor == NSColor.systemGreen)
+    }
+
+    @Test func editorRendererRevealsTaskListMarkdownSyntaxOnActiveLineOnly() {
+        let source = "- [ ] Hidden\n- [x] Shown"
+        let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400, activeLineIndex: 1)
+
+        #expect(rendered.string == "\u{2610} Hidden\n- [x] Shown")
+        #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
+    }
+
     @Test func editorRendererMapsVisibleCursorOffsetBackToMarkdownSource() {
         #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 0, in: "### Test") == 4)
         #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 4, in: "### Test") == 8)
         #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 0, in: "==mark==") == 2)
         #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 4, in: "==mark==") == 6)
         #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 4, in: "**bold**") == 6)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 0, in: "- [ ] Task") == 6)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 2, in: "- [ ] Task") == 6)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 6, in: "- [ ] Task") == 10)
     }
 
     @Test func editorRendererKeepsActiveImagePreviewOutOfMarkdownSource() throws {

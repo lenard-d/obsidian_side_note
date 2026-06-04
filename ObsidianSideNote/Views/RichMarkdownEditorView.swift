@@ -296,6 +296,7 @@ enum MarkdownEditorTextRenderer {
     private static let boldRegex = try? NSRegularExpression(pattern: #"\*\*([^*\n]+)\*\*"#)
     private static let italicRegex = try? NSRegularExpression(pattern: #"(?<!\*)\*([^*\n]+)\*(?!\*)"#)
     private static let strikethroughRegex = try? NSRegularExpression(pattern: #"~~([^~\n]+)~~"#)
+    private static let taskMarkerRegex = try? NSRegularExpression(pattern: #"^(\s*[-*+]\s+\[[ xX]\]\s+)"#)
     static func attributedString(from source: String, mediaWidth: CGFloat, activeLineIndex: Int? = nil) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let lines = source.components(separatedBy: .newlines)
@@ -371,6 +372,11 @@ enum MarkdownEditorTextRenderer {
     }
 
     static func sourceOffset(forVisibleOffset visibleOffset: Int, in sourceLine: String) -> Int {
+        if let taskMarkerRange = taskMarkerRange(in: sourceLine) {
+            let markerEnd = taskMarkerRange.upperBound
+            return markerEnd + max(0, visibleOffset - taskCheckboxPrefixLength)
+        }
+
         let nsLine = sourceLine as NSString
         let hiddenRanges = hiddenSyntaxRanges(in: sourceLine)
         var visibleUTF16Offset = 0
@@ -443,6 +449,14 @@ enum MarkdownEditorTextRenderer {
             return nsLine.replacingCharacters(in: headingMarkerRange, with: "")
         }
 
+        if let taskMarkerRange = taskMarkerRange(in: line) {
+            let nsLine = line as NSString
+            let marker = nsLine.substring(with: taskMarkerRange)
+            let indentation = leadingWhitespace(in: marker)
+            let checkbox = taskMarkerIsChecked(marker) ? "\u{2611}" : "\u{2610}"
+            return indentation + checkbox + " " + nsLine.substring(from: taskMarkerRange.upperBound)
+        }
+
         var renderedLine = line
         renderedLine = renderedLine.replacingOccurrences(of: #"==([^=\n]+)=="#, with: "$1", options: .regularExpression)
         renderedLine = renderedLine.replacingOccurrences(of: #"\*\*([^*\n]+)\*\*"#, with: "$1", options: .regularExpression)
@@ -457,6 +471,21 @@ enum MarkdownEditorTextRenderer {
         sourceLine: String,
         renderedLine: String
     ) {
+        if let taskMarkerRange = taskMarkerRange(in: sourceLine) {
+            let marker = (sourceLine as NSString).substring(with: taskMarkerRange)
+            let indentationLength = (leadingWhitespace(in: marker) as NSString).length
+            let checkboxRange = NSRange(location: indentationLength, length: 1)
+            if checkboxRange.upperBound <= attributedLine.length {
+                attributedLine.addAttributes(
+                    [
+                        .font: NSFont.systemFont(ofSize: 16, weight: .semibold),
+                        .foregroundColor: taskMarkerIsChecked(marker) ? NSColor.systemGreen : NSColor.secondaryLabelColor
+                    ],
+                    range: checkboxRange
+                )
+            }
+        }
+
         var searchLocation = 0
 
         applyVisibleCapture(regex: inlineCodeRegex, sourceLine: sourceLine, renderedLine: renderedLine, searchLocation: &searchLocation) { range in
@@ -522,6 +551,10 @@ enum MarkdownEditorTextRenderer {
             ranges.append(HiddenSyntaxRange(range: headingMarkerRange, skipAtBoundary: true))
         }
 
+        if let taskMarkerRange = taskMarkerRange(in: line) {
+            ranges.append(HiddenSyntaxRange(range: taskMarkerRange, skipAtBoundary: true))
+        }
+
         ranges.append(contentsOf: hiddenDelimiterRanges(regex: highlightRegex, markerLength: 2, in: line))
         ranges.append(contentsOf: hiddenDelimiterRanges(regex: boldRegex, markerLength: 2, in: line))
         ranges.append(contentsOf: hiddenDelimiterRanges(regex: strikethroughRegex, markerLength: 2, in: line))
@@ -572,6 +605,25 @@ enum MarkdownEditorTextRenderer {
         }
 
         return typingAttributes
+    }
+
+    private static var taskCheckboxPrefixLength: Int {
+        ("\u{2610} " as NSString).length
+    }
+
+    private static func taskMarkerRange(in line: String) -> NSRange? {
+        guard let taskMarkerRegex else { return nil }
+        let range = NSRange(line.startIndex..<line.endIndex, in: line)
+        guard let match = taskMarkerRegex.firstMatch(in: line, range: range) else { return nil }
+        return match.range(at: 1)
+    }
+
+    private static func taskMarkerIsChecked(_ marker: String) -> Bool {
+        marker.range(of: #"\[[xX]\]"#, options: .regularExpression) != nil
+    }
+
+    private static func leadingWhitespace(in string: String) -> String {
+        String(string.prefix { $0 == " " || $0 == "\t" })
     }
 
     private static func headingAttributes(level: Int) -> [NSAttributedString.Key: Any] {
