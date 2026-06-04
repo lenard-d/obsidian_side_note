@@ -5,6 +5,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     @Binding var text: String
     @FocusState.Binding var isFocused: Bool
     @Binding var cursorEndRequestID: Int
+    @Binding var commandRequest: MarkdownEditorCommandRequest?
     let insertMedia: (String) -> Void
     let didInsertMedia: () -> Void
 
@@ -13,6 +14,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             text: $text,
             isFocused: $isFocused,
             cursorEndRequestID: $cursorEndRequestID,
+            commandRequest: $commandRequest,
             insertMedia: insertMedia,
             didInsertMedia: didInsertMedia
         )
@@ -58,12 +60,14 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
         context.coordinator.applyFocusIfNeeded()
         context.coordinator.applyCursorEndRequestIfNeeded()
+        context.coordinator.applyCommandRequestIfNeeded()
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate, MediaTextViewDelegate, MarkdownCommandTextViewDelegate, TaskListTextViewDelegate {
         @Binding private var text: String
         @FocusState.Binding private var isFocused: Bool
         @Binding private var cursorEndRequestID: Int
+        @Binding private var commandRequest: MarkdownEditorCommandRequest?
         private let insertMedia: (String) -> Void
         private let didInsertMedia: () -> Void
         fileprivate weak var textView: NSTextView?
@@ -73,18 +77,21 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private var mediaWidth: CGFloat = 560
         private var isRendering = false
         private var appliedCursorEndRequestID = 0
+        private var appliedCommandRequestID = 0
         private var pendingMediaLoads: Set<String> = []
 
         init(
             text: Binding<String>,
             isFocused: FocusState<Bool>.Binding,
             cursorEndRequestID: Binding<Int>,
+            commandRequest: Binding<MarkdownEditorCommandRequest?>,
             insertMedia: @escaping (String) -> Void,
             didInsertMedia: @escaping () -> Void
         ) {
             _text = text
             _isFocused = isFocused
             _cursorEndRequestID = cursorEndRequestID
+            _commandRequest = commandRequest
             self.insertMedia = insertMedia
             self.didInsertMedia = didInsertMedia
         }
@@ -163,6 +170,19 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             textView.scrollRangeToVisible(NSRange(location: end, length: 0))
         }
 
+        func applyCommandRequestIfNeeded() {
+            guard let commandRequest,
+                  commandRequest.id != appliedCommandRequestID,
+                  let textView else {
+                return
+            }
+
+            appliedCommandRequestID = commandRequest.id
+            apply(commandRequest.command, in: textView)
+            textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
+            render(renderedText)
+        }
+
         func applyFocusIfNeeded() {
             guard isFocused,
                   let textView,
@@ -175,22 +195,32 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         fileprivate func mediaTextViewDidRequestPasteMedia(_ textView: MediaTextView) -> Bool {
-            guard let relativePath = MediaAttachmentImporter.importFromPasteboard() else {
+            guard MediaAttachmentImporter.canImportFromPasteboard() else {
                 return false
             }
 
-            insertMedia(relativePath)
-            didInsertMedia()
+            MediaAttachmentImporter.importFromPasteboard { [weak self] relativePath in
+                DispatchQueue.main.async {
+                    guard let self, let relativePath else { return }
+                    self.insertMedia(relativePath)
+                    self.didInsertMedia()
+                }
+            }
             return true
         }
 
         fileprivate func mediaTextView(_ textView: MediaTextView, didReceiveDrop pasteboard: NSPasteboard) -> Bool {
-            guard let relativePath = MediaAttachmentImporter.importFromPasteboard(pasteboard) else {
+            guard MediaAttachmentImporter.canImportFromPasteboard(pasteboard) else {
                 return false
             }
 
-            insertMedia(relativePath)
-            didInsertMedia()
+            MediaAttachmentImporter.importFromPasteboard(pasteboard) { [weak self] relativePath in
+                DispatchQueue.main.async {
+                    guard let self, let relativePath else { return }
+                    self.insertMedia(relativePath)
+                    self.didInsertMedia()
+                }
+            }
             return true
         }
 
@@ -279,6 +309,43 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             } else {
                 textView.setSelectedRange(NSRange(location: selectedRange.location, length: replacement.utf16.count))
             }
+        }
+
+        private func apply(_ command: MarkdownEditorCommand, in textView: NSTextView) {
+            switch command {
+            case let .wrap(wrapper):
+                Self.wrapSelection(in: textView, wrapper: wrapper)
+            case .insertLink:
+                Self.replaceSelection(in: textView, with: "[link text](url)", selectedPlaceholder: "link text")
+            case let .insertPrefix(prefix):
+                Self.insertLinePrefix(prefix, in: textView)
+            }
+        }
+
+        private static func replaceSelection(in textView: NSTextView, with replacement: String, selectedPlaceholder: String? = nil) {
+            let selectedRange = textView.selectedRange()
+            let text = textView.string as NSString
+            let selectedText = selectedRange.length > 0 ? text.substring(with: selectedRange) : replacement
+            let finalReplacement = selectedRange.length > 0 && selectedPlaceholder != nil
+                ? replacement.replacingOccurrences(of: selectedPlaceholder ?? "", with: selectedText)
+                : selectedText
+
+            textView.shouldChangeText(in: selectedRange, replacementString: finalReplacement)
+            textView.replaceCharacters(in: selectedRange, with: finalReplacement)
+            textView.didChangeText()
+            textView.setSelectedRange(NSRange(location: selectedRange.location, length: finalReplacement.utf16.count))
+        }
+
+        private static func insertLinePrefix(_ prefix: String, in textView: NSTextView) {
+            let selectedRange = textView.selectedRange()
+            let nsString = textView.string as NSString
+            let lineRange = nsString.lineRange(for: selectedRange)
+            let replacement = prefix + nsString.substring(with: lineRange)
+
+            textView.shouldChangeText(in: lineRange, replacementString: replacement)
+            textView.replaceCharacters(in: lineRange, with: replacement)
+            textView.didChangeText()
+            textView.setSelectedRange(NSRange(location: selectedRange.location + prefix.utf16.count, length: selectedRange.length))
         }
 
         private func replaceMarkdown(_ markdown: String) {

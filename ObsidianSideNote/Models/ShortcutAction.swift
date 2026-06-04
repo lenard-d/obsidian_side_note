@@ -1,4 +1,5 @@
 import AppKit
+import KeyboardShortcuts
 
 enum ShortcutAction: String, CaseIterable, Identifiable {
     case appendDaily
@@ -89,7 +90,39 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         ShortcutPreference.definition(for: self)
     }
 
+    var shortcutName: KeyboardShortcuts.Name {
+        switch self {
+        case .appendDaily:
+            return .appendDailyNote
+        case .newNote:
+            return .createNewNote
+        case .editVaultFile:
+            return .editVaultFile
+        case .settings:
+            return .openSettings
+        }
+    }
+
     var isGlobal: Bool {
         Self.globalActions.contains(self)
     }
+}
+
+extension KeyboardShortcuts.Name {
+    static let appendDailyNote = Self(
+        "appendDailyNote",
+        default: ShortcutPreference.keyboardShortcut(key: "d", modifiers: [.command, .option, .control])
+    )
+    static let createNewNote = Self(
+        "createNewNote",
+        default: ShortcutPreference.keyboardShortcut(key: "n", modifiers: [.command, .option, .control])
+    )
+    static let editVaultFile = Self(
+        "editVaultFile",
+        default: ShortcutPreference.keyboardShortcut(key: "v", modifiers: [.command, .option, .control])
+    )
+    static let openSettings = Self(
+        "openSettings",
+        default: ShortcutPreference.keyboardShortcut(key: ",", modifiers: .command)
+    )
 }

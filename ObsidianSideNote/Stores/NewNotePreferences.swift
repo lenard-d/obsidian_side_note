@@ -1,4 +1,5 @@
 import Foundation
+import Defaults
 
 struct NewNotePreferences {
     static let resumeIntervalMinutesKey = "newNote.resumeIntervalMinutes"
@@ -8,13 +9,14 @@ struct NewNotePreferences {
     static let allowedResumeIntervals = [1, 3, 5, 10, 15]
 
     static var resumeIntervalMinutes: Int {
-        let savedValue = UserDefaults.standard.integer(forKey: resumeIntervalMinutesKey)
+        migrateResumeIntervalIfNeeded()
+        let savedValue = Defaults[.newNoteResumeIntervalMinutes]
         return allowedResumeIntervals.contains(savedValue) ? savedValue : 5
     }
 
     static func setResumeIntervalMinutes(_ minutes: Int) {
         guard allowedResumeIntervals.contains(minutes) else { return }
-        UserDefaults.standard.set(minutes, forKey: resumeIntervalMinutesKey)
+        Defaults[.newNoteResumeIntervalMinutes] = minutes
     }
 
     static func startSession(now: Date = Date()) {
@@ -36,4 +38,20 @@ struct NewNotePreferences {
         UserDefaults.standard.removeObject(forKey: draftFilePathKey)
         UserDefaults.standard.removeObject(forKey: sessionStartedAtKey)
     }
+
+    private static func migrateResumeIntervalIfNeeded() {
+        guard UserDefaults.standard.object(forKey: resumeIntervalMinutesKey) != nil else {
+            return
+        }
+
+        let savedValue = UserDefaults.standard.integer(forKey: resumeIntervalMinutesKey)
+        if allowedResumeIntervals.contains(savedValue) {
+            Defaults[.newNoteResumeIntervalMinutes] = savedValue
+        }
+        UserDefaults.standard.removeObject(forKey: resumeIntervalMinutesKey)
+    }
+}
+
+extension Defaults.Keys {
+    static let newNoteResumeIntervalMinutes = Key<Int>("newNoteResumeIntervalMinutes", default: 5)
 }

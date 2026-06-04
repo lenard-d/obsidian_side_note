@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A3C961012EDB0001002911F6 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = A3C961052EDB0001002911F6 /* KeyboardShortcuts */; };
+		A3C961022EDB0001002911F6 /* Defaults in Frameworks */ = {isa = PBXBuildFile; productRef = A3C961062EDB0001002911F6 /* Defaults */; };
 		A3C960382ED97076002911F6 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = A3C960372ED97076002911F6 /* MarkdownUI */; };
 /* End PBXBuildFile section */
 
@@ -56,6 +58,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A3C961012EDB0001002911F6 /* KeyboardShortcuts in Frameworks */,
+				A3C961022EDB0001002911F6 /* Defaults in Frameworks */,
 				A3C960382ED97076002911F6 /* MarkdownUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -126,6 +130,8 @@
 			name = ObsidianSideNote;
 			packageProductDependencies = (
 				A3C960372ED97076002911F6 /* MarkdownUI */,
+				A3C961052EDB0001002911F6 /* KeyboardShortcuts */,
+				A3C961062EDB0001002911F6 /* Defaults */,
 			);
 			productName = ObsidianSideNote;
 			productReference = A3C9600B2ED8E3EF002911F6 /* ObsidianSideNote.app */;
@@ -211,6 +217,8 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				A3C960352ED96E8E002911F6 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
+				A3C961032EDB0001002911F6 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
+				A3C961042EDB0001002911F6 /* XCRemoteSwiftPackageReference "Defaults" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A3C9600C2ED8E3EF002911F6 /* Products */;
@@ -590,6 +598,22 @@
 				minimumVersion = 2.4.1;
 			};
 		};
+		A3C961032EDB0001002911F6 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sindresorhus/KeyboardShortcuts";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.4.0;
+			};
+		};
+		A3C961042EDB0001002911F6 /* XCRemoteSwiftPackageReference "Defaults" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sindresorhus/Defaults";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.0.8;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -597,6 +621,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A3C960352ED96E8E002911F6 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
 			productName = MarkdownUI;
+		};
+		A3C961052EDB0001002911F6 /* KeyboardShortcuts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A3C961032EDB0001002911F6 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
+			productName = KeyboardShortcuts;
+		};
+		A3C961062EDB0001002911F6 /* Defaults */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A3C961042EDB0001002911F6 /* XCRemoteSwiftPackageReference "Defaults" */;
+			productName = Defaults;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

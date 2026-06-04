@@ -2,6 +2,8 @@ import AppKit
 import UniformTypeIdentifiers
 
 enum MediaAttachmentImporter {
+    private static let maxRemoteMediaBytes = 25 * 1024 * 1024
+
     static let supportedDropTypes: [UTType] = [
         .image,
         .png,
@@ -25,16 +27,25 @@ enum MediaAttachmentImporter {
             return VaultStore.copyAttachment(from: fileURL)
         }
 
-        if let remoteURL = remoteMediaURL(from: pasteboard),
-           let relativePath = importRemoteMedia(from: remoteURL) {
-            return relativePath
-        }
-
         if let image = NSImage(pasteboard: pasteboard) {
             return VaultStore.saveAttachmentImage(image)
         }
 
         return nil
+    }
+
+    static func importFromPasteboard(_ pasteboard: NSPasteboard = .general, completion: @escaping (String?) -> Void) {
+        if let relativePath = importFromPasteboard(pasteboard) {
+            completion(relativePath)
+            return
+        }
+
+        guard let remoteURL = remoteMediaURL(from: pasteboard) else {
+            completion(nil)
+            return
+        }
+
+        importRemoteMedia(from: remoteURL, completion: completion)
     }
 
     static func canImportFromPasteboard(_ pasteboard: NSPasteboard = .general) -> Bool {
@@ -89,13 +100,12 @@ enum MediaAttachmentImporter {
 
         if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
             provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, _ in
-                guard let sourceURL = sourceURL(from: item),
-                      let relativePath = importRemoteMedia(from: sourceURL) else {
+                guard let sourceURL = sourceURL(from: item) else {
                     completion(nil)
                     return
                 }
 
-                completion(relativePath)
+                importRemoteMedia(from: sourceURL, completion: completion)
             }
             return
         }
@@ -178,16 +188,34 @@ enum MediaAttachmentImporter {
         return nil
     }
 
-    private static func importRemoteMedia(from url: URL) -> String? {
-        guard isRemoteMedia(url),
-              let data = try? Data(contentsOf: url) else {
-            return nil
+    private static func importRemoteMedia(from url: URL, completion: @escaping (String?) -> Void) {
+        guard isRemoteMedia(url) else {
+            completion(nil)
+            return
         }
 
-        let baseName = url.deletingPathExtension().lastPathComponent.isEmpty
-            ? VaultStore.pastedImageBaseName()
-            : url.deletingPathExtension().lastPathComponent
-        return VaultStore.saveAttachmentData(data, suggestedName: baseName, fileExtension: url.pathExtension)
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        URLSession.shared.downloadTask(with: request) { temporaryURL, response, _ in
+            guard let temporaryURL,
+                  let httpResponse = response as? HTTPURLResponse,
+                  200..<300 ~= httpResponse.statusCode else {
+                completion(nil)
+                return
+            }
+
+            guard let fileSize = try? temporaryURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                  fileSize <= maxRemoteMediaBytes,
+                  let data = try? Data(contentsOf: temporaryURL) else {
+                completion(nil)
+                return
+            }
+
+            let baseName = url.deletingPathExtension().lastPathComponent.isEmpty
+                ? VaultStore.pastedImageBaseName()
+                : url.deletingPathExtension().lastPathComponent
+            completion(VaultStore.saveAttachmentData(data, suggestedName: baseName, fileExtension: url.pathExtension))
+        }.resume()
     }
 
     private static func isRemoteMedia(_ url: URL) -> Bool {

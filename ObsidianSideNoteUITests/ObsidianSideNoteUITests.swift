@@ -32,10 +32,12 @@ final class ObsidianSideNoteUITests: XCTestCase {
     }
 
     @MainActor
-    func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
-        measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+    func testRepeatedLaunchesDoNotCrash() throws {
+        for _ in 0..<3 {
+            let app = XCUIApplication()
+            app.launch()
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+            app.terminate()
         }
     }
 }

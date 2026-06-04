@@ -7,6 +7,8 @@ struct MarkdownEditorView: View {
     @Binding var cursorEndRequestID: Int
     let insertMedia: (String) -> Void
     @State private var isDropTargeted = false
+    @State private var commandRequest: MarkdownEditorCommandRequest?
+    @State private var commandRequestID = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,18 +35,18 @@ struct MarkdownEditorView: View {
         HStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    MarkdownButton(symbol: "bold", action: { wrapSelection("**") }, tooltip: "Bold")
-                    MarkdownButton(symbol: "italic", action: { wrapSelection("*") }, tooltip: "Italic")
-                    MarkdownButton(symbol: "highlighter", action: { wrapSelection("==") }, tooltip: "Highlight")
-                    MarkdownButton(symbol: "curlybraces", action: { wrapSelection("`") }, tooltip: "Inline Code")
+                    MarkdownButton(symbol: "bold", action: { sendCommand(.wrap("**")) }, tooltip: "Bold")
+                    MarkdownButton(symbol: "italic", action: { sendCommand(.wrap("*")) }, tooltip: "Italic")
+                    MarkdownButton(symbol: "highlighter", action: { sendCommand(.wrap("==")) }, tooltip: "Highlight")
+                    MarkdownButton(symbol: "curlybraces", action: { sendCommand(.wrap("`")) }, tooltip: "Inline Code")
 
                     Divider()
                         .frame(height: 16)
 
-                    MarkdownButton(symbol: "link", action: insertLink, tooltip: "Link")
-                    MarkdownButton(symbol: "list.bullet", action: { insertPrefix("- ") }, tooltip: "Bullet List")
-                    MarkdownButton(symbol: "list.number", action: { insertPrefix("1. ") }, tooltip: "Numbered List")
-                    MarkdownButton(symbol: "checkmark.square", action: { insertPrefix("- [ ] ") }, tooltip: "Task List")
+                    MarkdownButton(symbol: "link", action: { sendCommand(.insertLink) }, tooltip: "Link")
+                    MarkdownButton(symbol: "list.bullet", action: { sendCommand(.insertPrefix("- ")) }, tooltip: "Bullet List")
+                    MarkdownButton(symbol: "list.number", action: { sendCommand(.insertPrefix("1. ")) }, tooltip: "Numbered List")
+                    MarkdownButton(symbol: "checkmark.square", action: { sendCommand(.insertPrefix("- [ ] ")) }, tooltip: "Task List")
                 }
                 .padding(.vertical, 8)
             }
@@ -58,6 +60,7 @@ struct MarkdownEditorView: View {
             text: $text,
             isFocused: $isFocused,
             cursorEndRequestID: $cursorEndRequestID,
+            commandRequest: $commandRequest,
             insertMedia: insertMedia,
             didInsertMedia: {}
         )
@@ -72,20 +75,9 @@ struct MarkdownEditorView: View {
             }
     }
 
-    private func wrapSelection(_ wrapper: String) {
-        text += "\(wrapper)text\(wrapper)"
-    }
-
-    private func insertLink() {
-        text += "[link text](url)"
-    }
-
-    private func insertPrefix(_ prefix: String) {
-        if text.isEmpty || text.hasSuffix("\n") {
-            text += prefix
-        } else {
-            text += "\n\(prefix)"
-        }
+    private func sendCommand(_ command: MarkdownEditorCommand) {
+        commandRequestID += 1
+        commandRequest = MarkdownEditorCommandRequest(id: commandRequestID, command: command)
     }
 
     private func handlePaste(_ providers: [NSItemProvider]) {
@@ -101,6 +93,17 @@ struct MarkdownEditorView: View {
         handlePaste(providers)
         return true
     }
+}
+
+struct MarkdownEditorCommandRequest: Equatable {
+    let id: Int
+    let command: MarkdownEditorCommand
+}
+
+enum MarkdownEditorCommand: Equatable {
+    case wrap(String)
+    case insertLink
+    case insertPrefix(String)
 }
 
 private struct MarkdownButton: View {

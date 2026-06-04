@@ -8,6 +8,7 @@ struct VaultStore {
     static let pathKey = "obsidianVaultPath"
     private static let mediaURLCache = NSCache<NSString, NSURL>()
     private static let mediaCacheLock = NSLock()
+    private static let notesIndexLock = NSLock()
     private static var missingMediaURLCache: Set<String> = []
     private static var notesIndexCache: NotesIndexCache?
     private static let mediaImageCache: NSCache<NSString, NSImage> = {
@@ -110,7 +111,7 @@ struct VaultStore {
 
     private static func indexedMarkdownNotes(in vaultURL: URL) -> [VaultNote] {
         let vaultPath = vaultURL.standardizedFileURL.path
-        if let cachedIndex = notesIndexCache,
+        if let cachedIndex = cachedNotesIndex(for: vaultPath),
            cachedIndex.vaultPath == vaultPath,
            Date().timeIntervalSince(cachedIndex.createdAt) < 30 {
             return cachedIndex.notes
@@ -152,7 +153,7 @@ struct VaultStore {
         }
 
         let sortedNotes = notes.sorted { $0.relativePath.localizedCaseInsensitiveCompare($1.relativePath) == .orderedAscending }
-        notesIndexCache = NotesIndexCache(vaultPath: vaultPath, createdAt: Date(), notes: sortedNotes)
+        setCachedNotesIndex(NotesIndexCache(vaultPath: vaultPath, createdAt: Date(), notes: sortedNotes))
         let elapsed = CFAbsoluteTimeGetCurrent() - startTime
         AppLogger.vault.info("Indexed \(sortedNotes.count) markdown notes in \(elapsed, privacy: .public)s")
         return sortedNotes
@@ -170,7 +171,7 @@ struct VaultStore {
         return (try? String(contentsOf: note.url, encoding: .utf8)) ?? ""
     }
 
-    static func write(_ text: String, to note: VaultNote) {
+    static func write(_ text: String, to note: VaultNote) throws {
         let vaultURL = selectedVaultURL
         let didAccess = vaultURL?.startAccessingSecurityScopedResource() ?? false
         defer {
@@ -179,7 +180,13 @@ struct VaultStore {
             }
         }
 
-        try? text.write(to: note.url, atomically: true, encoding: .utf8)
+        do {
+            try text.write(to: note.url, atomically: true, encoding: .utf8)
+        } catch {
+            AppLogger.vault.error("Could not write note \(note.relativePath, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
+
         if let vaultURL {
             invalidateNotesIndex()
             NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
@@ -762,7 +769,24 @@ struct VaultStore {
     }
 
     private static func invalidateNotesIndex() {
+        notesIndexLock.lock()
         notesIndexCache = nil
+        notesIndexLock.unlock()
+    }
+
+    private static func cachedNotesIndex(for vaultPath: String) -> NotesIndexCache? {
+        notesIndexLock.lock()
+        defer { notesIndexLock.unlock() }
+        guard notesIndexCache?.vaultPath == vaultPath else {
+            return nil
+        }
+        return notesIndexCache
+    }
+
+    private static func setCachedNotesIndex(_ index: NotesIndexCache) {
+        notesIndexLock.lock()
+        notesIndexCache = index
+        notesIndexLock.unlock()
     }
 
     private static func invalidateMediaCaches() {

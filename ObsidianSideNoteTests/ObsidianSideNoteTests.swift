@@ -8,6 +8,8 @@
 import Testing
 import Foundation
 import AppKit
+import Defaults
+import KeyboardShortcuts
 @testable import ObsidianSideNote
 
 @Suite(.serialized)
@@ -39,6 +41,7 @@ struct ObsidianSideNoteTests {
         defer {
             UserDefaults.standard.removeObject(forKey: NewNotePreferences.resumeIntervalMinutesKey)
             UserDefaults.standard.removeObject(forKey: NewNotePreferences.sessionStartedAtKey)
+            Defaults.reset(.newNoteResumeIntervalMinutes)
         }
 
         NewNotePreferences.setResumeIntervalMinutes(3)
@@ -52,6 +55,7 @@ struct ObsidianSideNoteTests {
     @Test func newNotePreferencesRejectUnsupportedIntervals() {
         defer {
             UserDefaults.standard.removeObject(forKey: NewNotePreferences.resumeIntervalMinutesKey)
+            Defaults.reset(.newNoteResumeIntervalMinutes)
         }
 
         NewNotePreferences.setResumeIntervalMinutes(7)
@@ -194,7 +198,7 @@ struct ObsidianSideNoteTests {
 
         VaultStore.saveVaultURL(temporaryVaultURL)
         let note = VaultNote(relativePath: "Draft.md", title: "Draft", url: fileURL)
-        VaultStore.write("After", to: note)
+        try VaultStore.write("After", to: note)
 
         #expect(VaultStore.read(note) == "After")
     }
@@ -624,10 +628,12 @@ struct ObsidianSideNoteTests {
     @Test func shortcutPreferencesStoreModifiersAndKey() {
         UserDefaults.standard.removeObject(forKey: ShortcutAction.newNote.preferenceKey)
         UserDefaults.standard.removeObject(forKey: ShortcutAction.newNote.modifierPreferenceKey)
+        KeyboardShortcuts.reset(.createNewNote)
 
         defer {
             UserDefaults.standard.removeObject(forKey: ShortcutAction.newNote.preferenceKey)
             UserDefaults.standard.removeObject(forKey: ShortcutAction.newNote.modifierPreferenceKey)
+            KeyboardShortcuts.reset(.createNewNote)
         }
 
         #expect(ShortcutPreference.definition(for: .newNote).modifiers == [.command, .option, .control])

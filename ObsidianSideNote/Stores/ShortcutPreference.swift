@@ -1,4 +1,6 @@
 import AppKit
+import Carbon.HIToolbox
+import KeyboardShortcuts
 
 struct ShortcutPreference {
     static func normalized(_ value: String, fallback: String = "d") -> String {
@@ -13,12 +15,15 @@ struct ShortcutPreference {
     }
 
     static func definition(for action: ShortcutAction) -> ShortcutDefinition {
-        let storedKey = UserDefaults.standard.string(forKey: action.preferenceKey) ?? action.defaultKey
-        let rawModifiers = UserDefaults.standard.integer(forKey: action.modifierPreferenceKey)
-        let modifiers = rawModifiers == 0 ? action.defaultModifiers : modifierFlags(from: rawModifiers)
+        migrateLegacyShortcutIfNeeded(for: action)
+
+        guard let shortcut = KeyboardShortcuts.getShortcut(for: action.shortcutName) else {
+            return ShortcutDefinition(key: action.defaultKey, modifiers: action.defaultModifiers)
+        }
+
         return ShortcutDefinition(
-            key: normalized(storedKey, fallback: action.defaultKey),
-            modifiers: menuModifierFlags(from: modifiers)
+            key: GlobalHotKeyManager.key(forKeyCode: shortcut.carbonKeyCode) ?? action.defaultKey,
+            modifiers: menuModifierFlags(from: shortcut.modifiers)
         )
     }
 
@@ -29,9 +34,19 @@ struct ShortcutPreference {
     static func set(_ value: String, modifiers: NSEvent.ModifierFlags, for action: ShortcutAction) {
         let normalizedValue = normalized(value, fallback: action.defaultKey)
         let normalizedModifiers = menuModifierFlags(from: modifiers)
-        UserDefaults.standard.set(normalizedValue, forKey: action.preferenceKey)
-        UserDefaults.standard.set(rawValue(for: normalizedModifiers), forKey: action.modifierPreferenceKey)
+        KeyboardShortcuts.setShortcut(
+            keyboardShortcut(key: normalizedValue, modifiers: normalizedModifiers),
+            for: action.shortcutName
+        )
         NotificationCenter.default.post(name: .shortcutPreferencesDidChange, object: nil)
+    }
+
+    static func keyboardShortcut(key: String, modifiers: NSEvent.ModifierFlags) -> KeyboardShortcuts.Shortcut? {
+        guard let keyCode = GlobalHotKeyManager.keyCode(for: key) else { return nil }
+        return KeyboardShortcuts.Shortcut(
+            carbonKeyCode: keyCode,
+            carbonModifiers: carbonModifiers(from: menuModifierFlags(from: modifiers))
+        )
     }
 
     static func displayModifiers(_ modifiers: NSEvent.ModifierFlags) -> String {
@@ -52,16 +67,34 @@ struct ShortcutPreference {
         return result
     }
 
-    private static func rawValue(for modifiers: NSEvent.ModifierFlags) -> Int {
+    static func carbonModifiers(from modifiers: NSEvent.ModifierFlags) -> Int {
         var rawValue = 0
-        if modifiers.contains(.command) { rawValue |= 1 << 0 }
-        if modifiers.contains(.option) { rawValue |= 1 << 1 }
-        if modifiers.contains(.control) { rawValue |= 1 << 2 }
-        if modifiers.contains(.shift) { rawValue |= 1 << 3 }
+        if modifiers.contains(.command) { rawValue |= cmdKey }
+        if modifiers.contains(.option) { rawValue |= optionKey }
+        if modifiers.contains(.control) { rawValue |= controlKey }
+        if modifiers.contains(.shift) { rawValue |= shiftKey }
         return rawValue
     }
 
-    private static func modifierFlags(from rawValue: Int) -> NSEvent.ModifierFlags {
+    private static func migrateLegacyShortcutIfNeeded(for action: ShortcutAction) {
+        guard KeyboardShortcuts.getShortcut(for: action.shortcutName) == nil,
+              UserDefaults.standard.object(forKey: action.preferenceKey) != nil else {
+            return
+        }
+
+        let storedKey = UserDefaults.standard.string(forKey: action.preferenceKey) ?? action.defaultKey
+        let rawModifiers = UserDefaults.standard.integer(forKey: action.modifierPreferenceKey)
+        let modifiers = rawModifiers == 0 ? action.defaultModifiers : legacyModifierFlags(from: rawModifiers)
+
+        KeyboardShortcuts.setShortcut(
+            keyboardShortcut(key: storedKey, modifiers: modifiers),
+            for: action.shortcutName
+        )
+        UserDefaults.standard.removeObject(forKey: action.preferenceKey)
+        UserDefaults.standard.removeObject(forKey: action.modifierPreferenceKey)
+    }
+
+    private static func legacyModifierFlags(from rawValue: Int) -> NSEvent.ModifierFlags {
         var modifiers: NSEvent.ModifierFlags = []
         if rawValue & (1 << 0) != 0 { modifiers.insert(.command) }
         if rawValue & (1 << 1) != 0 { modifiers.insert(.option) }

@@ -27,6 +27,7 @@ struct ContentView: View {
     @State private var openNoteKeyMonitor: Any?
     @State private var cursorEndRequestID: Int = 0
     @State private var pendingSelectedNoteAutosave: DispatchWorkItem?
+    @State private var pendingNewNoteAutosave: DispatchWorkItem?
     @FocusState private var isTextEditorFocused: Bool
     @FocusState private var isVaultSearchFocused: Bool
 
@@ -67,6 +68,7 @@ struct ContentView: View {
         }
         .onDisappear {
             flushSelectedNoteAutosave()
+            flushNewNoteAutosave()
             removeSearchKeyMonitor()
             removeOpenNoteKeyMonitor()
         }
@@ -81,7 +83,7 @@ struct ContentView: View {
         }
         .onChange(of: noteTitle) { oldValue, newValue in
             saveDraft()
-            autosaveNewNote()
+            scheduleNewNoteAutosave()
         }
         .onChange(of: vaultSearchQuery) { oldValue, newValue in
             if mode == .editVaultFile {
@@ -318,7 +320,13 @@ struct ContentView: View {
         let textSnapshot = noteText
         let noteSnapshot = selectedNote
         let workItem = DispatchWorkItem {
-            VaultStore.write(textSnapshot, to: noteSnapshot)
+            do {
+                try VaultStore.write(textSnapshot, to: noteSnapshot)
+            } catch {
+                DispatchQueue.main.async {
+                    saveErrorMessage = "Could not save note: \(error.localizedDescription)"
+                }
+            }
         }
         pendingSelectedNoteAutosave = workItem
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.35, execute: workItem)
@@ -328,7 +336,24 @@ struct ContentView: View {
         guard (mode == .editVaultFile || mode == .appendDaily), !isLoadingNote, let selectedNote else { return }
         pendingSelectedNoteAutosave?.cancel()
         pendingSelectedNoteAutosave = nil
-        VaultStore.write(noteText, to: selectedNote)
+        writeSelectedNote(noteText, to: selectedNote)
+    }
+
+    private func scheduleNewNoteAutosave() {
+        guard mode == .newNote else { return }
+        pendingNewNoteAutosave?.cancel()
+        let workItem = DispatchWorkItem {
+            autosaveNewNote()
+        }
+        pendingNewNoteAutosave = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
+    }
+
+    private func flushNewNoteAutosave() {
+        guard mode == .newNote else { return }
+        pendingNewNoteAutosave?.cancel()
+        pendingNewNoteAutosave = nil
+        autosaveNewNote()
     }
 
     private func autosaveNewNote() {
@@ -337,7 +362,7 @@ struct ContentView: View {
 
         guard !trimmedText.isEmpty else {
             if let createdNewNote {
-                VaultStore.write(noteText, to: createdNewNote)
+                writeSelectedNote(noteText, to: createdNewNote)
             } else {
                 UserDefaults.standard.removeObject(forKey: NewNotePreferences.draftFilePathKey)
             }
@@ -349,10 +374,10 @@ struct ContentView: View {
                let renamedNote = VaultStore.rename(createdNewNote, toTitle: noteTitle) {
                 self.createdNewNote = renamedNote
                 UserDefaults.standard.set(renamedNote.relativePath, forKey: NewNotePreferences.draftFilePathKey)
-                VaultStore.write(noteText, to: renamedNote)
+                writeSelectedNote(noteText, to: renamedNote)
                 return
             }
-            VaultStore.write(noteText, to: createdNewNote)
+            writeSelectedNote(noteText, to: createdNewNote)
             return
         }
 
@@ -363,6 +388,14 @@ struct ContentView: View {
 
         createdNewNote = note
         UserDefaults.standard.set(note.relativePath, forKey: NewNotePreferences.draftFilePathKey)
+    }
+
+    private func writeSelectedNote(_ text: String, to note: VaultNote) {
+        do {
+            try VaultStore.write(text, to: note)
+        } catch {
+            saveErrorMessage = "Could not save note: \(error.localizedDescription)"
+        }
     }
 
     private func insertMediaLink(_ relativePath: String) {
