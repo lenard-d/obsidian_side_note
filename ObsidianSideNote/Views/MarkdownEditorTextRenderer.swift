@@ -124,8 +124,8 @@ enum MarkdownEditorTextRenderer {
         let nsLine = lines[lineIndex] as NSString
         let marker = nsLine.substring(with: taskMarkerRange)
         let toggledMarker = taskMarkerIsChecked(marker)
-            ? marker.replacingOccurrences(of: #"\[[xX]\]"#, with: "[ ]", options: .regularExpression)
-            : marker.replacingOccurrences(of: #"\[ \]"#, with: "[x]", options: .regularExpression)
+            ? marker.replacingCheckboxMarker(with: "[ ]")
+            : marker.replacingCheckboxMarker(with: "[x]")
         lines[lineIndex] = nsLine.replacingCharacters(in: taskMarkerRange, with: toggledMarker)
         return lines.joined(separator: "\n")
     }
@@ -488,6 +488,21 @@ enum MarkdownEditorTextRenderer {
 
     private static func cachedImage(for link: String, maxWidth: CGFloat) -> NSImage? {
         VaultStore.cachedImage(forMediaLink: link, maxPixelWidth: maxWidth * 2)
+    }
+}
+
+private extension String {
+    func replacingCheckboxMarker(with replacement: String) -> String {
+        let checkboxRange = range(of: "[ ]")
+            ?? range(of: "[x]")
+            ?? range(of: "[X]")
+        guard let checkboxRange else {
+            return self
+        }
+
+        var updated = self
+        updated.replaceSubrange(checkboxRange, with: replacement)
+        return updated
     }
 }
 
