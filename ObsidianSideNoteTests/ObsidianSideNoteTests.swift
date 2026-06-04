@@ -280,6 +280,7 @@ struct ObsidianSideNoteTests {
         #expect(EmbeddedMedia(markdownLine: "[Sketch](https://example.com/sketch.png)") == nil)
     }
 
+    @MainActor
     @Test func editorRendererStylesMarkdownHeadingsWithoutChangingSource() throws {
         let source = "# One\n### Three\n###### Six\n#NoSpace"
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
@@ -341,6 +342,7 @@ struct ObsidianSideNoteTests {
         #expect(textView.frame.height > 160)
     }
 
+    @MainActor
     @Test func editorRendererStylesBasicInlineMarkdownWithoutChangingSource() throws {
         let source = "This is ==marked==, **bold**, *italic*, ~~plain~~, and `code`."
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
@@ -368,6 +370,7 @@ struct ObsidianSideNoteTests {
         #expect(codeFont.isFixedPitch)
     }
 
+    @MainActor
     @Test func editorRendererRevealsInlineMarkdownSyntaxOnActiveLineOnly() throws {
         let source = "==hidden==\n==shown=="
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400, activeLineIndex: 1)
@@ -381,6 +384,7 @@ struct ObsidianSideNoteTests {
         #expect(rendered.attribute(.foregroundColor, at: activeLineLocation, effectiveRange: nil) as? NSColor != NSColor.clear)
     }
 
+    @MainActor
     @Test func editorRendererDisplaysTaskListMarkersAsCheckboxesWithoutChangingSource() throws {
         let source = "- [ ] Open\n- [x] Done\n  - [X] Nested"
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
@@ -394,6 +398,7 @@ struct ObsidianSideNoteTests {
         #expect(rendered.attribute(.foregroundColor, at: checkedCheckboxLocation, effectiveRange: nil) as? NSColor == NSColor.systemGreen)
     }
 
+    @MainActor
     @Test func editorRendererRevealsTaskListMarkdownSyntaxOnActiveLineOnly() {
         let source = "- [ ] Hidden\n- [x] Shown"
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400, activeLineIndex: 1)
@@ -422,6 +427,7 @@ struct ObsidianSideNoteTests {
         #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 6, in: "- [ ] Task") == 10)
     }
 
+    @MainActor
     @Test func editorRendererKeepsActiveImagePreviewOutOfMarkdownSource() throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
