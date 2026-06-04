@@ -36,8 +36,19 @@ final class ObsidianSideNoteUITests: XCTestCase {
         for _ in 0..<3 {
             let app = XCUIApplication()
             app.launch()
-            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+            XCTAssertTrue(waitUntilRunning(app))
             app.terminate()
         }
+    }
+
+    private func waitUntilRunning(_ app: XCUIApplication, timeout: TimeInterval = 5) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if app.state != .notRunning {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return false
     }
 }

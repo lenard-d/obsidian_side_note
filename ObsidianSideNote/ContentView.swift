@@ -12,41 +12,32 @@ struct ContentView: View {
     let mode: NoteMode
     let closeWindow: () -> Void
 
-    @State private var noteText: String = ""
-    @State private var noteTitle: String = ""
-    @State private var vaultSearchQuery: String = ""
-    @State private var vaultName: String = VaultStore.selectedVaultName
-    @State private var vaultPath: String = UserDefaults.standard.string(forKey: VaultStore.pathKey) ?? ""
-    @State private var searchResults: [VaultNote] = []
-    @State private var selectedNote: VaultNote?
-    @State private var createdNewNote: VaultNote?
-    @State private var highlightedSearchIndex: Int = 0
-    @State private var searchKeyMonitor: Any?
-    @State private var isLoadingNote: Bool = false
-    @State private var saveErrorMessage: String?
-    @State private var openNoteKeyMonitor: Any?
-    @State private var cursorEndRequestID: Int = 0
-    @State private var pendingSelectedNoteAutosave: DispatchWorkItem?
-    @State private var pendingNewNoteAutosave: DispatchWorkItem?
+    @StateObject private var viewModel: ContentViewModel
     @FocusState private var isTextEditorFocused: Bool
     @FocusState private var isVaultSearchFocused: Bool
+
+    init(mode: NoteMode, closeWindow: @escaping () -> Void) {
+        self.mode = mode
+        self.closeWindow = closeWindow
+        _viewModel = StateObject(wrappedValue: ContentViewModel(mode: mode))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             if mode == .settings {
-                SettingsView(vaultName: $vaultName, vaultPath: $vaultPath, closeWindow: closeWindow)
+                SettingsView(vaultName: $viewModel.vaultName, vaultPath: $viewModel.vaultPath, closeWindow: closeWindow)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if mode == .setup {
-                SetupView(vaultName: $vaultName, vaultPath: $vaultPath, closeWindow: closeWindow)
+                SetupView(vaultName: $viewModel.vaultName, vaultPath: $viewModel.vaultPath, closeWindow: closeWindow)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 VStack(spacing: 0) {
                     header
                     MarkdownEditorView(
-                        text: $noteText,
+                        text: $viewModel.noteText,
                         isFocused: $isTextEditorFocused,
-                        cursorEndRequestID: $cursorEndRequestID,
-                        insertMedia: insertMediaLink
+                        cursorEndRequestID: $viewModel.cursorEndRequestID,
+                        insertMedia: viewModel.insertMediaLink
                     )
                 }
             }
@@ -56,40 +47,27 @@ struct ContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .onAppear {
             if mode != .settings && mode != .setup {
-                loadDraft()
-                refreshSearchResults()
-                loadDailyNoteIfNeeded()
-                DispatchQueue.main.asyncAfter(deadline: .now()) {
+                viewModel.start(clearSearchFocus: {
+                    isVaultSearchFocused = false
+                }, focusEditor: {
                     isTextEditorFocused = true
-                }
-                installSearchKeyMonitor()
-                installOpenNoteKeyMonitor()
+                })
             }
         }
         .onDisappear {
-            flushSelectedNoteAutosave()
-            flushNewNoteAutosave()
-            removeSearchKeyMonitor()
-            removeOpenNoteKeyMonitor()
+            viewModel.stop()
         }
         .onExitCommand {
             closeWindow()
         }
-        .onChange(of: noteText) { oldValue, newValue in
-            saveDraft()
-            saveErrorMessage = nil
-            scheduleSelectedNoteAutosave()
-            autosaveNewNote()
+        .onChange(of: viewModel.noteText) { oldValue, newValue in
+            viewModel.textDidChange()
         }
-        .onChange(of: noteTitle) { oldValue, newValue in
-            saveDraft()
-            scheduleNewNoteAutosave()
+        .onChange(of: viewModel.noteTitle) { oldValue, newValue in
+            viewModel.titleDidChange()
         }
-        .onChange(of: vaultSearchQuery) { oldValue, newValue in
-            if mode == .editVaultFile {
-                UserDefaults.standard.set(newValue, forKey: "draft.editVaultFile.search")
-                refreshSearchResults()
-            }
+        .onChange(of: viewModel.vaultSearchQuery) { oldValue, newValue in
+            viewModel.searchQueryDidChange()
         }
     }
 
@@ -98,31 +76,31 @@ struct ContentView: View {
             NoteEditorHeader(mode: mode, closeWindow: closeWindow)
 
             if mode == .newNote {
-                SelectAllOnFocusTextField(placeholder: "Title", text: $noteTitle)
+                SelectAllOnFocusTextField(placeholder: "Title", text: $viewModel.noteTitle)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
             }
 
             if mode == .editVaultFile {
                 VaultSearchPanel(
-                    query: $vaultSearchQuery,
-                    selectedNote: $selectedNote,
-                    highlightedIndex: $highlightedSearchIndex,
+                    query: $viewModel.vaultSearchQuery,
+                    selectedNote: $viewModel.selectedNote,
+                    highlightedIndex: $viewModel.highlightedSearchIndex,
                     isSearchFocused: $isVaultSearchFocused,
-                    vaultName: vaultName,
-                    filePath: noteTitle,
-                    results: searchResults,
-                    showsSuggestions: shouldShowSearchSuggestions,
-                    openInObsidian: openVaultFile,
-                    selectNote: selectNote
+                    vaultName: viewModel.vaultName,
+                    filePath: viewModel.noteTitle,
+                    results: viewModel.searchResults,
+                    showsSuggestions: viewModel.shouldShowSearchSuggestions && isVaultSearchFocused,
+                    openInObsidian: viewModel.openVaultFile,
+                    selectNote: viewModel.selectNote
                 )
             }
 
-            if shouldShowMissingVaultPrompt {
+            if viewModel.shouldShowMissingVaultPrompt {
                 MissingVaultPrompt()
             }
 
-            if let saveErrorMessage {
+            if let saveErrorMessage = viewModel.saveErrorMessage {
                 Text(saveErrorMessage)
                     .font(.system(size: 11))
                     .foregroundColor(.red)
@@ -134,346 +112,6 @@ struct ContentView: View {
             Divider()
         }
         .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
-    }
-
-    private var shouldShowSearchSuggestions: Bool {
-        mode == .editVaultFile
-            && isVaultSearchFocused
-            && !vaultSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && selectedNote?.relativePath != vaultSearchQuery
-    }
-
-    private var shouldShowMissingVaultPrompt: Bool {
-        switch mode {
-        case .appendDaily:
-            return vaultPath.isEmpty
-        case .newNote, .editVaultFile:
-            return vaultPath.isEmpty
-        case .settings, .setup:
-            return false
-        }
-    }
-
-    private func openVaultFile() {
-        let filePath = selectedNote?.relativePath ?? noteTitle
-        guard !vaultName.isEmpty, !filePath.isEmpty else { return }
-        if let url = ObsidianURIBuilder.openFile(vaultName: vaultName, filePath: filePath) {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    private func openCurrentNoteInObsidian() {
-        switch mode {
-        case .appendDaily:
-            guard !vaultName.isEmpty, let url = ObsidianURIBuilder.openDaily(vaultName: vaultName) else { return }
-            NSWorkspace.shared.open(url)
-        case .newNote:
-            autosaveNewNote()
-            guard let createdNewNote,
-                  !vaultName.isEmpty,
-                  let url = ObsidianURIBuilder.openFile(vaultName: vaultName, filePath: createdNewNote.relativePath) else { return }
-            NSWorkspace.shared.open(url)
-        case .editVaultFile:
-            openVaultFile()
-        case .settings, .setup:
-            break
-        }
-    }
-
-    private func loadDraft() {
-        guard mode != .appendDaily else {
-            vaultName = VaultStore.selectedVaultName
-            vaultPath = UserDefaults.standard.string(forKey: VaultStore.pathKey) ?? ""
-            return
-        }
-
-        noteText = UserDefaults.standard.string(forKey: mode.draftTextKey) ?? ""
-        noteTitle = UserDefaults.standard.string(forKey: mode.draftTitleKey) ?? ""
-        if mode == .newNote, noteTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            noteTitle = VaultStore.defaultQuickNoteTitle(fallbackDate: dateString())
-        }
-        vaultSearchQuery = UserDefaults.standard.string(forKey: "draft.editVaultFile.search") ?? ""
-        vaultName = VaultStore.selectedVaultName
-        vaultPath = UserDefaults.standard.string(forKey: VaultStore.pathKey) ?? ""
-
-        if mode == .newNote,
-           let relativePath = UserDefaults.standard.string(forKey: NewNotePreferences.draftFilePathKey) {
-            createdNewNote = VaultStore.note(relativePath: relativePath)
-        }
-    }
-
-    private func loadDailyNoteIfNeeded() {
-        guard mode == .appendDaily else { return }
-
-        loadDailyNoteFromVault()
-    }
-
-    private func loadDailyNoteFromVault() {
-        guard mode == .appendDaily else { return }
-        guard let note = VaultStore.ensureDailyNoteForToday() else {
-            saveErrorMessage = "Could not open today's daily note."
-            return
-        }
-
-        isLoadingNote = true
-        selectedNote = note
-        noteTitle = note.relativePath
-        noteText = VaultStore.read(note)
-        cursorEndRequestID += 1
-        isLoadingNote = false
-    }
-
-    private func saveDraft() {
-        guard mode != .settings && mode != .setup else { return }
-        UserDefaults.standard.set(noteText, forKey: mode.draftTextKey)
-        if !mode.draftTitleKey.isEmpty {
-            UserDefaults.standard.set(noteTitle, forKey: mode.draftTitleKey)
-        }
-    }
-
-    private func refreshSearchResults() {
-        guard mode == .editVaultFile else { return }
-        searchResults = VaultStore.markdownNotes(matching: vaultSearchQuery)
-        highlightedSearchIndex = min(highlightedSearchIndex, max(searchResults.prefix(8).count - 1, 0))
-        if let selectedNote, !searchResults.contains(selectedNote) {
-            self.selectedNote = nil
-        }
-    }
-
-    private func selectNote(_ note: VaultNote) {
-        flushSelectedNoteAutosave()
-        isLoadingNote = true
-        selectedNote = note
-        noteTitle = note.relativePath
-        noteText = VaultStore.read(note)
-        vaultSearchQuery = note.relativePath
-        isVaultSearchFocused = false
-        isLoadingNote = false
-    }
-
-    private func selectHighlightedSearchResult() {
-        let visibleResults = Array(searchResults.prefix(8))
-        guard !visibleResults.isEmpty else { return }
-        let index = min(max(highlightedSearchIndex, 0), visibleResults.count - 1)
-        selectNote(visibleResults[index])
-    }
-
-    private func installSearchKeyMonitor() {
-        guard mode == .editVaultFile, searchKeyMonitor == nil else { return }
-        searchKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard shouldShowSearchSuggestions else {
-                return event
-            }
-
-            let visibleCount = searchResults.prefix(8).count
-            guard visibleCount > 0 else {
-                return event
-            }
-
-            switch event.keyCode {
-            case 125:
-                highlightedSearchIndex = min(highlightedSearchIndex + 1, visibleCount - 1)
-                return nil
-            case 126:
-                highlightedSearchIndex = max(highlightedSearchIndex - 1, 0)
-                return nil
-            case 36, 48:
-                selectHighlightedSearchResult()
-                return nil
-            default:
-                return event
-            }
-        }
-    }
-
-    private func installOpenNoteKeyMonitor() {
-        guard openNoteKeyMonitor == nil else { return }
-        openNoteKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard NSApp.isActive,
-                  ShortcutPreference.normalized(event.charactersIgnoringModifiers ?? "") == "o",
-                  ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == .command else {
-                return event
-            }
-
-            openCurrentNoteInObsidian()
-            return nil
-        }
-    }
-
-    private func removeSearchKeyMonitor() {
-        if let searchKeyMonitor {
-            NSEvent.removeMonitor(searchKeyMonitor)
-            self.searchKeyMonitor = nil
-        }
-    }
-
-    private func removeOpenNoteKeyMonitor() {
-        if let openNoteKeyMonitor {
-            NSEvent.removeMonitor(openNoteKeyMonitor)
-            self.openNoteKeyMonitor = nil
-        }
-    }
-
-    private func scheduleSelectedNoteAutosave() {
-        guard (mode == .editVaultFile || mode == .appendDaily), !isLoadingNote, let selectedNote else { return }
-        pendingSelectedNoteAutosave?.cancel()
-        let textSnapshot = noteText
-        let noteSnapshot = selectedNote
-        let workItem = DispatchWorkItem {
-            do {
-                try VaultStore.write(textSnapshot, to: noteSnapshot)
-            } catch {
-                DispatchQueue.main.async {
-                    saveErrorMessage = "Could not save note: \(error.localizedDescription)"
-                }
-            }
-        }
-        pendingSelectedNoteAutosave = workItem
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.35, execute: workItem)
-    }
-
-    private func flushSelectedNoteAutosave() {
-        guard (mode == .editVaultFile || mode == .appendDaily), !isLoadingNote, let selectedNote else { return }
-        pendingSelectedNoteAutosave?.cancel()
-        pendingSelectedNoteAutosave = nil
-        writeSelectedNote(noteText, to: selectedNote)
-    }
-
-    private func scheduleNewNoteAutosave() {
-        guard mode == .newNote else { return }
-        pendingNewNoteAutosave?.cancel()
-        let workItem = DispatchWorkItem {
-            autosaveNewNote()
-        }
-        pendingNewNoteAutosave = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
-    }
-
-    private func flushNewNoteAutosave() {
-        guard mode == .newNote else { return }
-        pendingNewNoteAutosave?.cancel()
-        pendingNewNoteAutosave = nil
-        autosaveNewNote()
-    }
-
-    private func autosaveNewNote() {
-        guard mode == .newNote else { return }
-        let trimmedText = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !trimmedText.isEmpty else {
-            if let createdNewNote {
-                writeSelectedNote(noteText, to: createdNewNote)
-            } else {
-                UserDefaults.standard.removeObject(forKey: NewNotePreferences.draftFilePathKey)
-            }
-            return
-        }
-
-        if let createdNewNote {
-            if noteTitle.trimmingCharacters(in: .whitespacesAndNewlines) != createdNewNote.title,
-               let renamedNote = VaultStore.rename(createdNewNote, toTitle: noteTitle) {
-                self.createdNewNote = renamedNote
-                UserDefaults.standard.set(renamedNote.relativePath, forKey: NewNotePreferences.draftFilePathKey)
-                writeSelectedNote(noteText, to: renamedNote)
-                return
-            }
-            writeSelectedNote(noteText, to: createdNewNote)
-            return
-        }
-
-        guard let note = VaultStore.createOrUpdateNote(title: noteTitle, text: noteText, fallbackDate: dateString()) else {
-            saveErrorMessage = "Could not create note in selected vault."
-            return
-        }
-
-        createdNewNote = note
-        UserDefaults.standard.set(note.relativePath, forKey: NewNotePreferences.draftFilePathKey)
-    }
-
-    private func writeSelectedNote(_ text: String, to note: VaultNote) {
-        do {
-            try VaultStore.write(text, to: note)
-        } catch {
-            saveErrorMessage = "Could not save note: \(error.localizedDescription)"
-        }
-    }
-
-    private func insertMediaLink(_ relativePath: String) {
-        let insertion = "![[\(relativePath)]]"
-        if noteText.isEmpty || noteText.hasSuffix("\n") {
-            noteText += insertion
-        } else {
-            noteText += "\n\(insertion)"
-        }
-    }
-
-    private func clearDraft() {
-        UserDefaults.standard.removeObject(forKey: mode.draftTextKey)
-        if !mode.draftTitleKey.isEmpty {
-            UserDefaults.standard.removeObject(forKey: mode.draftTitleKey)
-        }
-        if mode == .newNote {
-            UserDefaults.standard.removeObject(forKey: NewNotePreferences.draftFilePathKey)
-        }
-    }
-
-    private func dateString() -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd HH-mm"
-        return formatter.string(from: Date())
-    }
-}
-
-private struct SelectAllOnFocusTextField: NSViewRepresentable {
-    let placeholder: String
-    @Binding var text: String
-
-    func makeNSView(context: Context) -> NSTextField {
-        let textField = NSTextField()
-        textField.placeholderString = placeholder
-        textField.isBordered = false
-        textField.drawsBackground = false
-        textField.focusRingType = .none
-        textField.font = .systemFont(ofSize: 15, weight: .semibold)
-        textField.textColor = .labelColor
-        textField.delegate = context.coordinator
-        textField.target = context.coordinator
-        textField.action = #selector(Coordinator.textDidCommit(_:))
-        return textField
-    }
-
-    func updateNSView(_ textField: NSTextField, context: Context) {
-        if textField.stringValue != text {
-            textField.stringValue = text
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
-    }
-
-    final class Coordinator: NSObject, NSTextFieldDelegate {
-        @Binding private var text: String
-
-        init(text: Binding<String>) {
-            _text = text
-        }
-
-        func controlTextDidChange(_ notification: Notification) {
-            guard let textField = notification.object as? NSTextField else { return }
-            text = textField.stringValue
-        }
-
-        func controlTextDidBeginEditing(_ notification: Notification) {
-            guard let textField = notification.object as? NSTextField,
-                  let editor = textField.currentEditor() else { return }
-            editor.selectAll(nil)
-        }
-
-        @objc func textDidCommit(_ sender: NSTextField) {
-            text = sender.stringValue
-        }
     }
 }
 

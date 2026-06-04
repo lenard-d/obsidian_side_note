@@ -625,6 +625,7 @@ struct ObsidianSideNoteTests {
         #expect(components.queryItems?.contains(where: { $0.name == "silent" }) == false)
     }
 
+    @MainActor
     @Test func shortcutPreferencesStoreModifiersAndKey() {
         UserDefaults.standard.removeObject(forKey: ShortcutAction.newNote.preferenceKey)
         UserDefaults.standard.removeObject(forKey: ShortcutAction.newNote.modifierPreferenceKey)
