@@ -343,6 +343,34 @@ struct ObsidianSideNoteTests {
     }
 
     @MainActor
+    @Test func mediaTextViewRoutesMarkdownCommandShortcutsThroughDelegate() throws {
+        let textView = MediaTextView()
+        let delegate = MediaTextViewProbe()
+        textView.markdownCommandDelegate = delegate
+
+        let boldEvent = try #require(commandKeyEvent("b"))
+        let italicEvent = try #require(commandKeyEvent("i"))
+        let highlightEvent = try #require(commandKeyEvent("h"))
+
+        #expect(textView.performKeyEquivalent(with: boldEvent))
+        #expect(textView.performKeyEquivalent(with: italicEvent))
+        #expect(textView.performKeyEquivalent(with: highlightEvent))
+        #expect(delegate.requestedWrappers == ["**", "*", "=="])
+    }
+
+    @MainActor
+    @Test func mediaTextViewPasteLetsMediaDelegateConsumePaste() {
+        let textView = MediaTextView()
+        let delegate = MediaTextViewProbe()
+        delegate.shouldConsumePaste = true
+        textView.mediaDelegate = delegate
+
+        textView.paste(nil)
+
+        #expect(delegate.pasteRequestCount == 1)
+    }
+
+    @MainActor
     @Test func editorRendererStylesBasicInlineMarkdownWithoutChangingSource() throws {
         let source = "This is ==marked==, **bold**, *italic*, ~~plain~~, and `code`."
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
@@ -875,4 +903,45 @@ private final class RemoteMediaURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+@MainActor
+private func commandKeyEvent(_ key: String) -> NSEvent? {
+    NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: .command,
+        timestamp: 0,
+        windowNumber: 0,
+        context: nil,
+        characters: key,
+        charactersIgnoringModifiers: key,
+        isARepeat: false,
+        keyCode: 0
+    )
+}
+
+@MainActor
+private final class MediaTextViewProbe: MediaTextViewDelegate, MarkdownCommandTextViewDelegate, TaskListTextViewDelegate {
+    var shouldConsumePaste = false
+    var pasteRequestCount = 0
+    var requestedWrappers: [String] = []
+    var taskToggleLocations: [Int] = []
+
+    func mediaTextViewDidRequestPasteMedia(_ textView: MediaTextView) -> Bool {
+        pasteRequestCount += 1
+        return shouldConsumePaste
+    }
+
+    func mediaTextView(_ textView: MediaTextView, didReceiveDrop pasteboard: NSPasteboard) -> Bool {
+        false
+    }
+
+    func mediaTextView(_ textView: MediaTextView, didRequestMarkdownWrapper wrapper: String) {
+        requestedWrappers.append(wrapper)
+    }
+
+    func mediaTextView(_ textView: MediaTextView, didRequestTaskToggleAtVisibleLocation location: Int) {
+        taskToggleLocations.append(location)
+    }
 }
