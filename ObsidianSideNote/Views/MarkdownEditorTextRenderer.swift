@@ -186,12 +186,22 @@ enum MarkdownEditorTextRenderer {
         }
 
         var renderedLine = line
-        renderedLine = renderedLine.replacingOccurrences(of: #"==([^=\n]+)=="#, with: "$1", options: .regularExpression)
-        renderedLine = renderedLine.replacingOccurrences(of: #"\*\*([^*\n]+)\*\*"#, with: "$1", options: .regularExpression)
-        renderedLine = renderedLine.replacingOccurrences(of: #"(?<!\*)\*([^*\n]+)\*(?!\*)"#, with: "$1", options: .regularExpression)
-        renderedLine = renderedLine.replacingOccurrences(of: #"~~([^~\n]+)~~"#, with: "$1", options: .regularExpression)
-        renderedLine = renderedLine.replacingOccurrences(of: #"`([^`\n]+)`"#, with: "$1", options: .regularExpression)
+        renderedLine = stringByReplacingMatches(of: highlightRegex, in: renderedLine, with: "$1")
+        renderedLine = stringByReplacingMatches(of: boldRegex, in: renderedLine, with: "$1")
+        renderedLine = stringByReplacingMatches(of: italicRegex, in: renderedLine, with: "$1")
+        renderedLine = stringByReplacingMatches(of: strikethroughRegex, in: renderedLine, with: "$1")
+        renderedLine = stringByReplacingMatches(of: inlineCodeRegex, in: renderedLine, with: "$1")
         return renderedLine
+    }
+
+    private static func stringByReplacingMatches(
+        of regex: NSRegularExpression?,
+        in string: String,
+        with template: String
+    ) -> String {
+        guard let regex else { return string }
+        let range = NSRange(string.startIndex..<string.endIndex, in: string)
+        return regex.stringByReplacingMatches(in: string, range: range, withTemplate: template)
     }
 
     private static func applyHiddenInlineStyles(
@@ -348,7 +358,7 @@ enum MarkdownEditorTextRenderer {
     }
 
     private static func taskMarkerIsChecked(_ marker: String) -> Bool {
-        marker.range(of: #"\[[xX]\]"#, options: .regularExpression) != nil
+        marker.range(of: "[x]", options: .caseInsensitive) != nil
     }
 
     private static func leadingWhitespace(in string: String) -> String {
@@ -372,9 +382,6 @@ enum MarkdownEditorTextRenderer {
     }
 
     private static func applyInlineStyles(to attributedLine: NSMutableAttributedString, in line: String, revealSyntax: Bool) {
-        let nsLine = line as NSString
-        let fullRange = NSRange(location: 0, length: nsLine.length)
-
         apply(regex: inlineCodeRegex, to: attributedLine, in: line) { _, range in
             let fontSize = font(at: range.location, in: attributedLine)?.pointSize ?? 16
             attributedLine.addAttributes(
@@ -401,8 +408,6 @@ enum MarkdownEditorTextRenderer {
         apply(regex: italicRegex, to: attributedLine, in: line) { _, range in
             applyFontTrait(.italicFontMask, to: attributedLine, range: range)
         }
-
-        guard fullRange.length == attributedLine.length else { return }
     }
 
     private static func apply(
