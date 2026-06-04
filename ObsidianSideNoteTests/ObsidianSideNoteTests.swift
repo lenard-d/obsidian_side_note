@@ -371,6 +371,42 @@ struct ObsidianSideNoteTests {
     }
 
     @MainActor
+    @Test func markdownCommandApplierWrapsSelectedText() {
+        let textView = NSTextView()
+        textView.string = "make bold"
+        textView.setSelectedRange(NSRange(location: 5, length: 4))
+
+        MarkdownEditorCommandApplier.apply(.wrap("**"), in: textView)
+
+        #expect(textView.string == "make **bold**")
+        #expect(textView.selectedRange() == NSRange(location: 5, length: 8))
+    }
+
+    @MainActor
+    @Test func markdownCommandApplierInsertsLinkWithSelectedText() {
+        let textView = NSTextView()
+        textView.string = "open doc"
+        textView.setSelectedRange(NSRange(location: 5, length: 3))
+
+        MarkdownEditorCommandApplier.apply(.insertLink, in: textView)
+
+        #expect(textView.string == "open [doc](url)")
+        #expect(textView.selectedRange() == NSRange(location: 5, length: 10))
+    }
+
+    @MainActor
+    @Test func markdownCommandApplierPrefixesCurrentLine() {
+        let textView = NSTextView()
+        textView.string = "first\nsecond"
+        textView.setSelectedRange(NSRange(location: 8, length: 0))
+
+        MarkdownEditorCommandApplier.apply(.insertPrefix("- "), in: textView)
+
+        #expect(textView.string == "first\n- second")
+        #expect(textView.selectedRange() == NSRange(location: 10, length: 0))
+    }
+
+    @MainActor
     @Test func editorRendererStylesBasicInlineMarkdownWithoutChangingSource() throws {
         let source = "This is ==marked==, **bold**, *italic*, ~~plain~~, and `code`."
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
