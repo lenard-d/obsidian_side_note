@@ -1,4 +1,5 @@
 import AppKit
+import STTextView
 
 final class MediaScrollView: NSScrollView {
     var onLayout: (() -> Void)?
@@ -22,42 +23,55 @@ protocol TaskListTextViewDelegate: AnyObject {
     func mediaTextView(_ textView: MediaTextView, didRequestTaskToggleAtVisibleLocation location: Int)
 }
 
-final class MediaTextView: NSTextView {
+final class MediaTextView: STTextView {
     weak var mediaDelegate: MediaTextViewDelegate?
     weak var markdownCommandDelegate: MarkdownCommandTextViewDelegate?
     weak var taskListDelegate: TaskListTextViewDelegate?
+    private var minimumDocumentHeight: CGFloat = 120
 
     init() {
-        let textStorage = NSTextStorage()
-        let layoutManager = NSLayoutManager()
-        let textContainer = NSTextContainer(
-            containerSize: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
-        )
-
-        textContainer.widthTracksTextView = true
-        textStorage.addLayoutManager(layoutManager)
-        layoutManager.addTextContainer(textContainer)
-
-        super.init(frame: .zero, textContainer: textContainer)
+        super.init(frame: .zero)
+        configureTextContainer()
     }
 
-    override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
-        super.init(frame: frameRect, textContainer: container)
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureTextContainer()
     }
 
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
+    var textStorage: NSTextStorage? {
+        (textContentManager as? NSTextContentStorage)?.textStorage
+    }
+
+    var layoutManager: NSTextLayoutManager? {
+        textLayoutManager
+    }
+
+    var string: String {
+        get { text ?? "" }
+        set { text = newValue }
+    }
+
+    var textContainerInset: NSSize = NSSize(width: 0, height: 0) {
+        didSet {
+            textContainer.lineFragmentPadding = textContainerInset.width
+            updateScrollContentInsets()
+        }
+    }
+
+    func setAttributedString(_ attributedString: NSAttributedString) {
+        attributedText = attributedString
+    }
+
+    func setSelectedRange(_ range: NSRange) {
+        textSelection = clamped(range: range)
     }
 
     func configureForVerticalScrolling(contentSize: NSSize) {
         let width = max(80, contentSize.width)
         let height = max(120, contentSize.height)
 
-        minSize = NSSize(width: 0, height: height)
-        maxSize = NSSize(
-            width: CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
-        )
+        minimumDocumentHeight = height
         isVerticallyResizable = true
         isHorizontallyResizable = false
         autoresizingMask = [.width]
@@ -66,23 +80,18 @@ final class MediaTextView: NSTextView {
             setFrameSize(NSSize(width: width, height: max(frame.height, height)))
         }
 
-        textContainer?.widthTracksTextView = true
-        textContainer?.heightTracksTextView = false
-        textContainer?.containerSize = NSSize(
-            width: width,
-            height: CGFloat.greatestFiniteMagnitude
-        )
+        textContainer.widthTracksTextView = true
+        textContainer.heightTracksTextView = false
+        textContainer.size = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        updateScrollContentInsets()
 
         resizeToFitTextContent()
     }
 
     func resizeToFitTextContent() {
-        guard let layoutManager, let textContainer else { return }
-
-        layoutManager.ensureLayout(for: textContainer)
-        let usedRect = layoutManager.usedRect(for: textContainer)
-        let requiredHeight = ceil(usedRect.height + textContainerInset.height * 2)
-        let height = max(minSize.height, requiredHeight)
+        sizeToFit()
+        let requiredHeight = ceil(frame.height + textContainerInset.height * 2)
+        let height = max(minimumDocumentHeight, requiredHeight)
 
         if abs(frame.height - height) > 1 {
             setFrameSize(NSSize(width: frame.width, height: height))
@@ -119,13 +128,16 @@ final class MediaTextView: NSTextView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        if let characterIndex = characterIndex(for: event),
+        super.mouseDown(with: event)
+
+        let selectedLocation = selectedRange().location
+        guard selectedLocation != NSNotFound else { return }
+
+        let characterIndex = min(selectedLocation, max(0, attributedString().length - 1))
+        if attributedString().length > characterIndex,
            attributedString().attribute(.markdownTaskCheckbox, at: characterIndex, effectiveRange: nil) != nil {
             taskListDelegate?.mediaTextView(self, didRequestTaskToggleAtVisibleLocation: characterIndex)
-            return
         }
-
-        super.mouseDown(with: event)
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -161,23 +173,24 @@ final class MediaTextView: NSTextView {
         }
     }
 
-    private func characterIndex(for event: NSEvent) -> Int? {
-        guard let layoutManager, let textContainer else { return nil }
+    private func configureTextContainer() {
+        textContainer.widthTracksTextView = true
+        textContainer.heightTracksTextView = false
+        textContainer.size = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+    }
 
-        var point = convert(event.locationInWindow, from: nil)
-        point.x -= textContainerOrigin.x
-        point.y -= textContainerOrigin.y
-
-        guard point.x >= 0, point.y >= 0 else { return nil }
-        let glyphIndex = layoutManager.glyphIndex(for: point, in: textContainer)
-        let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
-        guard characterIndex < attributedString().length else { return nil }
-
-        let glyphRect = layoutManager.boundingRect(
-            forGlyphRange: NSRange(location: glyphIndex, length: 1),
-            in: textContainer
+    private func updateScrollContentInsets() {
+        enclosingScrollView?.contentView.contentInsets = NSEdgeInsets(
+            top: textContainerInset.height,
+            left: textContainerInset.width,
+            bottom: textContainerInset.height,
+            right: textContainerInset.width
         )
-        guard glyphRect.insetBy(dx: -4, dy: -4).contains(point) else { return nil }
-        return characterIndex
+    }
+
+    private func clamped(range: NSRange) -> NSRange {
+        let length = string.utf16.count
+        let location = min(max(0, range.location), length)
+        return NSRange(location: location, length: min(range.length, max(0, length - location)))
     }
 }

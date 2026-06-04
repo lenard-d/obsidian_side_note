@@ -10,6 +10,7 @@ import Foundation
 import AppKit
 import Defaults
 import KeyboardShortcuts
+import STTextView
 @testable import ObsidianSideNote
 
 @Suite(.serialized)
@@ -323,7 +324,7 @@ struct ObsidianSideNoteTests {
 
         #expect(textView.textStorage != nil)
         #expect(textView.layoutManager != nil)
-        #expect(textView.textContainer != nil)
+        #expect(textView.textContainer.widthTracksTextView)
         #expect(textView.isEditable)
         #expect(textView.isSelectable)
     }
@@ -336,7 +337,7 @@ struct ObsidianSideNoteTests {
         textView.isSelectable = true
         window.contentView = textView
         window.makeFirstResponder(textView)
-        textView.textStorage?.setAttributedString(NSAttributedString(string: ""))
+        textView.setAttributedString(NSAttributedString(string: ""))
         textView.setSelectedRange(NSRange(location: 0, length: 0))
         textView.insertText("a", replacementRange: NSRange(location: 0, length: 0))
 
@@ -352,7 +353,7 @@ struct ObsidianSideNoteTests {
 
         #expect(textView.isVerticallyResizable)
         #expect(!textView.isHorizontallyResizable)
-        #expect(textView.textContainer?.heightTracksTextView == false)
+        #expect(textView.textContainer.heightTracksTextView == false)
         #expect(textView.frame.height > 160)
     }
 
@@ -394,6 +395,18 @@ struct ObsidianSideNoteTests {
 
         #expect(textView.string == "make **bold**")
         #expect(textView.selectedRange() == NSRange(location: 5, length: 8))
+    }
+
+    @MainActor
+    @Test func markdownCommandApplierWrapsSelectedTextInMediaTextView() {
+        let textView = MediaTextView()
+        textView.string = "make bold"
+        textView.setSelectedRange(NSRange(location: 5, length: 4))
+
+        MarkdownEditorCommandApplier.apply(.wrap("**"), in: textView)
+
+        #expect(textView.string == "make **bold**")
+        #expect(textView.textSelection == NSRange(location: 5, length: 8))
     }
 
     @MainActor

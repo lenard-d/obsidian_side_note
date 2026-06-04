@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		A3C961012EDB0001002911F6 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = A3C961052EDB0001002911F6 /* KeyboardShortcuts */; };
 		A3C961022EDB0001002911F6 /* Defaults in Frameworks */ = {isa = PBXBuildFile; productRef = A3C961062EDB0001002911F6 /* Defaults */; };
+		A3C962012EDE0001002911F6 /* STTextView in Frameworks */ = {isa = PBXBuildFile; productRef = A3C962022EDE0001002911F6 /* STTextView */; };
 		A3C960382ED97076002911F6 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = A3C960372ED97076002911F6 /* MarkdownUI */; };
 /* End PBXBuildFile section */
 
@@ -60,6 +61,7 @@
 			files = (
 				A3C961012EDB0001002911F6 /* KeyboardShortcuts in Frameworks */,
 				A3C961022EDB0001002911F6 /* Defaults in Frameworks */,
+				A3C962012EDE0001002911F6 /* STTextView in Frameworks */,
 				A3C960382ED97076002911F6 /* MarkdownUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -132,6 +134,7 @@
 				A3C960372ED97076002911F6 /* MarkdownUI */,
 				A3C961052EDB0001002911F6 /* KeyboardShortcuts */,
 				A3C961062EDB0001002911F6 /* Defaults */,
+				A3C962022EDE0001002911F6 /* STTextView */,
 			);
 			productName = ObsidianSideNote;
 			productReference = A3C9600B2ED8E3EF002911F6 /* ObsidianSideNote.app */;
@@ -219,6 +222,7 @@
 				A3C960352ED96E8E002911F6 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
 				A3C961032EDB0001002911F6 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
 				A3C961042EDB0001002911F6 /* XCRemoteSwiftPackageReference "Defaults" */,
+				A3C962002EDE0001002911F6 /* XCRemoteSwiftPackageReference "STTextView" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A3C9600C2ED8E3EF002911F6 /* Products */;
@@ -614,6 +618,14 @@
 				minimumVersion = 9.0.8;
 			};
 		};
+		A3C962002EDE0001002911F6 /* XCRemoteSwiftPackageReference "STTextView" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/krzyzanowskim/STTextView";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.3.10;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -631,6 +643,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A3C961042EDB0001002911F6 /* XCRemoteSwiftPackageReference "Defaults" */;
 			productName = Defaults;
+		};
+		A3C962022EDE0001002911F6 /* STTextView */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A3C962002EDE0001002911F6 /* XCRemoteSwiftPackageReference "STTextView" */;
+			productName = STTextView;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

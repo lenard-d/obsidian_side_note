@@ -1,4 +1,5 @@
 import AppKit
+import STTextView
 import SwiftUI
 
 struct RichMarkdownEditorView: NSViewRepresentable {
@@ -31,16 +32,13 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         let textView = MediaTextView()
-        textView.delegate = context.coordinator
+        textView.textDelegate = context.coordinator
         textView.mediaDelegate = context.coordinator
         textView.markdownCommandDelegate = context.coordinator
         textView.taskListDelegate = context.coordinator
-        textView.isRichText = true
         textView.isEditable = true
         textView.isSelectable = true
         textView.allowsUndo = true
-        textView.importsGraphics = false
-        textView.drawsBackground = false
         textView.font = .systemFont(ofSize: 16)
         textView.textColor = .textColor
         textView.textContainerInset = NSSize(width: 14, height: 14)
@@ -49,6 +47,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         scrollView.documentView = textView
         context.coordinator.textView = textView
+        context.coordinator.observeEditingNotifications(for: textView)
         context.coordinator.render(text)
 
         return scrollView
@@ -63,14 +62,14 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.applyCommandRequestIfNeeded()
     }
 
-    final class Coordinator: NSObject, NSTextViewDelegate, MediaTextViewDelegate, MarkdownCommandTextViewDelegate, TaskListTextViewDelegate {
+    final class Coordinator: NSObject, STTextViewDelegate, MediaTextViewDelegate, MarkdownCommandTextViewDelegate, TaskListTextViewDelegate {
         @Binding private var text: String
         @FocusState.Binding private var isFocused: Bool
         @Binding private var cursorEndRequestID: Int
         @Binding private var commandRequest: MarkdownEditorCommandRequest?
         private let insertMedia: (String) -> Void
         private let didInsertMedia: () -> Void
-        fileprivate weak var textView: NSTextView?
+        fileprivate weak var textView: MediaTextView?
         fileprivate var renderedText = ""
         private var activeLineIndex: Int?
         private var pendingSelectionAfterRender: NSRange?
@@ -79,6 +78,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private var appliedCursorEndRequestID = 0
         private var appliedCommandRequestID = 0
         private var pendingMediaLoads: Set<String> = []
+        private var editingNotificationObservers: [NSObjectProtocol] = []
 
         init(
             text: Binding<String>,
@@ -96,13 +96,19 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.didInsertMedia = didInsertMedia
         }
 
+        deinit {
+            for observer in editingNotificationObservers {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+
         func render(_ source: String) {
             guard let textView else { return }
             isRendering = true
             renderedText = source
             let selectedRange = pendingSelectionAfterRender ?? textView.selectedRange()
             pendingSelectionAfterRender = nil
-            textView.textStorage?.setAttributedString(
+            textView.setAttributedString(
                 MarkdownEditorTextRenderer.attributedString(
                     from: source,
                     mediaWidth: mediaWidth,
@@ -111,7 +117,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             )
             textView.typingAttributes = MarkdownEditorTextRenderer.typingAttributes
             textView.setSelectedRange(Self.clamped(range: selectedRange, length: textView.string.utf16.count))
-            (textView as? MediaTextView)?.resizeToFitTextContent()
+            textView.resizeToFitTextContent()
             isRendering = false
 
             applyFocusIfNeeded()
@@ -119,12 +125,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             preloadMissingMedia(in: source)
         }
 
-        func textDidChange(_ notification: Notification) {
+        func textViewDidChangeText(_ notification: Notification) {
             guard !isRendering, let textView else { return }
             let markdown = MarkdownEditorTextRenderer.markdownString(from: textView.attributedString())
             renderedText = markdown
             text = markdown
-            (textView as? MediaTextView)?.resizeToFitTextContent()
+            textView.resizeToFitTextContent()
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -142,11 +148,35 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             render(renderedText)
         }
 
-        func textDidBeginEditing(_ notification: Notification) {
+        func observeEditingNotifications(for textView: MediaTextView) {
+            for observer in editingNotificationObservers {
+                NotificationCenter.default.removeObserver(observer)
+            }
+
+            let center = NotificationCenter.default
+            editingNotificationObservers = [
+                center.addObserver(
+                    forName: NSText.didBeginEditingNotification,
+                    object: textView,
+                    queue: .main
+                ) { [weak self] notification in
+                    self?.textViewDidBeginEditing(notification)
+                },
+                center.addObserver(
+                    forName: NSText.didEndEditingNotification,
+                    object: textView,
+                    queue: .main
+                ) { [weak self] notification in
+                    self?.textViewDidEndEditing(notification)
+                },
+            ]
+        }
+
+        private func textViewDidBeginEditing(_ notification: Notification) {
             isFocused = true
         }
 
-        func textDidEndEditing(_ notification: Notification) {
+        private func textViewDidEndEditing(_ notification: Notification) {
             isFocused = false
         }
 
@@ -158,7 +188,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func updateLayout(contentSize: NSSize) {
-            (textView as? MediaTextView)?.configureForVerticalScrolling(contentSize: contentSize)
+            textView?.configureForVerticalScrolling(contentSize: contentSize)
             updateMediaWidth(contentSize.width)
         }
 
@@ -179,7 +209,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
             appliedCommandRequestID = commandRequest.id
             apply(commandRequest.command, in: textView)
-            textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
+            textViewDidChangeText(Notification(name: NSText.didChangeNotification, object: textView))
             render(renderedText)
         }
 
@@ -226,7 +256,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         func mediaTextView(_ textView: MediaTextView, didRequestMarkdownWrapper wrapper: String) {
             MarkdownEditorCommandApplier.wrapSelection(in: textView, wrapper: wrapper)
-            textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
+            textViewDidChangeText(Notification(name: NSText.didChangeNotification, object: textView))
             render(renderedText)
         }
 
@@ -293,7 +323,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             return lines[lineIndex]
         }
 
-        private func apply(_ command: MarkdownEditorCommand, in textView: NSTextView) {
+        private func apply(_ command: MarkdownEditorCommand, in textView: MediaTextView) {
             MarkdownEditorCommandApplier.apply(command, in: textView)
         }
 
