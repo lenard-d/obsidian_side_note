@@ -280,6 +280,20 @@ struct ObsidianSideNoteTests {
         #expect(EmbeddedMedia(markdownLine: "[Sketch](https://example.com/sketch.png)") == nil)
     }
 
+    @Test func markdownRenderBlocksRewriteInlineWikiLinksToObsidianURIs() throws {
+        let blocks = MarkdownRenderBlock.blocks(from: "See [[Projects/Side Note.md|Side Note]] today.")
+        let block = try #require(blocks.first)
+
+        guard case .markdown(let markdown) = block.kind else {
+            Issue.record("Expected inline wiki link to remain inside a Markdown block")
+            return
+        }
+
+        #expect(markdown.contains("[Side Note](obsidian://open?"))
+        #expect(markdown.contains("file=Projects/Side%20Note.md"))
+        #expect(!markdown.contains("[[Projects/Side Note.md|Side Note]]"))
+    }
+
     @MainActor
     @Test func editorRendererStylesMarkdownHeadingsWithoutChangingSource() throws {
         let source = "# One\n### Three\n###### Six\n#NoSpace"

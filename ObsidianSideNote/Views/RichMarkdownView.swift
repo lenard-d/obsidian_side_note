@@ -53,6 +53,10 @@ struct RichMarkdownView: View {
 }
 
 struct MarkdownRenderBlock: Identifiable {
+    private static let inlineWikiLinkRegex = try? NSRegularExpression(
+        pattern: #"(?<!!)\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]"#
+    )
+
     enum Kind {
         case markdown(String)
         case media(EmbeddedMedia)
@@ -91,8 +95,7 @@ struct MarkdownRenderBlock: Identifiable {
     }
 
     private static func rewriteInlineWikiLinks(in line: String) -> String {
-        let pattern = #"(?<!!)\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+        guard let inlineWikiLinkRegex else {
             return line
         }
 
@@ -100,7 +103,7 @@ struct MarkdownRenderBlock: Identifiable {
         var currentIndex = line.startIndex
         let nsRange = NSRange(line.startIndex..<line.endIndex, in: line)
 
-        regex.enumerateMatches(in: line, range: nsRange) { match, _, _ in
+        inlineWikiLinkRegex.enumerateMatches(in: line, range: nsRange) { match, _, _ in
             guard let match,
                   let matchRange = Range(match.range, in: line),
                   let targetRange = Range(match.range(at: 1), in: line) else {
