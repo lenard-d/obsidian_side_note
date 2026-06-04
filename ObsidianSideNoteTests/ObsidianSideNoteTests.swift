@@ -514,6 +514,61 @@ struct ObsidianSideNoteTests {
         #expect(FileManager.default.fileExists(atPath: attachmentURL.path))
     }
 
+    @Test func remoteMediaDownloaderReturnsBodyWithinLimit() throws {
+        let body = Data([1, 2, 3, 4])
+        RemoteMediaURLProtocol.handler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Length": "\(body.count)"]
+            )!
+            return (response, [body])
+        }
+        defer { RemoteMediaURLProtocol.handler = nil }
+
+        let result = try downloadRemoteMedia(maxBytes: 8)
+
+        #expect(result.data == body)
+        #expect((result.response as? HTTPURLResponse)?.statusCode == 200)
+    }
+
+    @Test func remoteMediaDownloaderRejectsOversizedContentLength() throws {
+        RemoteMediaURLProtocol.handler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Length": "9"]
+            )!
+            return (response, [Data(repeating: 1, count: 9)])
+        }
+        defer { RemoteMediaURLProtocol.handler = nil }
+
+        let result = try downloadRemoteMedia(maxBytes: 8)
+
+        #expect(result.data == nil)
+        #expect((result.response as? HTTPURLResponse)?.statusCode == 200)
+    }
+
+    @Test func remoteMediaDownloaderRejectsChunksThatExceedLimit() throws {
+        RemoteMediaURLProtocol.handler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (response, [Data(repeating: 1, count: 4), Data(repeating: 2, count: 5)])
+        }
+        defer { RemoteMediaURLProtocol.handler = nil }
+
+        let result = try downloadRemoteMedia(maxBytes: 8)
+
+        #expect(result.data == nil)
+        #expect((result.response as? HTTPURLResponse)?.statusCode == 200)
+    }
+
     @Test func pastedImageBaseNameUsesCompactTimestamp() {
         let date = Date(timeIntervalSince1970: 1_780_328_430)
         let name = VaultStore.pastedImageBaseName(now: date)
@@ -769,4 +824,55 @@ private func pngData(from image: NSImage) -> Data? {
     }
 
     return bitmap.representation(using: .png, properties: [:])
+}
+
+private func downloadRemoteMedia(maxBytes: Int) throws -> (data: Data?, response: URLResponse?) {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [RemoteMediaURLProtocol.self]
+
+    let downloader = RemoteMediaDownloader(maxBytes: maxBytes, configuration: configuration)
+    let semaphore = DispatchSemaphore(value: 0)
+    let url = URL(string: "https://example.com/media.png")!
+    var result: (Data?, URLResponse?)?
+
+    downloader.download(URLRequest(url: url)) { data, response in
+        result = (data, response)
+        semaphore.signal()
+    }
+
+    #expect(semaphore.wait(timeout: .now() + 2) == .success)
+    let unwrappedResult = try #require(result)
+    return (unwrappedResult.0, unwrappedResult.1)
+}
+
+private final class RemoteMediaURLProtocol: URLProtocol {
+    static var handler: ((URLRequest) throws -> (HTTPURLResponse, [Data]))?
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+
+        do {
+            let (response, chunks) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            for chunk in chunks {
+                client?.urlProtocol(self, didLoad: chunk)
+            }
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
 }

@@ -194,19 +194,11 @@ enum MediaAttachmentImporter {
             return
         }
 
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 20
-        URLSession.shared.downloadTask(with: request) { temporaryURL, response, _ in
-            guard let temporaryURL,
+        let request = URLRequest(url: url, timeoutInterval: 20)
+        RemoteMediaDownloader(maxBytes: maxRemoteMediaBytes).download(request) { data, response in
+            guard let data,
                   let httpResponse = response as? HTTPURLResponse,
                   200..<300 ~= httpResponse.statusCode else {
-                completion(nil)
-                return
-            }
-
-            guard let fileSize = try? temporaryURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-                  fileSize <= maxRemoteMediaBytes,
-                  let data = try? Data(contentsOf: temporaryURL) else {
                 completion(nil)
                 return
             }
@@ -215,7 +207,7 @@ enum MediaAttachmentImporter {
                 ? VaultStore.pastedImageBaseName()
                 : url.deletingPathExtension().lastPathComponent
             completion(VaultStore.saveAttachmentData(data, suggestedName: baseName, fileExtension: url.pathExtension))
-        }.resume()
+        }
     }
 
     private static func isRemoteMedia(_ url: URL) -> Bool {
@@ -245,5 +237,95 @@ enum MediaAttachmentImporter {
             .replacingOccurrences(of: #"["']$"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: "&amp;", with: "&")
         return URL(string: value)
+    }
+}
+
+final class RemoteMediaDownloader {
+    private let maxBytes: Int
+    private let configuration: URLSessionConfiguration
+
+    init(maxBytes: Int, configuration: URLSessionConfiguration = .default) {
+        self.maxBytes = maxBytes
+        self.configuration = configuration
+    }
+
+    func download(_ request: URLRequest, completion: @escaping (Data?, URLResponse?) -> Void) {
+        let delegate = RemoteMediaDownloadDelegate(maxBytes: maxBytes, completion: completion)
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: queue)
+        delegate.session = session
+        session.dataTask(with: request).resume()
+    }
+}
+
+private final class RemoteMediaDownloadDelegate: NSObject, URLSessionDataDelegate {
+    private let maxBytes: Int
+    private let completion: (Data?, URLResponse?) -> Void
+    private var data = Data()
+    private var response: URLResponse?
+    private var didComplete = false
+
+    var session: URLSession?
+
+    init(maxBytes: Int, completion: @escaping (Data?, URLResponse?) -> Void) {
+        self.maxBytes = maxBytes
+        self.completion = completion
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        self.response = response
+
+        if let httpResponse = response as? HTTPURLResponse,
+           !(200..<300 ~= httpResponse.statusCode) {
+            completionHandler(.cancel)
+            complete(data: nil, response: response, cancelSession: true)
+            return
+        }
+
+        if response.expectedContentLength > Int64(maxBytes) {
+            completionHandler(.cancel)
+            complete(data: nil, response: response, cancelSession: true)
+            return
+        }
+
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive chunk: Data) {
+        guard data.count + chunk.count <= maxBytes else {
+            complete(data: nil, response: response, cancelSession: true)
+            return
+        }
+
+        data.append(chunk)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
+        guard error == nil else {
+            complete(data: nil, response: response, cancelSession: false)
+            return
+        }
+
+        complete(data: data, response: response, cancelSession: false)
+    }
+
+    private func complete(data: Data?, response: URLResponse?, cancelSession: Bool) {
+        guard !didComplete else { return }
+
+        didComplete = true
+        completion(data, response)
+
+        if cancelSession {
+            session?.invalidateAndCancel()
+        } else {
+            session?.finishTasksAndInvalidate()
+        }
     }
 }
