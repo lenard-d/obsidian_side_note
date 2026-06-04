@@ -67,6 +67,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private let didInsertMedia: () -> Void
         fileprivate weak var textView: NSTextView?
         fileprivate var renderedText = ""
+        private var activeLineIndex: Int?
+        private var pendingSelectionAfterRender: NSRange?
         private var mediaWidth: CGFloat = 560
         private var isRendering = false
         private var appliedCursorEndRequestID = 0
@@ -90,11 +92,13 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             guard let textView else { return }
             isRendering = true
             renderedText = source
-            let selectedRange = textView.selectedRange()
+            let selectedRange = pendingSelectionAfterRender ?? textView.selectedRange()
+            pendingSelectionAfterRender = nil
             textView.textStorage?.setAttributedString(
                 MarkdownEditorTextRenderer.attributedString(
                     from: source,
-                    mediaWidth: mediaWidth
+                    mediaWidth: mediaWidth,
+                    activeLineIndex: activeLineIndex
                 )
             )
             textView.typingAttributes = MarkdownEditorTextRenderer.typingAttributes
@@ -116,7 +120,18 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
-            guard !isRendering else { return }
+            guard !isRendering, let textView else { return }
+            let selectedRange = textView.selectedRange()
+            let lineIndex = Self.lineIndex(in: textView.string, at: selectedRange.location)
+            guard activeLineIndex != lineIndex else { return }
+            pendingSelectionAfterRender = Self.sourceSelectionRange(
+                from: selectedRange,
+                visibleText: textView.string,
+                sourceText: renderedText,
+                lineIndex: lineIndex
+            )
+            activeLineIndex = lineIndex
+            render(renderedText)
         }
 
         func textDidBeginEditing(_ notification: Notification) {
@@ -188,6 +203,52 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             NSRange(location: min(range.location, length), length: min(range.length, max(0, length - range.location)))
         }
 
+        private static func lineIndex(in string: String, at location: Int) -> Int {
+            let clampedLocation = min(max(location, 0), (string as NSString).length)
+            let prefix = (string as NSString).substring(to: clampedLocation)
+            return prefix.reduce(0) { count, character in
+                character == "\n" ? count + 1 : count
+            }
+        }
+
+        private static func sourceSelectionRange(
+            from visibleRange: NSRange,
+            visibleText: String,
+            sourceText: String,
+            lineIndex: Int
+        ) -> NSRange {
+            let visibleLineStart = lineStartLocation(in: visibleText, lineIndex: lineIndex)
+            let visibleOffset = max(0, visibleRange.location - visibleLineStart)
+            let sourceLineStart = lineStartLocation(in: sourceText, lineIndex: lineIndex)
+            let sourceLine = line(at: lineIndex, in: sourceText)
+            let sourceOffset = MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: visibleOffset, in: sourceLine)
+            return NSRange(location: sourceLineStart + sourceOffset, length: 0)
+        }
+
+        private static func lineStartLocation(in string: String, lineIndex: Int) -> Int {
+            guard lineIndex > 0 else { return 0 }
+            var currentLine = 0
+            var utf16Location = 0
+
+            for character in string {
+                if currentLine == lineIndex {
+                    return utf16Location
+                }
+                utf16Location += character.utf16.count
+                if character == "\n" {
+                    currentLine += 1
+                }
+            }
+
+            return utf16Location
+        }
+
+        private static func line(at lineIndex: Int, in string: String) -> String {
+            let lines = string.components(separatedBy: .newlines)
+            guard lines.indices.contains(lineIndex) else { return "" }
+            return lines[lineIndex]
+        }
+
         private static func wrapSelection(in textView: NSTextView, wrapper: String) {
             let selectedRange = textView.selectedRange()
             let nsString = textView.string as NSString
@@ -234,6 +295,7 @@ enum MarkdownEditorTextRenderer {
     private static let highlightRegex = try? NSRegularExpression(pattern: #"==([^=\n]+)=="#)
     private static let boldRegex = try? NSRegularExpression(pattern: #"\*\*([^*\n]+)\*\*"#)
     private static let italicRegex = try? NSRegularExpression(pattern: #"(?<!\*)\*([^*\n]+)\*(?!\*)"#)
+    private static let strikethroughRegex = try? NSRegularExpression(pattern: #"~~([^~\n]+)~~"#)
     static func attributedString(from source: String, mediaWidth: CGFloat, activeLineIndex: Int? = nil) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let lines = source.components(separatedBy: .newlines)
@@ -282,6 +344,7 @@ enum MarkdownEditorTextRenderer {
 
     static func markdownString(from attributedString: NSAttributedString) -> String {
         var markdown = ""
+        var restoredSourceLines: Set<ObjectIdentifier> = []
         attributedString.enumerateAttributes(
             in: NSRange(location: 0, length: attributedString.length),
             options: []
@@ -290,7 +353,12 @@ enum MarkdownEditorTextRenderer {
                 return
             }
 
-            if let attachment = attributes[.attachment] as? MarkdownMediaTextAttachment {
+            if let sourceLine = attributes[.markdownSourceLine] as? MarkdownSourceLine {
+                let id = ObjectIdentifier(sourceLine)
+                guard !restoredSourceLines.contains(id) else { return }
+                restoredSourceLines.insert(id)
+                markdown += sourceLine.markdown
+            } else if let attachment = attributes[.attachment] as? MarkdownMediaTextAttachment {
                 if attachment.isPreviewOnly {
                     return
                 }
@@ -300,6 +368,37 @@ enum MarkdownEditorTextRenderer {
             }
         }
         return markdown
+    }
+
+    static func sourceOffset(forVisibleOffset visibleOffset: Int, in sourceLine: String) -> Int {
+        let nsLine = sourceLine as NSString
+        let hiddenRanges = hiddenSyntaxRanges(in: sourceLine)
+        var visibleUTF16Offset = 0
+        var sourceUTF16Offset = 0
+
+        while sourceUTF16Offset < nsLine.length {
+            if let hiddenRange = hiddenRanges.first(where: { $0.range.location == sourceUTF16Offset }) {
+                if hiddenRange.skipAtBoundary || visibleUTF16Offset < visibleOffset {
+                    sourceUTF16Offset = hiddenRange.range.upperBound
+                    continue
+                }
+                return sourceUTF16Offset
+            }
+
+            guard visibleUTF16Offset < visibleOffset else {
+                return sourceUTF16Offset
+            }
+
+            sourceUTF16Offset += 1
+            visibleUTF16Offset += 1
+        }
+
+        return sourceUTF16Offset
+    }
+
+    private struct HiddenSyntaxRange {
+        let range: NSRange
+        let skipAtBoundary: Bool
     }
 
     static var typingAttributes: [NSAttributedString.Key: Any] {
@@ -314,12 +413,150 @@ enum MarkdownEditorTextRenderer {
     }
 
     private static func attributedLine(_ line: String, revealSyntax: Bool) -> NSAttributedString {
-        let attributedLine = NSMutableAttributedString(string: line, attributes: blockAttributes(for: line))
-        if !revealSyntax, let headingMarkerRange = headingMarkerRange(in: line) {
-            hideSyntaxRanges([headingMarkerRange], in: attributedLine)
+        if !revealSyntax, let hiddenLine = hiddenSyntaxLine(from: line) {
+            return hiddenLine
         }
+
+        let attributedLine = NSMutableAttributedString(string: line, attributes: blockAttributes(for: line))
         applyInlineStyles(to: attributedLine, in: line, revealSyntax: revealSyntax)
         return attributedLine
+    }
+
+    private static func hiddenSyntaxLine(from line: String) -> NSAttributedString? {
+        guard let renderedLine = renderedLineByRemovingSyntax(from: line),
+              renderedLine != line else {
+            return nil
+        }
+
+        let sourceLine = MarkdownSourceLine(markdown: line)
+        let attributedLine = NSMutableAttributedString(
+            string: renderedLine,
+            attributes: blockAttributes(for: line).merging([.markdownSourceLine: sourceLine]) { current, _ in current }
+        )
+        applyHiddenInlineStyles(to: attributedLine, sourceLine: line, renderedLine: renderedLine)
+        return attributedLine
+    }
+
+    private static func renderedLineByRemovingSyntax(from line: String) -> String? {
+        if let headingMarkerRange = headingMarkerRange(in: line) {
+            let nsLine = line as NSString
+            return nsLine.replacingCharacters(in: headingMarkerRange, with: "")
+        }
+
+        var renderedLine = line
+        renderedLine = renderedLine.replacingOccurrences(of: #"==([^=\n]+)=="#, with: "$1", options: .regularExpression)
+        renderedLine = renderedLine.replacingOccurrences(of: #"\*\*([^*\n]+)\*\*"#, with: "$1", options: .regularExpression)
+        renderedLine = renderedLine.replacingOccurrences(of: #"(?<!\*)\*([^*\n]+)\*(?!\*)"#, with: "$1", options: .regularExpression)
+        renderedLine = renderedLine.replacingOccurrences(of: #"~~([^~\n]+)~~"#, with: "$1", options: .regularExpression)
+        renderedLine = renderedLine.replacingOccurrences(of: #"`([^`\n]+)`"#, with: "$1", options: .regularExpression)
+        return renderedLine
+    }
+
+    private static func applyHiddenInlineStyles(
+        to attributedLine: NSMutableAttributedString,
+        sourceLine: String,
+        renderedLine: String
+    ) {
+        var searchLocation = 0
+
+        applyVisibleCapture(regex: inlineCodeRegex, sourceLine: sourceLine, renderedLine: renderedLine, searchLocation: &searchLocation) { range in
+            let fontSize = font(at: range.location, in: attributedLine)?.pointSize ?? 16
+            attributedLine.addAttributes(
+                [
+                    .font: NSFont.monospacedSystemFont(ofSize: max(13, fontSize - 1), weight: .regular),
+                    .backgroundColor: NSColor.controlBackgroundColor.withAlphaComponent(0.75)
+                ],
+                range: range
+            )
+        }
+
+        searchLocation = 0
+        applyVisibleCapture(regex: highlightRegex, sourceLine: sourceLine, renderedLine: renderedLine, searchLocation: &searchLocation) { range in
+            attributedLine.addAttribute(
+                .backgroundColor,
+                value: NSColor.systemYellow.withAlphaComponent(0.35),
+                range: range
+            )
+        }
+
+        searchLocation = 0
+        applyVisibleCapture(regex: boldRegex, sourceLine: sourceLine, renderedLine: renderedLine, searchLocation: &searchLocation) { range in
+            applyFontTrait(.boldFontMask, to: attributedLine, range: range)
+        }
+
+        searchLocation = 0
+        applyVisibleCapture(regex: italicRegex, sourceLine: sourceLine, renderedLine: renderedLine, searchLocation: &searchLocation) { range in
+            applyFontTrait(.italicFontMask, to: attributedLine, range: range)
+        }
+    }
+
+    private static func applyVisibleCapture(
+        regex: NSRegularExpression?,
+        sourceLine: String,
+        renderedLine: String,
+        searchLocation: inout Int,
+        body: (NSRange) -> Void
+    ) {
+        guard let regex else { return }
+        let sourceRange = NSRange(sourceLine.startIndex..<sourceLine.endIndex, in: sourceLine)
+        let renderedNSString = renderedLine as NSString
+
+        for match in regex.matches(in: sourceLine, range: sourceRange) {
+            guard match.numberOfRanges > 1 else { continue }
+            let visibleText = (sourceLine as NSString).substring(with: match.range(at: 1))
+            let remainingRange = NSRange(
+                location: min(searchLocation, renderedNSString.length),
+                length: max(0, renderedNSString.length - min(searchLocation, renderedNSString.length))
+            )
+            let renderedRange = renderedNSString.range(of: visibleText, options: [], range: remainingRange)
+            guard renderedRange.location != NSNotFound else { continue }
+            body(renderedRange)
+            searchLocation = renderedRange.upperBound
+        }
+    }
+
+    private static func hiddenSyntaxRanges(in line: String) -> [HiddenSyntaxRange] {
+        var ranges: [HiddenSyntaxRange] = []
+
+        if let headingMarkerRange = headingMarkerRange(in: line) {
+            ranges.append(HiddenSyntaxRange(range: headingMarkerRange, skipAtBoundary: true))
+        }
+
+        ranges.append(contentsOf: hiddenDelimiterRanges(regex: highlightRegex, markerLength: 2, in: line))
+        ranges.append(contentsOf: hiddenDelimiterRanges(regex: boldRegex, markerLength: 2, in: line))
+        ranges.append(contentsOf: hiddenDelimiterRanges(regex: strikethroughRegex, markerLength: 2, in: line))
+        ranges.append(contentsOf: hiddenDelimiterRanges(regex: inlineCodeRegex, markerLength: 1, in: line))
+        ranges.append(contentsOf: hiddenDelimiterRanges(regex: italicRegex, markerLength: 1, in: line))
+
+        return ranges.sorted { lhs, rhs in
+            if lhs.range.location == rhs.range.location {
+                return lhs.range.length > rhs.range.length
+            }
+            return lhs.range.location < rhs.range.location
+        }
+    }
+
+    private static func hiddenDelimiterRanges(
+        regex: NSRegularExpression?,
+        markerLength: Int,
+        in line: String
+    ) -> [HiddenSyntaxRange] {
+        guard let regex else { return [] }
+        let sourceRange = NSRange(line.startIndex..<line.endIndex, in: line)
+
+        return regex.matches(in: line, range: sourceRange).flatMap { match -> [HiddenSyntaxRange] in
+            guard match.range.length >= markerLength * 2 else { return [] }
+            return [
+                HiddenSyntaxRange(
+                    range: NSRange(location: match.range.location, length: markerLength),
+                    skipAtBoundary: true
+                ),
+                HiddenSyntaxRange(
+                    range: NSRange(location: match.range.upperBound - markerLength, length: markerLength),
+                    skipAtBoundary: false
+                )
+            ]
+        }
     }
 
     private static func blockAttributes(for line: String) -> [NSAttributedString.Key: Any] {
@@ -374,23 +611,14 @@ enum MarkdownEditorTextRenderer {
                 value: NSColor.systemYellow.withAlphaComponent(0.35),
                 range: range
             )
-            if !revealSyntax {
-                hideSyntaxRanges([NSRange(location: range.location, length: 2), NSRange(location: range.upperBound - 2, length: 2)], in: attributedLine)
-            }
         }
 
         apply(regex: boldRegex, to: attributedLine, in: line) { _, range in
             applyFontTrait(.boldFontMask, to: attributedLine, range: range)
-            if !revealSyntax {
-                hideSyntaxRanges([NSRange(location: range.location, length: 2), NSRange(location: range.upperBound - 2, length: 2)], in: attributedLine)
-            }
         }
 
         apply(regex: italicRegex, to: attributedLine, in: line) { _, range in
             applyFontTrait(.italicFontMask, to: attributedLine, range: range)
-            if !revealSyntax {
-                hideSyntaxRanges([NSRange(location: range.location, length: 1), NSRange(location: range.upperBound - 1, length: 1)], in: attributedLine)
-            }
         }
 
         guard fullRange.length == attributedLine.length else { return }
@@ -423,17 +651,6 @@ enum MarkdownEditorTextRenderer {
         guard attributedLine.length > 0 else { return nil }
         let safeLocation = min(max(location, 0), attributedLine.length - 1)
         return attributedLine.attribute(.font, at: safeLocation, effectiveRange: nil) as? NSFont
-    }
-
-    private static func hideSyntaxRanges(_ ranges: [NSRange], in attributedLine: NSMutableAttributedString) {
-        for range in ranges where NSMaxRange(range) <= attributedLine.length {
-            attributedLine.addAttributes(
-                [
-                    .foregroundColor: NSColor.clear
-                ],
-                range: range
-            )
-        }
     }
 
     private static func headingMarkerRange(in line: String) -> NSRange? {
@@ -651,6 +868,15 @@ private final class MarkdownMediaTextAttachment: NSTextAttachment {
     }
 }
 
+private final class MarkdownSourceLine {
+    let markdown: String
+
+    init(markdown: String) {
+        self.markdown = markdown
+    }
+}
+
 private extension NSAttributedString.Key {
     static let markdownPreviewOnly = NSAttributedString.Key("markdownPreviewOnly")
+    static let markdownSourceLine = NSAttributedString.Key("markdownSourceLine")
 }

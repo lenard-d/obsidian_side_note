@@ -280,22 +280,22 @@ struct ObsidianSideNoteTests {
         let source = "# One\n### Three\n###### Six\n#NoSpace"
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
 
-        #expect(rendered.string == source)
+        #expect(rendered.string == "One\nThree\nSix\n#NoSpace")
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
 
-        let h1TextLocation = (source as NSString).range(of: "One").location
+        let h1TextLocation = (rendered.string as NSString).range(of: "One").location
         let h1Font = try #require(rendered.attribute(.font, at: h1TextLocation, effectiveRange: nil) as? NSFont)
-        let h3Location = (source as NSString).range(of: "### Three").location
-        let h3Font = try #require(rendered.attribute(.font, at: h3Location + 4, effectiveRange: nil) as? NSFont)
-        let h6Location = (source as NSString).range(of: "###### Six").location
-        let h6Font = try #require(rendered.attribute(.font, at: h6Location + 7, effectiveRange: nil) as? NSFont)
-        let plainLocation = (source as NSString).range(of: "#NoSpace").location
+        let h3Location = (rendered.string as NSString).range(of: "Three").location
+        let h3Font = try #require(rendered.attribute(.font, at: h3Location, effectiveRange: nil) as? NSFont)
+        let h6Location = (rendered.string as NSString).range(of: "Six").location
+        let h6Font = try #require(rendered.attribute(.font, at: h6Location, effectiveRange: nil) as? NSFont)
+        let plainLocation = (rendered.string as NSString).range(of: "#NoSpace").location
         let plainFont = try #require(rendered.attribute(.font, at: plainLocation, effectiveRange: nil) as? NSFont)
 
         #expect(h1Font.pointSize > h3Font.pointSize)
         #expect(h3Font.pointSize > h6Font.pointSize)
         #expect(plainFont.pointSize == 16)
-        #expect(rendered.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == NSColor.clear)
+        #expect(!rendered.string.contains("# "))
     }
 
     @MainActor
@@ -341,26 +341,26 @@ struct ObsidianSideNoteTests {
         let source = "This is ==marked==, **bold**, *italic*, ~~plain~~, and `code`."
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
 
-        #expect(rendered.string == source)
+        #expect(rendered.string == "This is marked, bold, italic, plain, and code.")
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
 
-        let markedRange = (source as NSString).range(of: "==marked==")
-        let boldRange = (source as NSString).range(of: "**bold**")
-        let italicRange = (source as NSString).range(of: "*italic*")
-        let strikeRange = (source as NSString).range(of: "~~plain~~")
-        let codeRange = (source as NSString).range(of: "`code`")
+        let markedRange = (rendered.string as NSString).range(of: "marked")
+        let boldRange = (rendered.string as NSString).range(of: "bold")
+        let italicRange = (rendered.string as NSString).range(of: "italic")
+        let strikeRange = (rendered.string as NSString).range(of: "plain")
+        let codeRange = (rendered.string as NSString).range(of: "code")
 
-        #expect(rendered.attribute(.backgroundColor, at: markedRange.location + 2, effectiveRange: nil) != nil)
+        #expect(rendered.attribute(.backgroundColor, at: markedRange.location, effectiveRange: nil) != nil)
 
-        let boldFont = try #require(rendered.attribute(.font, at: boldRange.location + 2, effectiveRange: nil) as? NSFont)
+        let boldFont = try #require(rendered.attribute(.font, at: boldRange.location, effectiveRange: nil) as? NSFont)
         #expect(NSFontManager.shared.traits(of: boldFont).contains(.boldFontMask))
 
-        let italicFont = try #require(rendered.attribute(.font, at: italicRange.location + 1, effectiveRange: nil) as? NSFont)
+        let italicFont = try #require(rendered.attribute(.font, at: italicRange.location, effectiveRange: nil) as? NSFont)
         #expect(NSFontManager.shared.traits(of: italicFont).contains(.italicFontMask))
 
-        #expect(rendered.attribute(.strikethroughStyle, at: strikeRange.location + 2, effectiveRange: nil) == nil)
+        #expect(rendered.attribute(.strikethroughStyle, at: strikeRange.location, effectiveRange: nil) == nil)
 
-        let codeFont = try #require(rendered.attribute(.font, at: codeRange.location + 1, effectiveRange: nil) as? NSFont)
+        let codeFont = try #require(rendered.attribute(.font, at: codeRange.location, effectiveRange: nil) as? NSFont)
         #expect(codeFont.isFixedPitch)
     }
 
@@ -368,13 +368,21 @@ struct ObsidianSideNoteTests {
         let source = "==hidden==\n==shown=="
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400, activeLineIndex: 1)
 
+        #expect(rendered.string == "hidden\n==shown==")
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
-        #expect(rendered.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == NSColor.clear)
         let hiddenFont = try #require(rendered.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
         #expect(hiddenFont.pointSize == 16)
 
-        let activeLineLocation = (source as NSString).range(of: "==shown==").location
+        let activeLineLocation = (rendered.string as NSString).range(of: "==shown==").location
         #expect(rendered.attribute(.foregroundColor, at: activeLineLocation, effectiveRange: nil) as? NSColor != NSColor.clear)
+    }
+
+    @Test func editorRendererMapsVisibleCursorOffsetBackToMarkdownSource() {
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 0, in: "### Test") == 4)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 4, in: "### Test") == 8)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 0, in: "==mark==") == 2)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 4, in: "==mark==") == 6)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 4, in: "**bold**") == 6)
     }
 
     @Test func editorRendererKeepsActiveImagePreviewOutOfMarkdownSource() throws {
