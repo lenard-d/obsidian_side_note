@@ -181,7 +181,7 @@ enum MarkdownEditorTextRenderer {
             let nsLine = line as NSString
             let marker = nsLine.substring(with: taskMarkerRange)
             let indentation = leadingWhitespace(in: marker)
-            let checkbox = taskMarkerIsChecked(marker) ? "\u{2611}" : "\u{2610}"
+            let checkbox = String(Character(UnicodeScalar(NSTextAttachment.character)!))
             return indentation + checkbox + " " + nsLine.substring(from: taskMarkerRange.upperBound)
         }
 
@@ -214,13 +214,10 @@ enum MarkdownEditorTextRenderer {
             let indentationLength = (leadingWhitespace(in: marker) as NSString).length
             let checkboxRange = NSRange(location: indentationLength, length: 1)
             if checkboxRange.upperBound <= attributedLine.length {
-                attributedLine.addAttributes(
-                    [
-                        .font: NSFont.systemFont(ofSize: 16, weight: .semibold),
-                        .foregroundColor: taskMarkerIsChecked(marker) ? NSColor.systemGreen : NSColor.secondaryLabelColor,
-                        .markdownTaskCheckbox: true
-                    ],
-                    range: checkboxRange
+                let sourceLine = attributedLine.attribute(.markdownSourceLine, at: 0, effectiveRange: nil)
+                attributedLine.replaceCharacters(
+                    in: checkboxRange,
+                    with: taskCheckboxAttachment(isChecked: taskMarkerIsChecked(marker), sourceLine: sourceLine)
                 )
             }
         }
@@ -359,6 +356,37 @@ enum MarkdownEditorTextRenderer {
 
     private static func taskMarkerIsChecked(_ marker: String) -> Bool {
         marker.range(of: "[x]", options: .caseInsensitive) != nil
+    }
+
+    private static func taskCheckboxAttachment(isChecked: Bool, sourceLine: Any?) -> NSAttributedString {
+        let attachment = NSTextAttachment()
+        attachment.image = taskCheckboxImage(isChecked: isChecked)
+        attachment.bounds = NSRect(x: 0, y: -2, width: 16, height: 16)
+
+        let attributedString = NSMutableAttributedString(attachment: attachment)
+        var attributes: [NSAttributedString.Key: Any] = [
+            .foregroundColor: isChecked ? NSColor.systemGreen : NSColor.secondaryLabelColor,
+            .markdownTaskCheckbox: true
+        ]
+
+        if let sourceLine {
+            attributes[.markdownSourceLine] = sourceLine
+        }
+
+        attributedString.addAttributes(attributes, range: NSRange(location: 0, length: attributedString.length))
+        return attributedString
+    }
+
+    private static func taskCheckboxImage(isChecked: Bool) -> NSImage {
+        let image = NSImage(
+            systemSymbolName: isChecked ? "checkmark.square.fill" : "square",
+            accessibilityDescription: isChecked ? "Done" : "To do"
+        ) ?? NSImage(size: NSSize(width: 16, height: 16))
+
+        let configuration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+        let configuredImage = image.withSymbolConfiguration(configuration) ?? image
+        configuredImage.isTemplate = true
+        return configuredImage
     }
 
     private static func leadingWhitespace(in string: String) -> String {

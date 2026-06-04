@@ -479,12 +479,22 @@ struct ObsidianSideNoteTests {
     @Test func editorRendererDisplaysTaskListMarkersAsCheckboxesWithoutChangingSource() throws {
         let source = "- [ ] Open\n- [x] Done\n  - [X] Nested"
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
+        let checkbox = String(Character(UnicodeScalar(NSTextAttachment.character)!))
 
-        #expect(rendered.string == "\u{2610} Open\n\u{2611} Done\n  \u{2611} Nested")
+        #expect(rendered.string == "\(checkbox) Open\n\(checkbox) Done\n  \(checkbox) Nested")
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
 
-        let openCheckboxLocation = (rendered.string as NSString).range(of: "\u{2610}").location
-        let checkedCheckboxLocation = (rendered.string as NSString).range(of: "\u{2611}").location
+        let openCheckboxLocation = (rendered.string as NSString).range(of: checkbox).location
+        let checkedCheckboxLocation = (rendered.string as NSString).range(
+            of: checkbox,
+            options: [],
+            range: NSRange(location: openCheckboxLocation + 1, length: rendered.length - openCheckboxLocation - 1)
+        ).location
+        let openAttachment = try #require(rendered.attribute(.attachment, at: openCheckboxLocation, effectiveRange: nil) as? NSTextAttachment)
+        let checkedAttachment = try #require(rendered.attribute(.attachment, at: checkedCheckboxLocation, effectiveRange: nil) as? NSTextAttachment)
+
+        #expect(openAttachment.bounds == checkedAttachment.bounds)
+        #expect(openAttachment.bounds.size == NSSize(width: 16, height: 16))
         #expect(rendered.attribute(.foregroundColor, at: openCheckboxLocation, effectiveRange: nil) as? NSColor == NSColor.secondaryLabelColor)
         #expect(rendered.attribute(.foregroundColor, at: checkedCheckboxLocation, effectiveRange: nil) as? NSColor == NSColor.systemGreen)
     }
@@ -493,8 +503,9 @@ struct ObsidianSideNoteTests {
     @Test func editorRendererRevealsTaskListMarkdownSyntaxOnActiveLineOnly() {
         let source = "- [ ] Hidden\n- [x] Shown"
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400, activeLineIndex: 1)
+        let checkbox = String(Character(UnicodeScalar(NSTextAttachment.character)!))
 
-        #expect(rendered.string == "\u{2610} Hidden\n- [x] Shown")
+        #expect(rendered.string == "\(checkbox) Hidden\n- [x] Shown")
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
     }
 
