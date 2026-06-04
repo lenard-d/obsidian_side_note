@@ -32,6 +32,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.mediaDelegate = context.coordinator
         textView.markdownCommandDelegate = context.coordinator
+        textView.taskListDelegate = context.coordinator
         textView.isRichText = true
         textView.isEditable = true
         textView.isSelectable = true
@@ -59,7 +60,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.applyCursorEndRequestIfNeeded()
     }
 
-    final class Coordinator: NSObject, NSTextViewDelegate, MediaTextViewDelegate, MarkdownCommandTextViewDelegate {
+    final class Coordinator: NSObject, NSTextViewDelegate, MediaTextViewDelegate, MarkdownCommandTextViewDelegate, TaskListTextViewDelegate {
         @Binding private var text: String
         @FocusState.Binding private var isFocused: Bool
         @Binding private var cursorEndRequestID: Int
@@ -199,6 +200,19 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             render(renderedText)
         }
 
+        fileprivate func mediaTextView(_ textView: MediaTextView, didRequestTaskToggleAtVisibleLocation location: Int) {
+            let lineIndex = Self.lineIndex(in: textView.string, at: location)
+            guard let toggledText = MarkdownEditorTextRenderer.toggledTaskListItem(in: renderedText, lineIndex: lineIndex) else {
+                return
+            }
+
+            let previousText = renderedText
+            textView.undoManager?.registerUndo(withTarget: self) { coordinator in
+                coordinator.replaceMarkdown(previousText)
+            }
+            replaceMarkdown(toggledText)
+        }
+
         private static func clamped(range: NSRange, length: Int) -> NSRange {
             NSRange(location: min(range.location, length), length: min(range.length, max(0, length - range.location)))
         }
@@ -265,6 +279,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             } else {
                 textView.setSelectedRange(NSRange(location: selectedRange.location, length: replacement.utf16.count))
             }
+        }
+
+        private func replaceMarkdown(_ markdown: String) {
+            renderedText = markdown
+            text = markdown
+            render(markdown)
         }
 
         private func preloadMissingMedia(in source: String) {
@@ -402,6 +422,22 @@ enum MarkdownEditorTextRenderer {
         return sourceUTF16Offset
     }
 
+    static func toggledTaskListItem(in source: String, lineIndex: Int) -> String? {
+        var lines = source.components(separatedBy: .newlines)
+        guard lines.indices.contains(lineIndex),
+              let taskMarkerRange = taskMarkerRange(in: lines[lineIndex]) else {
+            return nil
+        }
+
+        let nsLine = lines[lineIndex] as NSString
+        let marker = nsLine.substring(with: taskMarkerRange)
+        let toggledMarker = taskMarkerIsChecked(marker)
+            ? marker.replacingOccurrences(of: #"\[[xX]\]"#, with: "[ ]", options: .regularExpression)
+            : marker.replacingOccurrences(of: #"\[ \]"#, with: "[x]", options: .regularExpression)
+        lines[lineIndex] = nsLine.replacingCharacters(in: taskMarkerRange, with: toggledMarker)
+        return lines.joined(separator: "\n")
+    }
+
     private struct HiddenSyntaxRange {
         let range: NSRange
         let skipAtBoundary: Bool
@@ -479,7 +515,8 @@ enum MarkdownEditorTextRenderer {
                 attributedLine.addAttributes(
                     [
                         .font: NSFont.systemFont(ofSize: 16, weight: .semibold),
-                        .foregroundColor: taskMarkerIsChecked(marker) ? NSColor.systemGreen : NSColor.secondaryLabelColor
+                        .foregroundColor: taskMarkerIsChecked(marker) ? NSColor.systemGreen : NSColor.secondaryLabelColor,
+                        .markdownTaskCheckbox: true
                     ],
                     range: checkboxRange
                 )
@@ -775,9 +812,14 @@ private protocol MarkdownCommandTextViewDelegate: AnyObject {
     func mediaTextView(_ textView: MediaTextView, didRequestMarkdownWrapper wrapper: String)
 }
 
+private protocol TaskListTextViewDelegate: AnyObject {
+    func mediaTextView(_ textView: MediaTextView, didRequestTaskToggleAtVisibleLocation location: Int)
+}
+
 final class MediaTextView: NSTextView {
     fileprivate weak var mediaDelegate: MediaTextViewDelegate?
     fileprivate weak var markdownCommandDelegate: MarkdownCommandTextViewDelegate?
+    fileprivate weak var taskListDelegate: TaskListTextViewDelegate?
 
     init() {
         let textStorage = NSTextStorage()
@@ -870,6 +912,16 @@ final class MediaTextView: NSTextView {
         return super.performDragOperation(sender)
     }
 
+    override func mouseDown(with event: NSEvent) {
+        if let characterIndex = characterIndex(for: event),
+           attributedString().attribute(.markdownTaskCheckbox, at: characterIndex, effectiveRange: nil) != nil {
+            taskListDelegate?.mediaTextView(self, didRequestTaskToggleAtVisibleLocation: characterIndex)
+            return
+        }
+
+        super.mouseDown(with: event)
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard event.modifierFlags.contains(.command),
               let characters = event.charactersIgnoringModifiers?.lowercased() else {
@@ -902,6 +954,26 @@ final class MediaTextView: NSTextView {
             return super.performKeyEquivalent(with: event)
         }
     }
+
+    private func characterIndex(for event: NSEvent) -> Int? {
+        guard let layoutManager, let textContainer else { return nil }
+
+        var point = convert(event.locationInWindow, from: nil)
+        point.x -= textContainerOrigin.x
+        point.y -= textContainerOrigin.y
+
+        guard point.x >= 0, point.y >= 0 else { return nil }
+        let glyphIndex = layoutManager.glyphIndex(for: point, in: textContainer)
+        let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+        guard characterIndex < attributedString().length else { return nil }
+
+        let glyphRect = layoutManager.boundingRect(
+            forGlyphRange: NSRange(location: glyphIndex, length: 1),
+            in: textContainer
+        )
+        guard glyphRect.insetBy(dx: -4, dy: -4).contains(point) else { return nil }
+        return characterIndex
+    }
 }
 
 private final class MarkdownMediaTextAttachment: NSTextAttachment {
@@ -931,4 +1003,5 @@ private final class MarkdownSourceLine {
 private extension NSAttributedString.Key {
     static let markdownPreviewOnly = NSAttributedString.Key("markdownPreviewOnly")
     static let markdownSourceLine = NSAttributedString.Key("markdownSourceLine")
+    static let markdownTaskCheckbox = NSAttributedString.Key("markdownTaskCheckbox")
 }

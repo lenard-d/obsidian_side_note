@@ -398,6 +398,15 @@ struct ObsidianSideNoteTests {
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
     }
 
+    @Test func editorRendererTogglesTaskListItemsInMarkdownSource() throws {
+        let source = "- [ ] Open\n- [x] Done\n  - [X] Nested"
+
+        #expect(MarkdownEditorTextRenderer.toggledTaskListItem(in: source, lineIndex: 0) == "- [x] Open\n- [x] Done\n  - [X] Nested")
+        #expect(MarkdownEditorTextRenderer.toggledTaskListItem(in: source, lineIndex: 1) == "- [ ] Open\n- [ ] Done\n  - [X] Nested")
+        #expect(MarkdownEditorTextRenderer.toggledTaskListItem(in: source, lineIndex: 2) == "- [ ] Open\n- [x] Done\n  - [ ] Nested")
+        #expect(MarkdownEditorTextRenderer.toggledTaskListItem(in: source, lineIndex: 99) == nil)
+    }
+
     @Test func editorRendererMapsVisibleCursorOffsetBackToMarkdownSource() {
         #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 0, in: "### Test") == 4)
         #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 4, in: "### Test") == 8)
