@@ -179,6 +179,13 @@ final class ContentViewModel: ObservableObject {
 
     private func refreshSearchResults() {
         guard mode == .editVaultFile else { return }
+        let trimmedQuery = vaultSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            searchResults = []
+            highlightedSearchIndex = 0
+            return
+        }
+
         searchResults = VaultStore.markdownNotes(matching: vaultSearchQuery)
         highlightedSearchIndex = min(highlightedSearchIndex, max(searchResults.prefix(8).count - 1, 0))
         if let selectedNote, !searchResults.contains(selectedNote) {

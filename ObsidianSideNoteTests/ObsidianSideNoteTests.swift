@@ -184,6 +184,29 @@ struct ObsidianSideNoteTests {
         #expect(VaultStore.markdownNotes(matching: "later").map(\.relativePath) == ["Indexed Later.md"])
     }
 
+    @MainActor
+    @Test func editVaultFileEmptySearchDoesNotPopulateVaultResults() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            UserDefaults.standard.removeObject(forKey: "draft.editVaultFile.search")
+        }
+
+        try "Body".write(to: temporaryVaultURL.appendingPathComponent("Existing.md"), atomically: true, encoding: .utf8)
+        VaultStore.saveVaultURL(temporaryVaultURL)
+
+        let viewModel = ContentViewModel(mode: .editVaultFile)
+        viewModel.vaultSearchQuery = ""
+        viewModel.searchQueryDidChange()
+
+        #expect(viewModel.searchResults.isEmpty)
+    }
+
     @Test func vaultWriteUpdatesSelectedMarkdownFile() throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

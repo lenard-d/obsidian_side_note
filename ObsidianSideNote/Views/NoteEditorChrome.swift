@@ -46,7 +46,6 @@ struct VaultSearchPanel: View {
         VStack(spacing: 8) {
             searchField
             suggestions
-            autosaveHint
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
@@ -123,15 +122,6 @@ struct VaultSearchPanel: View {
         .background(index == highlightedIndex ? Color.accentColor.opacity(0.18) : Color.clear)
     }
 
-    @ViewBuilder
-    private var autosaveHint: some View {
-        if let selectedNote {
-            Text("Autosaves to \(selectedNote.relativePath)")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
 }
 
 struct MissingVaultPrompt: View {
