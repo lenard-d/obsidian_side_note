@@ -48,7 +48,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         scrollView.documentView = textView
         context.coordinator.textView = textView
         context.coordinator.observeEditingNotifications(for: textView)
+        context.coordinator.observeFocusRequests()
         context.coordinator.render(text)
+        DispatchQueue.main.async {
+            context.coordinator.applyFocusIfNeeded()
+        }
 
         return scrollView
     }
@@ -79,6 +83,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private var appliedCommandRequestID = 0
         private var pendingMediaLoads: Set<String> = []
         private var editingNotificationObservers: [NSObjectProtocol] = []
+        private var focusRequestObserver: NSObjectProtocol?
 
         init(
             text: Binding<String>,
@@ -99,6 +104,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         deinit {
             for observer in editingNotificationObservers {
                 NotificationCenter.default.removeObserver(observer)
+            }
+            if let focusRequestObserver {
+                NotificationCenter.default.removeObserver(focusRequestObserver)
             }
         }
 
@@ -135,6 +143,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard !isRendering, let textView else { return }
+            syncRenderedTextFromTextViewIfNeeded(textView)
+
             let selectedRange = textView.selectedRange()
             let lineIndex = Self.lineIndex(in: textView.string, at: selectedRange.location)
             guard activeLineIndex != lineIndex else { return }
@@ -146,6 +156,13 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             )
             activeLineIndex = lineIndex
             render(renderedText)
+        }
+
+        private func syncRenderedTextFromTextViewIfNeeded(_ textView: MediaTextView) {
+            let markdown = MarkdownEditorTextRenderer.markdownString(from: textView.attributedString())
+            guard markdown != renderedText else { return }
+            renderedText = markdown
+            text = markdown
         }
 
         func observeEditingNotifications(for textView: MediaTextView) {
@@ -177,7 +194,30 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         private func textViewDidEndEditing(_ notification: Notification) {
+            guard !isRendering else { return }
             isFocused = false
+        }
+
+        func observeFocusRequests() {
+            if let focusRequestObserver {
+                NotificationCenter.default.removeObserver(focusRequestObserver)
+            }
+
+            focusRequestObserver = NotificationCenter.default.addObserver(
+                forName: .editorShouldFocus,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                guard let self else { return }
+                if let targetWindow = notification.object as? NSWindow,
+                   let textWindow = self.textView?.window,
+                   targetWindow !== textWindow {
+                    return
+                }
+
+                self.isFocused = true
+                self.applyFocusIfNeeded()
+            }
         }
 
         func updateMediaWidth(_ width: CGFloat) {

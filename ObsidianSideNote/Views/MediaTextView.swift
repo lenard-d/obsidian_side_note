@@ -1,4 +1,5 @@
 import AppKit
+import STTextKitPlus
 import STTextView
 
 final class MediaScrollView: NSScrollView {
@@ -128,16 +129,46 @@ final class MediaTextView: STTextView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        super.mouseDown(with: event)
-
-        let selectedLocation = selectedRange().location
-        guard selectedLocation != NSNotFound else { return }
-
-        let characterIndex = min(selectedLocation, max(0, attributedString().length - 1))
-        if attributedString().length > characterIndex,
-           attributedString().attribute(.markdownTaskCheckbox, at: characterIndex, effectiveRange: nil) != nil {
-            taskListDelegate?.mediaTextView(self, didRequestTaskToggleAtVisibleLocation: characterIndex)
+        if toggleTaskCheckboxIfClicked(with: event) {
+            return
         }
+
+        super.mouseDown(with: event)
+    }
+
+    func taskCheckboxLocation(atVisibleLocation location: Int) -> Int? {
+        guard location != NSNotFound,
+              attributedString().length > location,
+              attributedString().attribute(.markdownTaskCheckbox, at: location, effectiveRange: nil) != nil else {
+            return nil
+        }
+
+        return location
+    }
+
+    private func toggleTaskCheckboxIfClicked(with event: NSEvent) -> Bool {
+        guard event.type == .leftMouseDown,
+              event.clickCount == 1,
+              event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
+              let visibleLocation = taskCheckboxLocation(for: event) else {
+            return false
+        }
+
+        taskListDelegate?.mediaTextView(self, didRequestTaskToggleAtVisibleLocation: visibleLocation)
+        return true
+    }
+
+    private func taskCheckboxLocation(for event: NSEvent) -> Int? {
+        let eventPoint = convert(event.locationInWindow, from: nil)
+        guard let textLocation = textLayoutManager.caretLocation(
+            interactingAt: eventPoint,
+            inContainerAt: textLayoutManager.documentRange.location
+        ) else {
+            return nil
+        }
+
+        let visibleLocation = textContentManager.offset(from: textLayoutManager.documentRange.location, to: textLocation)
+        return taskCheckboxLocation(atVisibleLocation: visibleLocation)
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {

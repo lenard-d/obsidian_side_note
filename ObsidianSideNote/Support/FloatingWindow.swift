@@ -2,6 +2,7 @@ import AppKit
 
 final class FloatingWindow: NSWindow {
     var keyEquivalentHandler: ((NSEvent) -> Bool)?
+    var escapeHandler: (() -> Void)?
 
     override var canBecomeKey: Bool {
         true
@@ -17,5 +18,14 @@ final class FloatingWindow: NSWindow {
         }
 
         return super.performKeyEquivalent(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 {
+            escapeHandler?()
+            return
+        }
+
+        super.keyDown(with: event)
     }
 }

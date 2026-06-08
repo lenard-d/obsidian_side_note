@@ -374,6 +374,32 @@ struct ObsidianSideNoteTests {
     }
 
     @MainActor
+    @Test func mediaTextViewRecognizesOnlyTaskCheckboxGlyphAsToggleTarget() {
+        let textView = MediaTextView()
+        let rendered = MarkdownEditorTextRenderer.attributedString(from: "- [ ] Task", mediaWidth: 400)
+        textView.setAttributedString(rendered)
+
+        #expect(textView.taskCheckboxLocation(atVisibleLocation: 0) == 0)
+        #expect(textView.taskCheckboxLocation(atVisibleLocation: 1) == nil)
+        #expect(textView.taskCheckboxLocation(atVisibleLocation: 2) == nil)
+    }
+
+    @MainActor
+    @Test func mediaTextViewInsertedNewlineIsPreservedInMarkdownSnapshot() {
+        let textView = MediaTextView()
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.setAttributedString(MarkdownEditorTextRenderer.attributedString(from: "First", mediaWidth: 400))
+        textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
+
+        textView.insertNewline(nil)
+        textView.insertText("Second", replacementRange: textView.selectedRange())
+
+        let markdown = MarkdownEditorTextRenderer.markdownString(from: textView.attributedString())
+        #expect(markdown == "First\nSecond")
+    }
+
+    @MainActor
     @Test func mediaTextViewPasteLetsMediaDelegateConsumePaste() {
         let textView = MediaTextView()
         let delegate = MediaTextViewProbe()
@@ -835,6 +861,21 @@ struct ObsidianSideNoteTests {
         #expect(ShortcutAction.newNote.defaultKey == "n")
         #expect(ShortcutAction.appendDaily.defaultKey == "d")
         #expect(ShortcutAction.editVaultFile.defaultKey == "v")
+    }
+
+    @Test func globalShortcutActionsMapToToggleableNoteModes() {
+        #expect(ShortcutAction.appendDaily.noteMode == .appendDaily)
+        #expect(ShortcutAction.newNote.noteMode == .newNote)
+        #expect(ShortcutAction.editVaultFile.noteMode == .editVaultFile)
+        #expect(ShortcutAction.settings.noteMode == nil)
+    }
+
+    @Test func onlyNoteModesUseTheMarkdownEditor() {
+        #expect(NoteMode.appendDaily.usesTextEditor)
+        #expect(NoteMode.newNote.usesTextEditor)
+        #expect(NoteMode.editVaultFile.usesTextEditor)
+        #expect(!NoteMode.settings.usesTextEditor)
+        #expect(!NoteMode.setup.usesTextEditor)
     }
 
     @Test func shortcutPolicyRejectsCommandOnlyGlobalShortcuts() {

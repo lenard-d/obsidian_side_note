@@ -164,7 +164,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let existingWindow = window {
             configureLocalKeyEquivalents(for: existingWindow)
             existingWindow.contentView = NSHostingView(rootView: ContentView(mode: mode, closeWindow: { [weak self] in
-                self?.window?.orderOut(nil)
+                self?.closeWindow()
             }))
             return existingWindow
         }
@@ -187,7 +187,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Create the SwiftUI view with the specified mode
         let contentView = ContentView(mode: mode, closeWindow: { [weak self] in
-            self?.window?.orderOut(nil)
+            self?.closeWindow()
         })
 
         // Create a custom floating window - this allows it to become key and accept input
@@ -239,9 +239,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let window = window else { return }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        focusContentAfterWindowActivation()
     }
 
     private func performShortcutAction(_ action: ShortcutAction) {
+        if shouldCloseVisibleWindow(for: action) {
+            closeWindow()
+            return
+        }
+
         switch action {
         case .appendDaily:
             openAppendToDaily()
@@ -252,6 +258,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             openEditVaultFile()
         case .settings:
             break
+        }
+    }
+
+    private func shouldCloseVisibleWindow(for action: ShortcutAction) -> Bool {
+        guard let actionMode = action.noteMode else { return false }
+        return window?.isVisible == true && currentMode == actionMode
+    }
+
+    private func closeWindow() {
+        window?.orderOut(nil)
+    }
+
+    private func focusContentAfterWindowActivation() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.currentMode?.usesTextEditor == true else { return }
+            NotificationCenter.default.post(name: .editorShouldFocus, object: self.window)
         }
     }
 
@@ -292,7 +314,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             if event.charactersIgnoringModifiers?.lowercased() == "w",
                ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == .command {
-                self?.window?.orderOut(nil)
+                self?.closeWindow()
                 return nil
             }
 
@@ -308,6 +330,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureLocalKeyEquivalents(for window: NSWindow) {
         guard let floatingWindow = window as? FloatingWindow else { return }
+        floatingWindow.escapeHandler = { [weak self] in
+            self?.closeWindow()
+        }
         floatingWindow.keyEquivalentHandler = { [weak self] event in
             guard let self else { return false }
             guard KeyboardEventRouting.shouldHandleLocalShortcut(event) else { return false }
@@ -317,13 +342,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return true
             }
 
+            for action in ShortcutAction.globalActions where self.matches(event, action: action) {
+                if self.shouldCloseVisibleWindow(for: action) {
+                    self.closeWindow()
+                    return true
+                }
+            }
+
             guard ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == .command else {
                 return false
             }
 
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "w":
-                self.window?.orderOut(nil)
+                self.closeWindow()
                 return true
             case "q":
                 NSApp.terminate(nil)

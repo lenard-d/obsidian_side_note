@@ -45,6 +45,15 @@ enum NoteMode {
             return ""
         }
     }
+
+    var usesTextEditor: Bool {
+        switch self {
+        case .appendDaily, .newNote, .editVaultFile:
+            return true
+        case .settings, .setup:
+            return false
+        }
+    }
 }
 
 extension NoteMode: Equatable {}

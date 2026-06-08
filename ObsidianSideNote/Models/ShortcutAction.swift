@@ -106,6 +106,19 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     var isGlobal: Bool {
         Self.globalActions.contains(self)
     }
+
+    var noteMode: NoteMode? {
+        switch self {
+        case .appendDaily:
+            return .appendDaily
+        case .newNote:
+            return .newNote
+        case .editVaultFile:
+            return .editVaultFile
+        case .settings:
+            return nil
+        }
+    }
 }
 
 extension KeyboardShortcuts.Name {
