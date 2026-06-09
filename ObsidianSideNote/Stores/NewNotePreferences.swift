@@ -17,6 +17,7 @@ struct NewNotePreferences {
     static func setResumeIntervalMinutes(_ minutes: Int) {
         guard allowedResumeIntervals.contains(minutes) else { return }
         Defaults[.newNoteResumeIntervalMinutes] = minutes
+        AppConfigStore.saveNewNoteResumeInterval(minutes)
     }
 
     static func startSession(now: Date = Date()) {

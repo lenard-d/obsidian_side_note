@@ -37,6 +37,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+        AppConfigStore.restorePersistedSettingsIfNeeded()
         AppLogger.app.info("Application did finish launching")
 
         hotKeyManager = GlobalHotKeyManager { [weak self] action in

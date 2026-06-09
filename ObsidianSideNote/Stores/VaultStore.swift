@@ -64,11 +64,14 @@ struct VaultStore {
     }
 
     static func saveVaultURL(_ url: URL) {
+        var savedBookmarkData: Data?
         if let bookmarkData = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) {
             UserDefaults.standard.set(bookmarkData, forKey: bookmarkKey)
+            savedBookmarkData = bookmarkData
         }
         UserDefaults.standard.set(url.path, forKey: pathKey)
         UserDefaults.standard.set(url.lastPathComponent, forKey: "obsidianVault")
+        AppConfigStore.saveVault(url: url, bookmarkData: savedBookmarkData)
         invalidateCaches()
         AppLogger.vault.info("Selected vault \(url.path, privacy: .public)")
     }
@@ -245,9 +248,12 @@ struct VaultStore {
 
     static func note(relativePath: String) -> VaultNote? {
         guard let vaultURL = selectedVaultURL, !relativePath.isEmpty else { return nil }
-        let fileURL = vaultURL.appendingPathComponent(relativePath)
+        guard let fileURL = inVaultURL(forRelativePath: relativePath, in: vaultURL),
+              let safeRelativePath = safeVaultRelativePath(relativePath) else {
+            return nil
+        }
         let title = fileURL.deletingPathExtension().lastPathComponent
-        return VaultNote(relativePath: relativePath, title: title, url: fileURL)
+        return VaultNote(relativePath: safeRelativePath, title: title, url: fileURL)
     }
 
     static func copyAttachment(from sourceURL: URL) -> String? {
@@ -343,7 +349,9 @@ struct VaultStore {
 
         guard let vaultURL = selectedVaultURL else { return nil }
         let cleanedPath = link.removingPercentEncoding ?? link
-        let directURL = vaultURL.appendingPathComponent(cleanedPath)
+        guard let directURL = inVaultURL(forRelativePath: cleanedPath, in: vaultURL) else {
+            return nil
+        }
         if FileManager.default.fileExists(atPath: directURL.path) {
             return directURL
         }
@@ -435,7 +443,7 @@ struct VaultStore {
         guard let vaultURL = selectedVaultURL else { return nil }
         return withSelectedVaultAccess {
             let relativePath = dailyNoteRelativePath(now: now, in: vaultURL)
-            let note = note(relativePath: relativePath)
+            let note = vaultNote(relativePath: relativePath, in: vaultURL)
             guard FileManager.default.fileExists(atPath: note?.url.path ?? "") else { return nil }
             return note
         }
@@ -445,9 +453,8 @@ struct VaultStore {
         guard let vaultURL = selectedVaultURL else { return nil }
         return withSelectedVaultAccess {
             let relativePath = dailyNoteRelativePath(now: now, in: vaultURL)
-            let fileURL = vaultURL.appendingPathComponent(relativePath)
-            let title = fileURL.deletingPathExtension().lastPathComponent
-            let note = VaultNote(relativePath: relativePath, title: title, url: fileURL)
+            guard let note = vaultNote(relativePath: relativePath, in: vaultURL) else { return nil }
+            let fileURL = note.url
 
             guard !FileManager.default.fileExists(atPath: fileURL.path) else {
                 return note
@@ -490,8 +497,7 @@ struct VaultStore {
             return vaultURL
         }
 
-        let normalizedPath = normalizedVaultRelativePath(folderPath)
-        return normalizedPath.isEmpty ? vaultURL : vaultURL.appendingPathComponent(normalizedPath, isDirectory: true)
+        return inVaultURL(forRelativePath: folderPath, in: vaultURL, isDirectory: true, allowEmpty: true) ?? vaultURL
     }
 
     private static func pngData(from image: NSImage) -> Data? {
@@ -510,13 +516,7 @@ struct VaultStore {
             return vaultURL
         }
 
-        let normalizedPath = normalizedVaultRelativePath(configuredPath)
-
-        guard !normalizedPath.isEmpty, normalizedPath != "." else {
-            return vaultURL
-        }
-
-        return vaultURL.appendingPathComponent(normalizedPath, isDirectory: true)
+        return inVaultURL(forRelativePath: configuredPath, in: vaultURL, isDirectory: true, allowEmpty: true) ?? vaultURL
     }
 
     private static func attachmentFolderPath(in vaultURL: URL) -> String? {
@@ -550,9 +550,10 @@ struct VaultStore {
         formatter.dateFormat = swiftDateFormat(fromObsidianFormat: settings.format)
 
         let fileName = formatter.string(from: now)
-        let folder = settings.folder.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let folder = safeVaultRelativePath(settings.folder, allowEmpty: true) ?? ""
         let path = folder.isEmpty ? fileName : "\(folder)/\(fileName)"
-        return path.hasSuffix(".md") ? path : "\(path).md"
+        let markdownPath = path.hasSuffix(".md") ? path : "\(path).md"
+        return safeVaultRelativePath(markdownPath) ?? defaultDailyNoteRelativePath(now: now)
     }
 
     private static func dailyTemplateText(in vaultURL: URL) -> String {
@@ -560,8 +561,16 @@ struct VaultStore {
         guard !template.isEmpty else { return "" }
 
         let templatePath = URL(fileURLWithPath: template).pathExtension.isEmpty ? "\(template).md" : template
-        let templateURL = vaultURL.appendingPathComponent(templatePath)
+        guard let templateURL = inVaultURL(forRelativePath: templatePath, in: vaultURL) else { return "" }
         return (try? String(contentsOf: templateURL, encoding: .utf8)) ?? ""
+    }
+
+    private static func defaultDailyNoteRelativePath(now: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        return "\(formatter.string(from: now)).md"
     }
 
     private static func dailyNoteSettings(in vaultURL: URL) -> DailyNoteSettings {
@@ -630,13 +639,70 @@ struct VaultStore {
         return VaultNote(relativePath: relativePath, title: title, url: fileURL)
     }
 
-    private static func normalizedVaultRelativePath(_ path: String) -> String {
-        path
+    private static func vaultNote(relativePath: String, in vaultURL: URL) -> VaultNote? {
+        guard let fileURL = inVaultURL(forRelativePath: relativePath, in: vaultURL),
+              let safeRelativePath = safeVaultRelativePath(relativePath) else {
+            return nil
+        }
+
+        let title = fileURL.deletingPathExtension().lastPathComponent
+        return VaultNote(relativePath: safeRelativePath, title: title, url: fileURL)
+    }
+
+    private static func inVaultURL(
+        forRelativePath path: String,
+        in vaultURL: URL,
+        isDirectory: Bool = false,
+        allowEmpty: Bool = false
+    ) -> URL? {
+        guard let relativePath = safeVaultRelativePath(path, allowEmpty: allowEmpty) else {
+            return nil
+        }
+
+        guard !relativePath.isEmpty else {
+            return vaultURL
+        }
+
+        let candidate = vaultURL
+            .appendingPathComponent(relativePath, isDirectory: isDirectory)
+            .standardizedFileURL
+        return isURLInsideVault(candidate, vaultURL: vaultURL) ? candidate : nil
+    }
+
+    private static func safeVaultRelativePath(_ path: String, allowEmpty: Bool = false) -> String? {
+        let normalized = path
+            .removingPercentEncoding ?? path
+        let trimmed = normalized
             .replacingOccurrences(of: "\\", with: "/")
-            .replacingOccurrences(of: #"^\./"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"^\.$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+        guard !trimmed.hasPrefix("/") else { return nil }
+
+        var components: [String] = []
+        for component in trimmed.split(separator: "/", omittingEmptySubsequences: false).map(String.init) {
+            if component.isEmpty || component == "." {
+                continue
+            }
+
+            guard component != ".." else {
+                return nil
+            }
+
+            components.append(component)
+        }
+
+        let relativePath = components.joined(separator: "/")
+        guard allowEmpty || !relativePath.isEmpty else {
+            return nil
+        }
+
+        return relativePath
+    }
+
+    private static func isURLInsideVault(_ url: URL, vaultURL: URL) -> Bool {
+        let vaultPath = vaultURL.standardizedFileURL.path
+        let filePath = url.standardizedFileURL.path
+        return filePath == vaultPath || filePath.hasPrefix(vaultPath + "/")
     }
 
     private static func wikiTarget(from link: String) -> String {
@@ -714,7 +780,9 @@ struct VaultStore {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !decodedTarget.isEmpty else { return nil }
 
-        let directURL = vaultURL.appendingPathComponent(decodedTarget)
+        guard let directURL = inVaultURL(forRelativePath: decodedTarget, in: vaultURL) else {
+            return nil
+        }
         if FileManager.default.fileExists(atPath: directURL.path) {
             return directURL
         }

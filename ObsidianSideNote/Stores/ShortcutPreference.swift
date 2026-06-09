@@ -38,6 +38,7 @@ struct ShortcutPreference {
             keyboardShortcut(key: normalizedValue, modifiers: normalizedModifiers),
             for: action.shortcutName
         )
+        AppConfigStore.saveShortcut(action: action, key: normalizedValue, modifiers: normalizedModifiers)
         NotificationCenter.default.post(name: .shortcutPreferencesDidChange, object: nil)
     }
 

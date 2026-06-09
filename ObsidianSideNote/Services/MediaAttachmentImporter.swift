@@ -198,7 +198,8 @@ enum MediaAttachmentImporter {
         RemoteMediaDownloader(maxBytes: maxRemoteMediaBytes).download(request) { data, response in
             guard let data,
                   let httpResponse = response as? HTTPURLResponse,
-                  200..<300 ~= httpResponse.statusCode else {
+                  200..<300 ~= httpResponse.statusCode,
+                  isSupportedRemoteMediaResponse(httpResponse, fileExtension: url.pathExtension) else {
                 completion(nil)
                 return
             }
@@ -213,6 +214,25 @@ enum MediaAttachmentImporter {
     private static func isRemoteMedia(_ url: URL) -> Bool {
         guard ["http", "https"].contains(url.scheme?.lowercased()) else { return false }
         return isSupportedMedia(url)
+    }
+
+    static func isSupportedRemoteMediaResponse(_ response: HTTPURLResponse, fileExtension: String) -> Bool {
+        guard let contentTypeHeader = response.value(forHTTPHeaderField: "Content-Type") else {
+            return true
+        }
+
+        let mimeType = contentTypeHeader
+            .split(separator: ";", maxSplits: 1)
+            .first
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() } ?? ""
+        guard let contentType = UTType(mimeType: mimeType) else {
+            return false
+        }
+
+        let extensionType = UTType(filenameExtension: fileExtension.lowercased())
+        let isMediaContent = contentType.conforms(to: .image) || contentType.conforms(to: .movie)
+        let extensionMatches = extensionType.map { contentType.conforms(to: $0) || $0.conforms(to: contentType) } ?? true
+        return isMediaContent && extensionMatches
     }
 
     private static func imageSourceURL(fromHTML html: String) -> URL? {

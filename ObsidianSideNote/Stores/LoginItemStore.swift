@@ -13,6 +13,7 @@ enum LoginItemStore {
         }
         set {
             UserDefaults.standard.set(newValue, forKey: "startAtLogin")
+            AppConfigStore.saveStartAtLogin(newValue)
 
             guard #available(macOS 13.0, *) else {
                 return

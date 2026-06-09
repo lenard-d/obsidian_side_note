@@ -114,6 +114,37 @@ struct ObsidianSideNoteTests {
         #expect(FileManager.default.fileExists(atPath: temporaryVaultURL.appendingPathComponent(note.relativePath).path))
     }
 
+    @Test func newNoteRejectsUnsafeConfiguredDefaultFolder() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let configURL = temporaryVaultURL.appendingPathComponent(".obsidian", isDirectory: true)
+        let outsideURL = temporaryVaultURL.deletingLastPathComponent().appendingPathComponent("Outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: configURL, withIntermediateDirectories: true)
+        try #"{"newFileLocation":"folder","newFileFolderPath":"../Outside"}"#.write(
+            to: configURL.appendingPathComponent("app.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            try? FileManager.default.removeItem(at: outsideURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let note = try #require(VaultStore.createOrUpdateNote(
+            title: "Capture",
+            text: "Body",
+            fallbackDate: "2026-06-01 13-30"
+        ))
+
+        #expect(note.relativePath == "Capture.md")
+        #expect(FileManager.default.fileExists(atPath: temporaryVaultURL.appendingPathComponent("Capture.md").path))
+        #expect(!FileManager.default.fileExists(atPath: outsideURL.appendingPathComponent("Capture.md").path))
+    }
+
     @Test func newNoteTitleRenameUpdatesExistingFile() throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -242,6 +273,24 @@ struct ObsidianSideNoteTests {
         let resolvedURL = try #require(VaultStore.url(forMarkdownLink: "Attachments/Image.png"))
 
         #expect(resolvedURL.path == temporaryVaultURL.appendingPathComponent("Attachments/Image.png").path)
+    }
+
+    @Test func vaultStoreRejectsMarkdownLinksOutsideSelectedVault() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+
+        #expect(VaultStore.url(forMarkdownLink: "../Secrets.md") == nil)
+        #expect(VaultStore.url(forMarkdownLink: "%2E%2E/Secrets.md") == nil)
+        #expect(VaultStore.note(relativePath: "../Secrets.md") == nil)
     }
 
     @Test func vaultStoreResolvesWikiLinksByFileName() throws {
@@ -720,6 +769,24 @@ struct ObsidianSideNoteTests {
         #expect((result.response as? HTTPURLResponse)?.statusCode == 200)
     }
 
+    @Test func mediaImporterRejectsRemoteResponseWithNonMediaContentType() throws {
+        let htmlResponse = HTTPURLResponse(
+            url: URL(string: "https://example.com/image.png")!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "text/html; charset=utf-8"]
+        )!
+        let pngResponse = HTTPURLResponse(
+            url: URL(string: "https://example.com/image.png")!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "image/png"]
+        )!
+
+        #expect(!MediaAttachmentImporter.isSupportedRemoteMediaResponse(htmlResponse, fileExtension: "png"))
+        #expect(MediaAttachmentImporter.isSupportedRemoteMediaResponse(pngResponse, fileExtension: "png"))
+    }
+
     @Test func pastedImageBaseNameUsesCompactTimestamp() {
         let date = Date(timeIntervalSince1970: 1_780_328_430)
         let name = VaultStore.pastedImageBaseName(now: date)
@@ -859,6 +926,48 @@ struct ObsidianSideNoteTests {
         #expect(shortcut.modifiers.contains(.option))
         #expect(shortcut.modifiers.contains(.command))
         #expect(shortcut.displayValue == "⌃⌥⌘ C")
+    }
+
+    @MainActor
+    @Test func persistentConfigRestoresVaultShortcutAndResumeInterval() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        let configURL = temporaryDirectory.appendingPathComponent("config.json")
+        let vaultURL = temporaryDirectory.appendingPathComponent("Vault", isDirectory: true)
+        try FileManager.default.createDirectory(at: vaultURL, withIntermediateDirectories: true)
+
+        let originalConfigURL = AppConfigStore.configURLOverride
+        AppConfigStore.configURLOverride = configURL
+        KeyboardShortcuts.reset(.createNewNote)
+        Defaults.reset(.newNoteResumeIntervalMinutes)
+        defer {
+            AppConfigStore.configURLOverride = originalConfigURL
+            KeyboardShortcuts.reset(.createNewNote)
+            Defaults.reset(.newNoteResumeIntervalMinutes)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+
+        VaultStore.saveVaultURL(vaultURL)
+        ShortcutPreference.set("c", modifiers: [.command, .option, .control], for: .newNote)
+        NewNotePreferences.setResumeIntervalMinutes(10)
+
+        UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+        UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+        UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        KeyboardShortcuts.reset(.createNewNote)
+        Defaults.reset(.newNoteResumeIntervalMinutes)
+
+        AppConfigStore.restorePersistedSettingsIfNeeded()
+
+        #expect(UserDefaults.standard.string(forKey: VaultStore.pathKey) == vaultURL.path)
+        #expect(UserDefaults.standard.string(forKey: "obsidianVault") == "Vault")
+        #expect(NewNotePreferences.resumeIntervalMinutes == 10)
+        #expect(ShortcutPreference.definition(for: .newNote).key == "c")
+        #expect(ShortcutPreference.definition(for: .newNote).modifiers == [.command, .option, .control])
     }
 
     @Test func shortcutActionsRoundTripThroughGlobalHotKeyIDs() throws {
