@@ -54,6 +54,19 @@ enum NoteMode {
             return false
         }
     }
+
+    var startsWithTitleFocus: Bool {
+        self == .newNote
+    }
+
+    var startsWithEditorFocus: Bool {
+        switch self {
+        case .appendDaily, .editVaultFile:
+            return true
+        case .newNote, .settings, .setup:
+            return false
+        }
+    }
 }
 
 extension NoteMode: Equatable {}

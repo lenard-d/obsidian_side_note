@@ -13,6 +13,8 @@ struct ContentView: View {
     let closeWindow: () -> Void
 
     @StateObject private var viewModel: ContentViewModel
+    @State private var titleFocusRequestID = 0
+    @State private var editorFocusRequestID = 0
     @FocusState private var isTextEditorFocused: Bool
     @FocusState private var isVaultSearchFocused: Bool
 
@@ -36,6 +38,7 @@ struct ContentView: View {
                     MarkdownEditorView(
                         text: $viewModel.noteText,
                         isFocused: $isTextEditorFocused,
+                        focusRequestID: $editorFocusRequestID,
                         cursorEndRequestID: $viewModel.cursorEndRequestID,
                         insertMedia: viewModel.insertMediaLink
                     )
@@ -50,7 +53,7 @@ struct ContentView: View {
                 viewModel.start(clearSearchFocus: {
                     isVaultSearchFocused = false
                 }, focusEditor: {
-                    isTextEditorFocused = true
+                    focusInitialInput()
                 })
             }
         }
@@ -76,7 +79,12 @@ struct ContentView: View {
             NoteEditorHeader(mode: mode, closeWindow: closeWindow)
 
             if mode == .newNote {
-                SelectAllOnFocusTextField(placeholder: "Title", text: $viewModel.noteTitle)
+                SelectAllOnFocusTextField(
+                    placeholder: "Title",
+                    text: $viewModel.noteTitle,
+                    focusRequestID: titleFocusRequestID,
+                    onCommit: focusEditor
+                )
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
             }
@@ -112,6 +120,25 @@ struct ContentView: View {
             Divider()
         }
         .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+    }
+
+    private func focusInitialInput() {
+        if mode.startsWithTitleFocus {
+            titleFocusRequestID += 1
+        } else if mode.startsWithEditorFocus {
+            focusEditor()
+        }
+    }
+
+    private func focusEditor(in window: NSWindow? = nil) {
+        isTextEditorFocused = true
+        editorFocusRequestID += 1
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .editorShouldFocus, object: window)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+            NotificationCenter.default.post(name: .editorShouldFocus, object: window)
+        }
     }
 }
 

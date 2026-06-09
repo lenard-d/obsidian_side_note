@@ -9,7 +9,12 @@ enum MarkdownEditorTextRenderer {
     private static let taskMarkerRegex = try? NSRegularExpression(pattern: #"^(\s*[-*+]\s+\[[ xX]\]\s+)"#)
 
     @MainActor
-    static func attributedString(from source: String, mediaWidth: CGFloat, activeLineIndex: Int? = nil) -> NSAttributedString {
+    static func attributedString(
+        from source: String,
+        mediaWidth: CGFloat,
+        activeLineIndex: Int? = nil,
+        activeTaskMarkerLineIndex: Int? = nil
+    ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let lines = source.components(separatedBy: .newlines)
 
@@ -21,13 +26,25 @@ enum MarkdownEditorTextRenderer {
                let image = cachedImage(for: media.link, maxWidth: mediaWidth) {
                 let attachment = MarkdownMediaTextAttachment(markdown: line, image: image)
                 if isActiveLine {
-                    result.append(attributedLine(line, revealSyntax: true))
+                    result.append(
+                        attributedLine(
+                            line,
+                            revealSyntax: true,
+                            revealTaskSyntax: index == activeTaskMarkerLineIndex
+                        )
+                    )
                     result.append(NSAttributedString(string: "\n", attributes: previewOnlyAttributes))
                     attachment.isPreviewOnly = true
                 }
                 result.append(NSAttributedString(attachment: attachment))
             } else {
-                result.append(attributedLine(line, revealSyntax: isActiveLine))
+                result.append(
+                    attributedLine(
+                        line,
+                        revealSyntax: isActiveLine,
+                        revealTaskSyntax: index == activeTaskMarkerLineIndex
+                    )
+                )
             }
 
             if index < lines.count - 1 {
@@ -114,6 +131,32 @@ enum MarkdownEditorTextRenderer {
         return sourceUTF16Offset
     }
 
+    static func visibleOffset(forSourceOffset sourceOffset: Int, in sourceLine: String) -> Int {
+        if let taskMarkerRange = taskMarkerRange(in: sourceLine) {
+            let marker = (sourceLine as NSString).substring(with: taskMarkerRange)
+            let indentationLength = (leadingWhitespace(in: marker) as NSString).length
+            guard sourceOffset > taskMarkerRange.upperBound else {
+                return indentationLength
+            }
+            return taskCheckboxPrefixLength + max(0, sourceOffset - taskMarkerRange.upperBound)
+        }
+
+        return sourceOffset
+    }
+
+    static func isTaskListItem(_ line: String) -> Bool {
+        taskMarkerRange(in: line) != nil
+    }
+
+    static func isTaskMarkerAdjacentVisibleOffset(_ visibleOffset: Int, in sourceLine: String) -> Bool {
+        guard let taskMarkerRange = taskMarkerRange(in: sourceLine) else { return false }
+        let marker = (sourceLine as NSString).substring(with: taskMarkerRange)
+        let indentationLength = (leadingWhitespace(in: marker) as NSString).length
+        let lowerBound = max(0, indentationLength - 1)
+        let upperBound = indentationLength + taskCheckboxPrefixLength
+        return (lowerBound...upperBound).contains(visibleOffset)
+    }
+
     static func toggledTaskListItem(in source: String, lineIndex: Int) -> String? {
         var lines = source.components(separatedBy: .newlines)
         guard lines.indices.contains(lineIndex),
@@ -146,7 +189,15 @@ enum MarkdownEditorTextRenderer {
         typingAttributes.merging([.markdownPreviewOnly: true]) { current, _ in current }
     }
 
-    private static func attributedLine(_ line: String, revealSyntax: Bool) -> NSAttributedString {
+    private static func attributedLine(
+        _ line: String,
+        revealSyntax: Bool,
+        revealTaskSyntax: Bool
+    ) -> NSAttributedString {
+        if isTaskListItem(line), !revealTaskSyntax, let hiddenLine = hiddenSyntaxLine(from: line) {
+            return hiddenLine
+        }
+
         if !revealSyntax, let hiddenLine = hiddenSyntaxLine(from: line) {
             return hiddenLine
         }

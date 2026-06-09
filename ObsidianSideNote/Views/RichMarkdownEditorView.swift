@@ -5,15 +5,19 @@ import SwiftUI
 struct RichMarkdownEditorView: NSViewRepresentable {
     @Binding var text: String
     @FocusState.Binding var isFocused: Bool
+    @Binding var focusRequestID: Int
     @Binding var cursorEndRequestID: Int
     @Binding var commandRequest: MarkdownEditorCommandRequest?
     let insertMedia: (String) -> Void
     let didInsertMedia: () -> Void
+    private let horizontalEditorPadding: CGFloat = 10
+    private let topEditorPadding: CGFloat = 8
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             text: $text,
             isFocused: $isFocused,
+            focusRequestID: $focusRequestID,
             cursorEndRequestID: $cursorEndRequestID,
             commandRequest: $commandRequest,
             insertMedia: insertMedia,
@@ -26,6 +30,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
+        scrollView.configureEditorTopPadding(topEditorPadding)
+        scrollView.focusTextView = { [weak coordinator = context.coordinator] in
+            coordinator?.focusEditorAtEnd()
+        }
         scrollView.onLayout = { [weak coordinator = context.coordinator, weak scrollView] in
             guard let scrollView else { return }
             coordinator?.updateLayout(contentSize: scrollView.contentSize)
@@ -41,7 +49,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         textView.allowsUndo = true
         textView.font = .systemFont(ofSize: 16)
         textView.textColor = .textColor
-        textView.textContainerInset = NSSize(width: 14, height: 14)
+        textView.configureHorizontalEditorPadding(horizontalEditorPadding)
         textView.configureForVerticalScrolling(contentSize: NSSize(width: 560, height: 320))
         textView.registerForDraggedTypes(MediaAttachmentImporter.pasteboardTypes)
 
@@ -62,6 +70,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             context.coordinator.render(text)
         }
         context.coordinator.applyFocusIfNeeded()
+        context.coordinator.applyFocusRequestIfNeeded()
         context.coordinator.applyCursorEndRequestIfNeeded()
         context.coordinator.applyCommandRequestIfNeeded()
     }
@@ -69,6 +78,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     final class Coordinator: NSObject, STTextViewDelegate, MediaTextViewDelegate, MarkdownCommandTextViewDelegate, TaskListTextViewDelegate {
         @Binding private var text: String
         @FocusState.Binding private var isFocused: Bool
+        @Binding private var focusRequestID: Int
         @Binding private var cursorEndRequestID: Int
         @Binding private var commandRequest: MarkdownEditorCommandRequest?
         private let insertMedia: (String) -> Void
@@ -76,9 +86,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         fileprivate weak var textView: MediaTextView?
         fileprivate var renderedText = ""
         private var activeLineIndex: Int?
+        private var activeTaskMarkerLineIndex: Int?
         private var pendingSelectionAfterRender: NSRange?
         private var mediaWidth: CGFloat = 560
         private var isRendering = false
+        private var appliedFocusRequestID = 0
         private var appliedCursorEndRequestID = 0
         private var appliedCommandRequestID = 0
         private var pendingMediaLoads: Set<String> = []
@@ -88,6 +100,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         init(
             text: Binding<String>,
             isFocused: FocusState<Bool>.Binding,
+            focusRequestID: Binding<Int>,
             cursorEndRequestID: Binding<Int>,
             commandRequest: Binding<MarkdownEditorCommandRequest?>,
             insertMedia: @escaping (String) -> Void,
@@ -95,6 +108,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         ) {
             _text = text
             _isFocused = isFocused
+            _focusRequestID = focusRequestID
             _cursorEndRequestID = cursorEndRequestID
             _commandRequest = commandRequest
             self.insertMedia = insertMedia
@@ -120,7 +134,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 MarkdownEditorTextRenderer.attributedString(
                     from: source,
                     mediaWidth: mediaWidth,
-                    activeLineIndex: activeLineIndex
+                    activeLineIndex: activeLineIndex,
+                    activeTaskMarkerLineIndex: activeTaskMarkerLineIndex
                 )
             )
             textView.typingAttributes = MarkdownEditorTextRenderer.typingAttributes
@@ -147,14 +162,24 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
             let selectedRange = textView.selectedRange()
             let lineIndex = Self.lineIndex(in: textView.string, at: selectedRange.location)
-            guard activeLineIndex != lineIndex else { return }
-            pendingSelectionAfterRender = Self.sourceSelectionRange(
+            let sourceLine = Self.line(at: lineIndex, in: renderedText)
+            let visibleLineStart = Self.lineStartLocation(in: textView.string, lineIndex: lineIndex)
+            let visibleOffset = max(0, selectedRange.location - visibleLineStart)
+            let shouldRevealTaskMarker = selectedRange.length == 0
+                && MarkdownEditorTextRenderer.isTaskMarkerAdjacentVisibleOffset(visibleOffset, in: sourceLine)
+            let nextTaskMarkerLineIndex = shouldRevealTaskMarker ? lineIndex : nil
+
+            guard activeLineIndex != lineIndex || activeTaskMarkerLineIndex != nextTaskMarkerLineIndex else { return }
+            pendingSelectionAfterRender = Self.selectionRangeAfterRender(
                 from: selectedRange,
                 visibleText: textView.string,
                 sourceText: renderedText,
-                lineIndex: lineIndex
+                lineIndex: lineIndex,
+                revealsTaskMarker: shouldRevealTaskMarker,
+                currentlyRevealsTaskMarker: activeTaskMarkerLineIndex == lineIndex
             )
             activeLineIndex = lineIndex
+            activeTaskMarkerLineIndex = nextTaskMarkerLineIndex
             render(renderedText)
         }
 
@@ -215,13 +240,18 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                     return
                 }
 
-                self.isFocused = true
-                self.applyFocusIfNeeded()
+                self.focusEditorAtEnd()
+                DispatchQueue.main.async { [weak self] in
+                    self?.focusEditorAtEnd()
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
+                    self?.focusEditorAtEnd()
+                }
             }
         }
 
         func updateMediaWidth(_ width: CGFloat) {
-            let adjustedWidth = max(80, floor(width - 28))
+            let adjustedWidth = max(80, floor(width - (textView?.horizontalEditorPadding ?? 0) * 2))
             guard abs(adjustedWidth - mediaWidth) > 1 else { return }
             mediaWidth = adjustedWidth
             render(renderedText)
@@ -261,7 +291,24 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 return
             }
 
-            window.makeFirstResponder(textView)
+            focusEditorAtEnd()
+        }
+
+        func applyFocusRequestIfNeeded() {
+            guard appliedFocusRequestID != focusRequestID else { return }
+            appliedFocusRequestID = focusRequestID
+            focusEditorAtEnd()
+        }
+
+        func focusEditorAtEnd() {
+            guard let textView else { return }
+            isFocused = true
+            if let window = textView.window {
+                window.endEditing(for: nil)
+                window.makeFirstResponder(textView)
+            }
+            let end = textView.string.utf16.count
+            textView.setSelectedRange(NSRange(location: end, length: 0))
         }
 
         func mediaTextViewDidRequestPasteMedia(_ textView: MediaTextView) -> Bool {
@@ -337,6 +384,44 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             let sourceLine = line(at: lineIndex, in: sourceText)
             let sourceOffset = MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: visibleOffset, in: sourceLine)
             return NSRange(location: sourceLineStart + sourceOffset, length: 0)
+        }
+
+        private static func selectionRangeAfterRender(
+            from currentRange: NSRange,
+            visibleText: String,
+            sourceText: String,
+            lineIndex: Int,
+            revealsTaskMarker: Bool,
+            currentlyRevealsTaskMarker: Bool
+        ) -> NSRange {
+            let sourceLine = line(at: lineIndex, in: sourceText)
+            guard MarkdownEditorTextRenderer.isTaskListItem(sourceLine) else {
+                return sourceSelectionRange(
+                    from: currentRange,
+                    visibleText: visibleText,
+                    sourceText: sourceText,
+                    lineIndex: lineIndex
+                )
+            }
+
+            if revealsTaskMarker {
+                return sourceSelectionRange(
+                    from: currentRange,
+                    visibleText: visibleText,
+                    sourceText: sourceText,
+                    lineIndex: lineIndex
+                )
+            }
+
+            if currentlyRevealsTaskMarker {
+                let currentLineStart = lineStartLocation(in: visibleText, lineIndex: lineIndex)
+                let sourceLineStart = lineStartLocation(in: sourceText, lineIndex: lineIndex)
+                let sourceOffset = max(0, currentRange.location - currentLineStart)
+                let visibleOffset = MarkdownEditorTextRenderer.visibleOffset(forSourceOffset: sourceOffset, in: sourceLine)
+                return NSRange(location: sourceLineStart + visibleOffset, length: 0)
+            }
+
+            return currentRange
         }
 
         private static func lineStartLocation(in string: String, lineIndex: Int) -> Int {

@@ -4,6 +4,7 @@ import AppKit
 struct MarkdownEditorView: View {
     @Binding var text: String
     @FocusState.Binding var isFocused: Bool
+    @Binding var focusRequestID: Int
     @Binding var cursorEndRequestID: Int
     let insertMedia: (String) -> Void
     @State private var isDropTargeted = false
@@ -59,6 +60,7 @@ struct MarkdownEditorView: View {
         RichMarkdownEditorView(
             text: $text,
             isFocused: $isFocused,
+            focusRequestID: $focusRequestID,
             cursorEndRequestID: $cursorEndRequestID,
             commandRequest: $commandRequest,
             insertMedia: insertMedia,

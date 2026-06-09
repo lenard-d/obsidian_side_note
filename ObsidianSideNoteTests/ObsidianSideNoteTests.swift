@@ -8,6 +8,7 @@
 import Testing
 import Foundation
 import AppKit
+import SwiftUI
 import Defaults
 import KeyboardShortcuts
 import STTextView
@@ -430,6 +431,27 @@ struct ObsidianSideNoteTests {
     }
 
     @MainActor
+    @Test func mediaTextViewUsesDocumentTopPaddingWithoutBottomScrollInset() throws {
+        let scrollView = MediaScrollView()
+        let textView = MediaTextView()
+        scrollView.documentView = textView
+
+        scrollView.configureEditorTopPadding(8)
+        textView.configureHorizontalEditorPadding(10)
+        textView.configureForVerticalScrolling(contentSize: NSSize(width: 320, height: 160))
+        textView.setAttributedString(MarkdownEditorTextRenderer.attributedString(from: "Body", mediaWidth: 280))
+
+        let insets = scrollView.contentView.contentInsets
+
+        #expect(textView.horizontalEditorPadding == 10)
+        #expect(textView.textContainer.lineFragmentPadding == 10)
+        #expect(insets.top == 8)
+        #expect(insets.left == 0)
+        #expect(insets.bottom == 0)
+        #expect(insets.right == 0)
+    }
+
+    @MainActor
     @Test func mediaTextViewRoutesMarkdownCommandShortcutsThroughDelegate() throws {
         let textView = MediaTextView()
         let delegate = MediaTextViewProbe()
@@ -598,9 +620,24 @@ struct ObsidianSideNoteTests {
     }
 
     @MainActor
-    @Test func editorRendererRevealsTaskListMarkdownSyntaxOnActiveLineOnly() {
+    @Test func editorRendererKeepsTaskListMarkerHiddenOnActiveLineByDefault() {
         let source = "- [ ] Hidden\n- [x] Shown"
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400, activeLineIndex: 1)
+        let checkbox = String(Character(UnicodeScalar(NSTextAttachment.character)!))
+
+        #expect(rendered.string == "\(checkbox) Hidden\n\(checkbox) Shown")
+        #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
+    }
+
+    @MainActor
+    @Test func editorRendererRevealsTaskListMarkdownSyntaxOnlyWhenTaskMarkerIsActive() {
+        let source = "- [ ] Hidden\n- [x] Shown"
+        let rendered = MarkdownEditorTextRenderer.attributedString(
+            from: source,
+            mediaWidth: 400,
+            activeLineIndex: 1,
+            activeTaskMarkerLineIndex: 1
+        )
         let checkbox = String(Character(UnicodeScalar(NSTextAttachment.character)!))
 
         #expect(rendered.string == "\(checkbox) Hidden\n- [x] Shown")
@@ -625,6 +662,21 @@ struct ObsidianSideNoteTests {
         #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 0, in: "- [ ] Task") == 6)
         #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 2, in: "- [ ] Task") == 6)
         #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 6, in: "- [ ] Task") == 10)
+    }
+
+    @Test func editorRendererRecognizesOnlyAdjacentTaskMarkerCursorOffsets() {
+        #expect(MarkdownEditorTextRenderer.isTaskMarkerAdjacentVisibleOffset(0, in: "- [ ] Task"))
+        #expect(MarkdownEditorTextRenderer.isTaskMarkerAdjacentVisibleOffset(1, in: "- [ ] Task"))
+        #expect(MarkdownEditorTextRenderer.isTaskMarkerAdjacentVisibleOffset(2, in: "- [ ] Task"))
+        #expect(!MarkdownEditorTextRenderer.isTaskMarkerAdjacentVisibleOffset(3, in: "- [ ] Task"))
+        #expect(!MarkdownEditorTextRenderer.isTaskMarkerAdjacentVisibleOffset(4, in: "- [ ] Task"))
+    }
+
+    @Test func editorRendererMapsTaskSourceOffsetsBackToVisibleOffsets() {
+        #expect(MarkdownEditorTextRenderer.visibleOffset(forSourceOffset: 0, in: "- [ ] Task") == 0)
+        #expect(MarkdownEditorTextRenderer.visibleOffset(forSourceOffset: 6, in: "- [ ] Task") == 0)
+        #expect(MarkdownEditorTextRenderer.visibleOffset(forSourceOffset: 7, in: "- [ ] Task") == 3)
+        #expect(MarkdownEditorTextRenderer.visibleOffset(forSourceOffset: 10, in: "- [ ] Task") == 6)
     }
 
     @MainActor
@@ -819,6 +871,33 @@ struct ObsidianSideNoteTests {
         #expect(FileManager.default.fileExists(atPath: temporaryVaultURL.appendingPathComponent(relativePath).path))
     }
 
+    @Test func mediaImporterRejectsUnsafeConfiguredAttachmentFolder() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let obsidianConfigURL = temporaryVaultURL.appendingPathComponent(".obsidian", isDirectory: true)
+        let outsideURL = temporaryVaultURL.deletingLastPathComponent().appendingPathComponent("OutsideAttachments", isDirectory: true)
+        try FileManager.default.createDirectory(at: obsidianConfigURL, withIntermediateDirectories: true)
+        try #"{"attachmentFolderPath":"../OutsideAttachments"}"#.write(
+            to: obsidianConfigURL.appendingPathComponent("app.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            try? FileManager.default.removeItem(at: outsideURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let relativePath = try #require(VaultStore.saveAttachmentImage(testImage(), suggestedName: "Paste"))
+
+        #expect(relativePath == "Paste.png")
+        #expect(FileManager.default.fileExists(atPath: temporaryVaultURL.appendingPathComponent("Paste.png").path))
+        #expect(!FileManager.default.fileExists(atPath: outsideURL.appendingPathComponent("Paste.png").path))
+    }
+
     @Test func vaultStoreLoadsImageDataForEmbeddedMedia() throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -1008,6 +1087,81 @@ struct ObsidianSideNoteTests {
         #expect(NoteMode.editVaultFile.usesTextEditor)
         #expect(!NoteMode.settings.usesTextEditor)
         #expect(!NoteMode.setup.usesTextEditor)
+    }
+
+    @Test func noteModesExposeInitialFocusTargets() {
+        #expect(NoteMode.newNote.startsWithTitleFocus)
+        #expect(!NoteMode.newNote.startsWithEditorFocus)
+        #expect(!NoteMode.appendDaily.startsWithTitleFocus)
+        #expect(NoteMode.appendDaily.startsWithEditorFocus)
+        #expect(!NoteMode.editVaultFile.startsWithTitleFocus)
+        #expect(NoteMode.editVaultFile.startsWithEditorFocus)
+        #expect(!NoteMode.settings.startsWithTitleFocus)
+        #expect(!NoteMode.settings.startsWithEditorFocus)
+    }
+
+    @MainActor
+    @Test func titleFieldReturnCommitsAndRequestsEditorFocus() async throws {
+        var title = "Old Title"
+        var didCommit = false
+        let binding = Binding<String>(
+            get: { title },
+            set: { title = $0 }
+        )
+        let coordinator = SelectAllOnFocusTextField.Coordinator(text: binding)
+        coordinator.onCommit = { _ in
+            didCommit = true
+        }
+        let textField = NSTextField()
+        let fieldEditor = NSTextView()
+        fieldEditor.string = "New Title"
+
+        let handled = coordinator.control(
+            textField,
+            textView: fieldEditor,
+            doCommandBy: #selector(NSResponder.insertNewline(_:))
+        )
+
+        #expect(handled)
+        #expect(title == "New Title")
+        #expect(textField.stringValue == "New Title")
+        try await Task.sleep(nanoseconds: 1_000_000)
+        #expect(didCommit)
+    }
+
+    @MainActor
+    @Test func titleFieldReturnCommitAlsoWorksThroughEndEditingNotification() async throws {
+        var title = "Old Title"
+        var didCommit = false
+        let binding = Binding<String>(
+            get: { title },
+            set: { title = $0 }
+        )
+        let coordinator = SelectAllOnFocusTextField.Coordinator(text: binding)
+        coordinator.onCommit = { _ in
+            didCommit = true
+        }
+        let textField = NSTextField()
+        textField.stringValue = "New Title"
+
+        coordinator.controlTextDidEndEditing(
+            Notification(
+                name: NSText.didEndEditingNotification,
+                object: textField,
+                userInfo: ["NSTextMovement": NSReturnTextMovement]
+            )
+        )
+
+        #expect(title == "New Title")
+        try await Task.sleep(nanoseconds: 1_000_000)
+        #expect(didCommit)
+    }
+
+    @MainActor
+    @Test func mediaTextViewDoesNotMoveWindowByBackgroundDrag() {
+        let textView = MediaTextView()
+
+        #expect(!textView.mouseDownCanMoveWindow)
     }
 
     @Test func shortcutPolicyRejectsCommandOnlyGlobalShortcuts() {

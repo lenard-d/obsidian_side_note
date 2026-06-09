@@ -7,22 +7,24 @@ struct NoteEditorHeader: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(mode.title)
-                .font(.system(size: 13, weight: .semibold))
+            DraggableWindowTitle(title: mode.title)
+                .frame(minWidth: 1, idealWidth: 180, maxWidth: 220, minHeight: 16, alignment: .leading)
 
-            WindowDragHandle()
-                .frame(maxWidth: .infinity, minHeight: 14, maxHeight: 14)
+            Spacer(minLength: 8)
 
             Button(action: closeWindow) {
                 Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.secondary)
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Close")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 7)
+        .background(WindowDragHandle())
     }
 }
 

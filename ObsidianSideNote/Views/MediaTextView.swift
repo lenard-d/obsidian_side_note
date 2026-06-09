@@ -4,10 +4,41 @@ import STTextView
 
 final class MediaScrollView: NSScrollView {
     var onLayout: (() -> Void)?
+    var focusTextView: (() -> Void)?
+    private var topEditorPadding: CGFloat = 0
 
     override func layout() {
         super.layout()
+        updateEditorContentInsets()
         onLayout?()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        focusTextView?()
+        super.mouseDown(with: event)
+    }
+
+    override func reflectScrolledClipView(_ clipView: NSClipView) {
+        super.reflectScrolledClipView(clipView)
+        updateEditorContentInsets()
+    }
+
+    func configureEditorTopPadding(_ top: CGFloat) {
+        topEditorPadding = top
+        updateEditorContentInsets()
+    }
+
+    private func updateEditorContentInsets() {
+        let visibleOriginY = documentVisibleRect.minY
+        let topPadding = visibleOriginY <= 1 ? topEditorPadding : 0
+        let nextInsets = NSEdgeInsets(top: topPadding, left: 0, bottom: 0, right: 0)
+        guard contentView.contentInsets.top != nextInsets.top
+                || contentView.contentInsets.left != nextInsets.left
+                || contentView.contentInsets.bottom != nextInsets.bottom
+                || contentView.contentInsets.right != nextInsets.right else {
+            return
+        }
+        contentView.contentInsets = nextInsets
     }
 }
 
@@ -29,6 +60,11 @@ final class MediaTextView: STTextView {
     weak var markdownCommandDelegate: MarkdownCommandTextViewDelegate?
     weak var taskListDelegate: TaskListTextViewDelegate?
     private var minimumDocumentHeight: CGFloat = 120
+    private(set) var horizontalEditorPadding: CGFloat = 0
+
+    override var mouseDownCanMoveWindow: Bool {
+        false
+    }
 
     init() {
         super.init(frame: .zero)
@@ -53,15 +89,13 @@ final class MediaTextView: STTextView {
         set { text = newValue }
     }
 
-    var textContainerInset: NSSize = NSSize(width: 0, height: 0) {
-        didSet {
-            textContainer.lineFragmentPadding = textContainerInset.width
-            updateScrollContentInsets()
-        }
-    }
-
     func setAttributedString(_ attributedString: NSAttributedString) {
         attributedText = attributedString
+    }
+
+    func configureHorizontalEditorPadding(_ padding: CGFloat) {
+        horizontalEditorPadding = padding
+        textContainer.lineFragmentPadding = padding
     }
 
     func setSelectedRange(_ range: NSRange) {
@@ -84,14 +118,12 @@ final class MediaTextView: STTextView {
         textContainer.widthTracksTextView = true
         textContainer.heightTracksTextView = false
         textContainer.size = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
-        updateScrollContentInsets()
-
         resizeToFitTextContent()
     }
 
     func resizeToFitTextContent() {
         sizeToFit()
-        let requiredHeight = ceil(frame.height + textContainerInset.height * 2)
+        let requiredHeight = ceil(frame.height)
         let height = max(minimumDocumentHeight, requiredHeight)
 
         if abs(frame.height - height) > 1 {
@@ -129,6 +161,8 @@ final class MediaTextView: STTextView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+
         if toggleTaskCheckboxIfClicked(with: event) {
             return
         }
@@ -160,6 +194,10 @@ final class MediaTextView: STTextView {
 
     private func taskCheckboxLocation(for event: NSEvent) -> Int? {
         let eventPoint = convert(event.locationInWindow, from: nil)
+        if let attachmentLocation = taskCheckboxLocation(containing: eventPoint) {
+            return attachmentLocation
+        }
+
         guard let textLocation = textLayoutManager.caretLocation(
             interactingAt: eventPoint,
             inContainerAt: textLayoutManager.documentRange.location
@@ -169,6 +207,38 @@ final class MediaTextView: STTextView {
 
         let visibleLocation = textContentManager.offset(from: textLayoutManager.documentRange.location, to: textLocation)
         return taskCheckboxLocation(atVisibleLocation: visibleLocation)
+    }
+
+    private func taskCheckboxLocation(containing point: NSPoint) -> Int? {
+        let attributedString = attributedString()
+        guard attributedString.length > 0 else { return nil }
+
+        for location in 0..<attributedString.length {
+            guard taskCheckboxLocation(atVisibleLocation: location) != nil,
+                  let startLocation = textLayoutManager.location(textLayoutManager.documentRange.location, offsetBy: location),
+                  let endLocation = textLayoutManager.location(startLocation, offsetBy: 1) else {
+                continue
+            }
+
+            guard let textRange = NSTextRange(location: startLocation, end: endLocation) else {
+                continue
+            }
+            var containsPoint = false
+            textLayoutManager.enumerateTextSegments(
+                in: textRange,
+                type: .standard,
+                options: [.rangeNotRequired]
+            ) { _, frame, _, _ in
+                containsPoint = frame.insetBy(dx: -4, dy: -3).contains(point)
+                return !containsPoint
+            }
+
+            if containsPoint {
+                return location
+            }
+        }
+
+        return nil
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -208,15 +278,6 @@ final class MediaTextView: STTextView {
         textContainer.widthTracksTextView = true
         textContainer.heightTracksTextView = false
         textContainer.size = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
-    }
-
-    private func updateScrollContentInsets() {
-        enclosingScrollView?.contentView.contentInsets = NSEdgeInsets(
-            top: textContainerInset.height,
-            left: textContainerInset.width,
-            bottom: textContainerInset.height,
-            right: textContainerInset.width
-        )
     }
 
     private func clamped(range: NSRange) -> NSRange {

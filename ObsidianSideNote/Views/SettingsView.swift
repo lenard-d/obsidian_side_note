@@ -11,8 +11,8 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Settings")
-                    .font(.system(size: 13, weight: .semibold))
+                DraggableWindowTitle(title: "Settings")
+                    .frame(minWidth: 1, idealWidth: 70, maxWidth: 100, minHeight: 16, alignment: .leading)
                 WindowDragHandle()
                     .frame(maxWidth: .infinity, minHeight: 14, maxHeight: 14)
                 Button(action: closeWindow) {

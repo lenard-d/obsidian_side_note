@@ -207,7 +207,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.backgroundColor = .clear
         window.isOpaque = false
         window.hasShadow = true
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false
         window.minSize = minimumWindowSize
         window.isRestorable = false
 
@@ -264,6 +264,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func shouldCloseVisibleWindow(for action: ShortcutAction) -> Bool {
         guard let actionMode = action.noteMode else { return false }
+        guard action != .newNote else { return false }
         return window?.isVisible == true && currentMode == actionMode
     }
 
@@ -273,7 +274,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func focusContentAfterWindowActivation() {
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.currentMode?.usesTextEditor == true else { return }
+            guard let self, self.currentMode?.startsWithEditorFocus == true else { return }
             NotificationCenter.default.post(name: .editorShouldFocus, object: self.window)
         }
     }
@@ -344,10 +345,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             for action in ShortcutAction.globalActions where self.matches(event, action: action) {
-                if self.shouldCloseVisibleWindow(for: action) {
-                    self.closeWindow()
-                    return true
-                }
+                self.performShortcutAction(action)
+                return true
             }
 
             guard ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == .command else {

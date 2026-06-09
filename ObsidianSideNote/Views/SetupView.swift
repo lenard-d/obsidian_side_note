@@ -40,8 +40,8 @@ struct SetupView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text("Obsidian Side Note")
-                .font(.system(size: 13, weight: .semibold))
+            DraggableWindowTitle(title: "Obsidian Side Note")
+                .frame(minWidth: 1, idealWidth: 140, maxWidth: 180, minHeight: 16, alignment: .leading)
             WindowDragHandle()
                 .frame(maxWidth: .infinity, minHeight: 14, maxHeight: 14)
             Button(action: closeWindow) {
