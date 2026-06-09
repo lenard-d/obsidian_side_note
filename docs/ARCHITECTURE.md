@@ -1,6 +1,6 @@
 # Architecture
 
-Obsidian Side Note is a small SwiftUI/AppKit macOS app. The architecture is intentionally simple: SwiftUI owns the UI, AppKit handles menu-bar and window behavior, and small store/service types isolate persistence, file-system work, hotkeys, and Obsidian URI construction.
+Obsidian Side Note is a small SwiftUI/AppKit macOS app. The architecture is intentionally simple: SwiftUI owns the UI, AppKit handles menu-bar and window behavior, and small store/service types isolate persistence, file-system work, hotkeys, media import, and Obsidian URI construction.
 
 ## High-Level Flow
 
@@ -16,7 +16,10 @@ FloatingWindow + ContentView
         +--> SettingsView
         +--> MarkdownEditorView
         +--> VaultSearchPanel
-        +--> RichMarkdownView
+        +--> RichMarkdownEditorView
+        |
+        v
+ContentViewModel
         |
         v
 Stores and services
@@ -55,6 +58,9 @@ These types should stay small and dependency-light.
 - `VaultStore`: selected vault bookmark, vault search, file read/write, note creation, attachment copy, and Markdown media URL resolution.
 - `ShortcutPreference`: UserDefaults-backed shortcut storage and normalization.
 - `NewNotePreferences`: UserDefaults-backed New Note resume interval and draft metadata.
+- `ShortcutPolicy`: shortcut validation rules, including collision and global-shortcut safety checks.
+- `SetupDiagnostics`: setup/status labels derived from vault access, Obsidian detection, shortcuts, and login-item state.
+- `LoginItemStore`: launch-at-login status and mutation.
 
 Store types are static because the app currently has a single active vault and a single editor window.
 
@@ -63,9 +69,12 @@ Store types are static because the app currently has a single active vault and a
 `Services/` contains integrations that are not UI views:
 
 - `GlobalHotKeyManager`: registers configured note-workflow shortcuts as global Carbon hotkeys.
-- `ObsidianURIBuilder`: builds Obsidian URIs for Daily Note append and opening files in Obsidian.
+- `MediaAttachmentImporter`: normalizes paste/drop/import sources for local files, pasteboard images, remote media URLs, and media size/content-type checks.
+- `RemoteMediaDownloader`: downloads remote media with an explicit byte limit.
+- `ObsidianURIBuilder`: builds Obsidian URIs for opening daily notes and files in Obsidian.
+- `AppLogger`: central OSLog categories.
 
-The app edits local Markdown files directly where possible. Obsidian URI is reserved for workflows that need Obsidian itself, such as appending to the daily note or opening a selected note.
+The app edits local Markdown files directly where possible. Obsidian URI is reserved for workflows that need Obsidian itself, such as opening the daily note, opening a selected note, or rewriting inline wiki links for rendered Markdown.
 
 Only Append to Daily Note, Create New Note, and Edit Vault File are global. Settings and Quit are intentionally local to avoid stealing standard shortcuts from the foreground app.
 
@@ -76,12 +85,16 @@ The global shortcut layer deliberately follows the pattern used by established l
 `Views/` contains SwiftUI surfaces:
 
 - `SettingsView`: vault picker, New Note interval, and shortcut rows.
+- `SetupView`: first-run setup and diagnostic checklist.
 - `KeyboardShortcutRow`: shortcut recorder UI.
-- `MarkdownEditorView`: toolbar, text editor, preview toggle, and paste handling.
+- `MarkdownEditorView`: Markdown toolbar, rich text editor shell, and paste/drop handling.
+- `RichMarkdownEditorView`: AppKit/STTextView bridge that renders Markdown syntax, handles focus, selection, media preloading, paste/drop callbacks, and editor commands.
+- `MediaTextView`: STTextView subclass for media paste/drop routing, Markdown shortcut routing, scrolling, and task-checkbox hit testing.
+- `MarkdownEditorTextRenderer`: Markdown-to-attributed-text renderer that hides inactive-line syntax while preserving the original Markdown source.
 - `RichMarkdownView`: Markdown rendering plus line-level image/video embed rendering.
-- `NoteEditorChrome`: shared header, search panel, missing-vault prompt, and append action bar.
+- `NoteEditorChrome`: shared header, search panel, and missing-vault prompt.
 
-`ContentView.swift` composes these views and owns the active editor state for the current mode.
+`ContentView.swift` composes these views. `ContentViewModel` owns the active editor state, draft loading, search results, note selection, autosave scheduling, media insertion, and Obsidian-open commands for the current mode.
 
 ## Autosave Behavior
 
@@ -100,10 +113,10 @@ Edit Vault File mode:
 
 Append to Daily Note mode:
 
-1. The editor keeps a draft locally.
-2. The append action first sends `obsidian://daily` with `silent` and no content. Obsidian creates the daily note through its Daily Notes plugin if it is missing, which preserves the configured folder, date format, and template.
-3. The app then sends content to `obsidian://daily` with `append` and `silent`.
-4. The daily note is not opened as part of the append action.
+1. The editor resolves today's daily note from Obsidian's Daily Notes settings.
+2. If the file is missing, the app creates it directly in the configured daily-note folder and applies the configured template when available.
+3. Editor changes autosave directly to that Markdown file.
+4. Opening the daily note in Obsidian is a separate command.
 
 ## Media Handling
 
@@ -111,15 +124,16 @@ Paste and drag-and-drop handling live in `MarkdownEditorView` and are normalized
 
 - Pasted images are converted to PNG.
 - Pasted and dropped media files are copied as-is when supported.
-- Files are stored in `Attachments/` inside the selected vault.
+- Remote media URLs are accepted only for supported extensions, bounded to 25 MB, and rejected when an explicit `Content-Type` is not an image/video match.
+- Files are stored in Obsidian's configured attachment folder when it is a safe vault-relative path, otherwise in the vault root.
 - The editor inserts a Markdown embed pointing at the vault-relative attachment path.
 - Plain text paste is left to the native text editor.
 
-Preview rendering lives in `RichMarkdownView`.
+Read-only preview rendering lives in `RichMarkdownView`; the main editor surface uses `RichMarkdownEditorView` and `MarkdownEditorTextRenderer`.
 
 - Markdown text is rendered through `swift-markdown-ui`.
 - Embed lines such as `![Title](path-or-url)` are rendered as images or videos when their extension is supported.
-- Local relative paths are resolved through `VaultStore.url(forMarkdownLink:)`.
+- Local relative paths are resolved through `VaultStore.url(forMarkdownLink:)` and `VaultStore.url(forWikiLink:)`, with vault-bound path validation.
 
 ## Testing
 
@@ -135,6 +149,9 @@ Preview rendering lives in `RichMarkdownView`.
 - Markdown media parsing.
 - Media attachment type detection.
 - Relative vault media URL resolution.
+- Vault-relative path traversal rejection for Markdown links and Obsidian-configured folders.
+- Remote media byte-limit and content-type checks.
+- Rich Markdown editor rendering, command application, task-list toggling, and media preload behavior.
 
 Run:
 
@@ -154,3 +171,4 @@ xcodebuild test \
 - Prefer small, testable helpers over broad manager objects.
 - Avoid creating empty Markdown files.
 - Preserve Obsidian compatibility by writing normal Markdown files into the vault.
+- Treat Obsidian-configured folders and Markdown links as vault-relative paths; reject path traversal instead of following paths outside the selected vault.

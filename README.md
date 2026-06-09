@@ -1,95 +1,58 @@
 # Obsidian Side Note
 
-Obsidian Side Note is a lightweight macOS menu bar app for capturing and editing Markdown notes in an Obsidian vault without switching away from your current workspace.
+A small macOS menu bar app for capturing Markdown into an Obsidian vault without leaving the app you are currently using.
 
-The app opens a small floating editor, supports focused global keyboard shortcuts for note workflows, can append to the Obsidian daily note, creates local Markdown files with autosave, and can search and edit existing vault files directly.
-
-> Attribution: this project is based on the original Obsidian Side Note app by Luke Smith. Original repository: [lukesmith96/obsidian_side_note](https://github.com/lukesmith96/obsidian_side_note).
-
-## Table of Contents
-
-- [Features](#features)
-- [Screenshots](#screenshots)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [First Setup](#first-setup)
-- [Usage](#usage)
-- [Project Structure](#project-structure)
-- [Development](#development)
-- [Documentation](#documentation)
-- [Roadmap](#roadmap)
-- [Acknowledgments](#acknowledgments)
-
-## Features
-
-- Menu bar app: stays out of the Dock and is always available from the macOS menu bar.
-- Floating editor window: movable, compact, and visible above normal windows.
-- Escape to close: dismisses the active editor while keeping drafts recoverable.
-- Global keyboard shortcuts: Daily Note, New Note, and Edit Vault File work even while another app is active.
-- Local app shortcuts: Settings and Quit stay local so they do not steal commands from apps such as Codex.
-- Shortcut recorder: click a shortcut in Settings, press a key combination, and the app stores it.
-- Vault folder picker: select the Obsidian vault from Finder instead of typing its name manually.
-- First-launch setup: if no vault is configured, the app opens a small setup screen with prerequisites, vault selection, and shortcut settings.
-- Daily Note: opens today's daily note in the editor, respects Obsidian's daily note settings, and places the cursor at the end.
-- New Note editor: autosaves Markdown files into the selected vault once body content exists.
-- Empty-file protection: a note title without body content is stored only as local draft state.
-- Draft recovery: closing the editor does not discard unfinished text.
-- Resume interval: choose whether reopening New Note within 1, 3, 5, 10, or 15 minutes should keep the current draft.
-- Force new note shortcut: the New Note shortcut starts a fresh draft even if another draft is visible.
-- Vault file search: live suggestions search Markdown files by title or relative path.
-- Keyboard navigation: use arrow keys plus Tab or Return to pick search suggestions.
-- Autosave editing: selected vault files save on each editor change.
-- Markdown editing toolbar: bold, italic, strikethrough, links, lists, numbered lists, and tasks.
-- Markdown preview: render Markdown before or while editing.
-- Media embeds: render Markdown image/video embeds and Obsidian embeds such as `![[image.png]]`.
-- Wikilinks: render Obsidian-style links such as `[[Note]]` and `[[Note|Alias]]`.
-- Paste and drag media: pasted or dropped images and supported media files are copied into the vault attachment folder configured by Obsidian and inserted as Obsidian embeds.
+Obsidian Side Note opens a compact floating editor from the menu bar or a global shortcut. It can create new notes, continue a daily note, search existing Markdown files, edit them in place, and save everything back to your local vault.
 
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/full_view_edit.png" alt="Editor window" width="1012">
-</p>
-<p align="center">
-  <img src="screenshots/menu_bar.png" alt="Menu bar" width="256">
-  <img src="screenshots/full_view_markdown.png" alt="Markdown preview" height="256">
-  <img src="screenshots/settings.png" alt="Settings" height="256">
+  <img src="screenshots/edit-vault-file.png" alt="Editing a vault note" width="360">
+  <img src="screenshots/settings.png" alt="Settings window" width="360">
 </p>
 
-## App Icon
+## What It Does
 
-The current app icon uses the top-left direction from [docs/assets/logo-concepts.png](docs/assets/logo-concepts.png): a simple Obsidian crystal plus note mark on a dark macOS-style tile.
+- Opens from the macOS menu bar and stays out of the Dock.
+- Provides global shortcuts for Daily Note, Create New Note, and Edit Vault File.
+- Creates Markdown notes directly inside your selected Obsidian vault.
+- Autosaves new notes and edits to existing vault files.
+- Avoids empty files: a title-only draft stays local until the note has body text.
+- Searches Markdown files by title or vault-relative path.
+- Renders Markdown preview, Obsidian wikilinks, images, videos, and embeds.
+- Copies pasted or dropped media into the vault attachment folder when configured.
+- Keeps Settings and Quit local so the app does not steal normal shortcuts from other apps.
 
 ## Requirements
 
-- macOS with Xcode support for the current project target.
-- Xcode 26 or newer is recommended because the project currently targets `MACOSX_DEPLOYMENT_TARGET = 26.0`.
-- Obsidian installed if you want Daily Note creation and "Open in Obsidian" behavior.
-- An existing local Obsidian vault folder.
+- macOS compatible with the project target.
+- Xcode 26 or newer for local builds.
+- Obsidian for Daily Note creation and "Open in Obsidian" behavior.
+- A local Obsidian vault folder.
+- The Obsidian Daily notes core plugin for Daily Note workflows.
+- The Obsidian Advanced URI community plugin for URI-driven Obsidian actions.
 
-The app uses SwiftUI, AppKit, Carbon global hotkeys, AVKit for video preview, and [swift-markdown-ui](https://github.com/gonzalezreal/swift-markdown-ui) for Markdown rendering.
+The app is built with SwiftUI, AppKit, Carbon global hotkeys, AVKit, and [swift-markdown-ui](https://github.com/gonzalezreal/swift-markdown-ui).
 
 ## Installation
 
-Download the latest `.dmg` from [GitHub Releases](https://github.com/lenard-d/obsidian_side_note/releases), open it, and drag `ObsidianSideNote.app` into `/Applications`.
+Download a release `.dmg` from [GitHub Releases](https://github.com/lenard-d/obsidian_side_note/releases), open it, and drag `ObsidianSideNote.app` into `/Applications`.
 
-Current releases are signed for local distribution testing, but not yet Apple Developer ID notarized. On first launch, macOS may show a Gatekeeper warning saying Apple could not verify the app. To open it anyway:
+Release builds may not be notarized yet. If macOS blocks the first launch:
 
 1. Open Finder and go to `/Applications`.
 2. Control-click `ObsidianSideNote.app`.
 3. Choose `Open`.
-4. Confirm `Open` in the macOS security dialog.
+4. Confirm the macOS security dialog.
 
-If macOS still refuses to open the app after installing from the `.dmg`, remove the downloaded quarantine attribute:
+If needed, remove the quarantine attribute:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/ObsidianSideNote.app
 open /Applications/ObsidianSideNote.app
 ```
 
-See [docs/INSTALLATION.md](docs/INSTALLATION.md) for detailed local build and Login Items instructions.
-
-Optional local build:
+For a local build:
 
 ```bash
 xcodebuild \
@@ -98,124 +61,71 @@ xcodebuild \
   -configuration Release \
   -derivedDataPath build/DerivedData \
   build
-```
 
-Then copy the app:
-
-```bash
 cp -R build/DerivedData/Build/Products/Release/ObsidianSideNote.app /Applications/
 open /Applications/ObsidianSideNote.app
 ```
 
-To keep the app available after restarting your Mac, add it to Login Items:
-
-1. Open System Settings.
-2. Go to General -> Login Items.
-3. Add `/Applications/ObsidianSideNote.app`.
-4. Keep Obsidian installed and allow any macOS permissions requested on first launch.
+More setup notes are in [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
 ## First Setup
 
 1. Launch `ObsidianSideNote.app`.
-2. Read the short setup checklist.
-3. In Obsidian, open `Settings -> Community plugins`, disable Restricted mode if needed, search for `Advanced URI`, then install and enable it.
-4. Enable the Daily notes core plugin if you want Daily Note.
-5. Click `Choose...` and select your local Obsidian vault folder.
-6. Adjust keyboard shortcuts if needed.
-7. Choose the New Note resume interval.
-8. Click `Done`.
+2. Install and enable Obsidian's Advanced URI plugin.
+3. Enable Obsidian's Daily notes core plugin if you want Daily Note support.
+4. Open Obsidian Side Note settings.
+5. Select your local Obsidian vault folder.
+6. Review the default keyboard shortcuts.
+7. Choose how long New Note drafts should be resumed.
 
-The selected vault folder is stored with a security-scoped bookmark so the sandboxed app can keep read/write access across launches.
+The selected vault is stored as a security-scoped bookmark so the sandboxed app can keep access across launches.
 
 ## Usage
 
 ### Menu Actions
 
-- `Daily Note`: open today's daily note in the editor and continue writing at the end.
-- `Create New Note`: open the Quick Note editor for a new Markdown file.
-- `Edit Vault File`: search existing Markdown files and edit the selected file.
-- `Settings`: choose the vault folder, configure shortcuts, and set the resume interval.
+- `Daily Note`: open today's daily note in the floating editor.
+- `Create New Note`: start a Markdown note in the selected vault.
+- `Edit Vault File`: search and edit an existing Markdown file.
+- `Settings`: select the vault, configure shortcuts, and set the draft resume interval.
 
 ### Default Shortcuts
 
 - `Control-Option-Command-D`: Daily Note.
 - `Control-Option-Command-N`: Create New Note.
 - `Control-Option-Command-V`: Edit Vault File.
-- `Command-,`: Settings.
-- `Command-Q`: Quit.
+- `Command-,`: Settings while the app is active.
+- `Command-Q`: Quit while the app is active.
 
-Shortcuts can be changed in Settings. Click the shortcut value on the right side of a row, then press the full key combination you want to use.
-
-Only Daily Note, Create New Note, and Edit Vault File are registered globally. Settings, Close Window, and Quit are handled only while Obsidian Side Note is active.
-
-Global note shortcuts default to `Control` + `Option` + `Command` plus the action key. The recorder rejects Command-only global shortcuts so the app does not steal common foreground-app commands such as New, Save, Quit, or Settings.
-
-### Daily Notes
-
-The app asks Obsidian to create today's daily note silently through the Daily Notes plugin, then loads that file into the editor and moves the cursor to the end. If the file still does not exist, the app falls back to Obsidian's configured daily note folder, date format, and template from `.obsidian/daily-notes.json`.
+Global shortcuts must include Control or Option. Command-only app-management shortcuts remain local so Obsidian Side Note does not intercept standard commands from your foreground app.
 
 ### New Notes
 
-New notes autosave directly into the selected vault.
+New notes autosave into the selected vault once the body has content. If you close a title-only note, it remains a local draft and no empty Markdown file is created.
 
-The title field is stored locally as a draft until the body has content. If you type only a title and close the window, no empty Markdown file is created. Once the body contains text, the app creates a Markdown file using the title or a timestamp fallback.
+Reopening New Note from the menu can resume the current draft within the configured interval. Using the New Note shortcut starts a fresh draft.
 
-If the New Note window is already open and you choose `Create New Note` from the menu within the configured resume interval, the current draft stays visible. Using the New Note shortcut forces a fresh draft.
+### Existing Notes
 
-### Editing Existing Vault Files
+Choose `Edit Vault File`, type part of a note title or path, and select a result with the mouse, arrow keys, Tab, or Return. Edits save back to the Markdown file immediately.
 
-1. Choose `Edit Vault File`.
-2. Type part of a title or vault-relative path.
-3. Pick a suggestion by clicking it, using arrow keys, or pressing Tab/Return.
-4. Edit the Markdown in the editor.
+### Media And Links
 
-Changes autosave to the selected file. The open button next to the search field opens the selected note in Obsidian.
-
-### Media And Wikilinks
-
-Markdown and Obsidian embeds are rendered in preview mode:
-
-```markdown
-![Diagram](Attachments/diagram.png)
-![Remote image](https://example.com/image.png)
-![Demo video](Attachments/demo.mp4)
-![[Pasted Image.png]]
-![[assets/demo.mp4|Demo video]]
-```
-
-Pasted images and supported dragged media files are copied into the attachment folder configured in Obsidian's vault settings and inserted as Obsidian embeds, for example `![[Pasted Image.png]]`. If the vault does not define a fixed attachment folder, the app stores the media at the vault root instead of assuming an `Attachments/` folder. Plain text paste still behaves normally.
-
-Wikilinks are also rendered:
+Preview mode supports regular Markdown links, Obsidian wikilinks, local media, remote images, and Obsidian embeds:
 
 ```markdown
 [[Project Plan]]
 [[Project Plan|Planning]]
+![[Sketch.png]]
+![Demo video](Attachments/demo.mp4)
 ```
 
-Inline wikilinks open through Obsidian. Standalone wikilinks are shown as clickable note chips in the preview.
+Pasted images and supported dropped media files are copied into Obsidian's configured attachment folder. If no fixed attachment folder is configured, the app stores the media at the vault root.
 
 Supported preview formats:
 
 - Images: `apng`, `avif`, `gif`, `jpeg`, `jpg`, `png`, `svg`, `webp`
 - Videos: `m4v`, `mov`, `mp4`
-
-## Project Structure
-
-```text
-ObsidianSideNote/
-  Models/       Small domain types such as note modes, shortcuts, and vault notes.
-  Services/     Integrations and service-style objects such as global hotkeys and Obsidian URIs.
-  Stores/       UserDefaults-backed preferences and vault file-system access.
-  Support/      AppKit/SwiftUI glue for windows, menu items, notifications, and shared views.
-  Views/        SwiftUI views for settings, editor chrome, Markdown editing, and media preview.
-  ContentView.swift
-  ObsidianSideNoteApp.swift
-
-ObsidianSideNoteTests/
-  Unit tests for vault storage, shortcuts, URIs, preferences, and media parsing.
-```
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a more detailed explanation of responsibilities and data flow.
 
 ## Development
 
@@ -225,7 +135,7 @@ Open the project:
 open ObsidianSideNote.xcodeproj
 ```
 
-Run tests:
+Run unit tests:
 
 ```bash
 xcodebuild test \
@@ -250,37 +160,34 @@ Check whitespace before committing:
 git diff --check
 ```
 
-## Documentation
+## Project Layout
 
-- [Installation and permanent setup](docs/INSTALLATION.md)
-- [Architecture and code layout](docs/ARCHITECTURE.md)
+```text
+ObsidianSideNote/
+  Models/       Small domain types for note modes, shortcuts, and vault notes.
+  Services/     Global hotkeys, logging, media import, and Obsidian URI helpers.
+  Stores/       UserDefaults preferences, vault access, and file persistence.
+  Support/      AppKit and SwiftUI integration helpers.
+  Views/        Settings, setup, editor chrome, Markdown editor, and preview UI.
 
-## Roadmap
+ObsidianSideNoteTests/
+  Unit tests for vault behavior, shortcuts, URIs, drafts, search, and media parsing.
+```
 
-- [ ] Signed and notarized release artifact.
-- [ ] Built-in launch-at-login toggle.
-- [ ] Window size preferences.
-- [ ] Multiple vault support.
-- [ ] Note templates.
-- [x] Custom global shortcuts.
-- [x] Local vault folder selection.
-- [x] Local vault search.
-- [x] Autosave editing.
-- [x] Media rendering and paste support.
-- [x] Obsidian attachment folder support.
-- [x] Wikilink rendering.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the internal design notes.
 
-## Contributing
+## Status
 
-Contributions are welcome. Please keep changes small, tested, and consistent with the existing SwiftUI/AppKit split.
+Obsidian Side Note is usable, but still evolving. Known next steps:
 
-1. Fork the repository.
-2. Create a feature branch.
-3. Run tests and static analysis.
-4. Open a pull request with a clear description of the user-facing behavior.
+- Developer ID signing and notarization.
+- Built-in launch-at-login management.
+- Window size and position preferences.
+- Multiple vault support.
+- Note templates.
 
 ## Acknowledgments
 
-- Original app and repository by Luke Smith: [lukesmith96/obsidian_side_note](https://github.com/lukesmith96/obsidian_side_note)
-- Markdown rendering via [swift-markdown-ui](https://github.com/gonzalezreal/swift-markdown-ui)
-- Obsidian integration via local Markdown files and [Obsidian URI](https://help.obsidian.md/uri)
+This project started from Luke Smith's original Obsidian Side Note repository: [lukesmith96/obsidian_side_note](https://github.com/lukesmith96/obsidian_side_note).
+
+Markdown rendering uses [swift-markdown-ui](https://github.com/gonzalezreal/swift-markdown-ui). Obsidian integration is based on local Markdown files and [Obsidian URI](https://help.obsidian.md/uri).
