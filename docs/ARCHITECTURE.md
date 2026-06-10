@@ -88,9 +88,10 @@ The global shortcut layer deliberately follows the pattern used by established l
 - `SetupView`: first-run setup and diagnostic checklist.
 - `KeyboardShortcutRow`: shortcut recorder UI.
 - `MarkdownEditorView`: Markdown toolbar, rich text editor shell, and paste/drop handling.
-- `RichMarkdownEditorView`: AppKit/STTextView bridge that renders Markdown syntax, handles focus, selection, media preloading, paste/drop callbacks, and editor commands.
-- `MediaTextView`: STTextView subclass for media paste/drop routing, Markdown shortcut routing, scrolling, and task-checkbox hit testing.
-- `MarkdownEditorTextRenderer`: Markdown-to-attributed-text renderer that hides inactive-line syntax while preserving the original Markdown source.
+- `RichMarkdownEditorView`: AppKit/STTextView bridge that renders source-preserving Markdown attributes, handles focus, media preloading, paste/drop callbacks, and coordinates editor commands.
+- `MediaTextView`: STTextView subclass for media paste/drop routing, Markdown shortcut routing, list-editing command routing, scrolling, and task-checkbox hit testing.
+- `MarkdownEditingEngine`: pure Markdown editing rules for list markers, task toggles, smart Return behavior, and list indent/outdent.
+- `MarkdownEditorTextRenderer`: source-preserving Markdown-to-attributed-text renderer. It styles the exact Markdown string held by the editor instead of replacing syntax with shorter display text, so native selection, arrow navigation, undo, and click handling operate on the same offsets that are written to disk.
 - `RichMarkdownView`: Markdown rendering plus line-level image/video embed rendering.
 - `NoteEditorChrome`: shared header, search panel, and missing-vault prompt.
 
@@ -131,6 +132,9 @@ Paste and drag-and-drop handling live in `MarkdownEditorView` and are normalized
 
 Read-only preview rendering lives in `RichMarkdownView`; the main editor surface uses `RichMarkdownEditorView` and `MarkdownEditorTextRenderer`.
 
+- The editable editor intentionally keeps the raw Markdown string as the text storage string.
+- Markdown styling is applied as attributes only. Task checkbox hit testing marks the `[ ]` / `[x]` range with an attribute, but does not replace it with an attachment.
+- Rendered image/video embeds belong to the read-only preview path. The editable surface keeps embed Markdown as normal text to avoid cursor and source-offset drift.
 - Markdown text is rendered through `swift-markdown-ui`.
 - Embed lines such as `![Title](path-or-url)` are rendered as images or videos when their extension is supported.
 - Local relative paths are resolved through `VaultStore.url(forMarkdownLink:)` and `VaultStore.url(forWikiLink:)`, with vault-bound path validation.
@@ -151,7 +155,7 @@ Read-only preview rendering lives in `RichMarkdownView`; the main editor surface
 - Relative vault media URL resolution.
 - Vault-relative path traversal rejection for Markdown links and Obsidian-configured folders.
 - Remote media byte-limit and content-type checks.
-- Rich Markdown editor rendering, command application, task-list toggling, and media preload behavior.
+- Rich Markdown editor rendering, command application, task-list toggling, smart list editing, and media preload behavior.
 
 Run:
 

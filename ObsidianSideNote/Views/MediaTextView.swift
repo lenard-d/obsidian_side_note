@@ -55,10 +55,17 @@ protocol TaskListTextViewDelegate: AnyObject {
     func mediaTextView(_ textView: MediaTextView, didRequestTaskToggleAtVisibleLocation location: Int)
 }
 
+protocol MarkdownListEditingTextViewDelegate: AnyObject {
+    func mediaTextViewDidRequestSmartNewline(_ textView: MediaTextView) -> Bool
+    func mediaTextViewDidRequestIndent(_ textView: MediaTextView) -> Bool
+    func mediaTextViewDidRequestOutdent(_ textView: MediaTextView) -> Bool
+}
+
 final class MediaTextView: STTextView {
     weak var mediaDelegate: MediaTextViewDelegate?
     weak var markdownCommandDelegate: MarkdownCommandTextViewDelegate?
     weak var taskListDelegate: TaskListTextViewDelegate?
+    weak var listEditingDelegate: MarkdownListEditingTextViewDelegate?
     private var minimumDocumentHeight: CGFloat = 120
     private(set) var horizontalEditorPadding: CGFloat = 0
 
@@ -145,6 +152,30 @@ final class MediaTextView: STTextView {
         }
 
         super.paste(sender)
+    }
+
+    override func insertNewline(_ sender: Any?) {
+        if listEditingDelegate?.mediaTextViewDidRequestSmartNewline(self) == true {
+            return
+        }
+
+        super.insertNewline(sender)
+    }
+
+    override func insertTab(_ sender: Any?) {
+        if listEditingDelegate?.mediaTextViewDidRequestIndent(self) == true {
+            return
+        }
+
+        super.insertTab(sender)
+    }
+
+    override func insertBacktab(_ sender: Any?) {
+        if listEditingDelegate?.mediaTextViewDidRequestOutdent(self) == true {
+            return
+        }
+
+        super.insertBacktab(sender)
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {

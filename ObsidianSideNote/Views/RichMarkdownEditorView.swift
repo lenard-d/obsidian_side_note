@@ -44,6 +44,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         textView.mediaDelegate = context.coordinator
         textView.markdownCommandDelegate = context.coordinator
         textView.taskListDelegate = context.coordinator
+        textView.listEditingDelegate = context.coordinator
         textView.isEditable = true
         textView.isSelectable = true
         textView.allowsUndo = true
@@ -75,7 +76,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.applyCommandRequestIfNeeded()
     }
 
-    final class Coordinator: NSObject, STTextViewDelegate, MediaTextViewDelegate, MarkdownCommandTextViewDelegate, TaskListTextViewDelegate {
+    final class Coordinator: NSObject, STTextViewDelegate, MediaTextViewDelegate, MarkdownCommandTextViewDelegate, TaskListTextViewDelegate, MarkdownListEditingTextViewDelegate {
         @Binding private var text: String
         @FocusState.Binding private var isFocused: Bool
         @Binding private var focusRequestID: Int
@@ -85,8 +86,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private let didInsertMedia: () -> Void
         fileprivate weak var textView: MediaTextView?
         fileprivate var renderedText = ""
-        private var activeLineIndex: Int?
-        private var activeTaskMarkerLineIndex: Int?
         private var pendingSelectionAfterRender: NSRange?
         private var mediaWidth: CGFloat = 560
         private var isRendering = false
@@ -133,9 +132,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             textView.setAttributedString(
                 MarkdownEditorTextRenderer.attributedString(
                     from: source,
-                    mediaWidth: mediaWidth,
-                    activeLineIndex: activeLineIndex,
-                    activeTaskMarkerLineIndex: activeTaskMarkerLineIndex
+                    mediaWidth: mediaWidth
                 )
             )
             textView.typingAttributes = MarkdownEditorTextRenderer.typingAttributes
@@ -159,28 +156,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard !isRendering, let textView else { return }
             syncRenderedTextFromTextViewIfNeeded(textView)
-
-            let selectedRange = textView.selectedRange()
-            let lineIndex = Self.lineIndex(in: textView.string, at: selectedRange.location)
-            let sourceLine = Self.line(at: lineIndex, in: renderedText)
-            let visibleLineStart = Self.lineStartLocation(in: textView.string, lineIndex: lineIndex)
-            let visibleOffset = max(0, selectedRange.location - visibleLineStart)
-            let shouldRevealTaskMarker = selectedRange.length == 0
-                && MarkdownEditorTextRenderer.isTaskMarkerAdjacentVisibleOffset(visibleOffset, in: sourceLine)
-            let nextTaskMarkerLineIndex = shouldRevealTaskMarker ? lineIndex : nil
-
-            guard activeLineIndex != lineIndex || activeTaskMarkerLineIndex != nextTaskMarkerLineIndex else { return }
-            pendingSelectionAfterRender = Self.selectionRangeAfterRender(
-                from: selectedRange,
-                visibleText: textView.string,
-                sourceText: renderedText,
-                lineIndex: lineIndex,
-                revealsTaskMarker: shouldRevealTaskMarker,
-                currentlyRevealsTaskMarker: activeTaskMarkerLineIndex == lineIndex
-            )
-            activeLineIndex = lineIndex
-            activeTaskMarkerLineIndex = nextTaskMarkerLineIndex
-            render(renderedText)
         }
 
         private func syncRenderedTextFromTextViewIfNeeded(_ textView: MediaTextView) {
@@ -348,8 +323,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func mediaTextView(_ textView: MediaTextView, didRequestTaskToggleAtVisibleLocation location: Int) {
-            let lineIndex = Self.lineIndex(in: textView.string, at: location)
-            guard let toggledText = MarkdownEditorTextRenderer.toggledTaskListItem(in: renderedText, lineIndex: lineIndex) else {
+            let lineIndex = MarkdownEditingEngine.lineIndex(in: textView.string, at: location)
+            guard let toggledText = MarkdownEditingEngine.toggledTaskListItem(in: renderedText, lineIndex: lineIndex) else {
                 return
             }
 
@@ -360,96 +335,64 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             replaceMarkdown(toggledText)
         }
 
+        func mediaTextViewDidRequestSmartNewline(_ textView: MediaTextView) -> Bool {
+            syncRenderedTextFromTextViewIfNeeded(textView)
+            guard let edit = MarkdownEditingEngine.smartNewline(
+                in: renderedText,
+                selectedRange: sourceSelectionRange(from: textView)
+            ) else {
+                return false
+            }
+
+            apply(edit, in: textView)
+            return true
+        }
+
+        func mediaTextViewDidRequestIndent(_ textView: MediaTextView) -> Bool {
+            syncRenderedTextFromTextViewIfNeeded(textView)
+            guard let edit = MarkdownEditingEngine.indentLines(
+                in: renderedText,
+                selectedRange: sourceSelectionRange(from: textView)
+            ) else {
+                return false
+            }
+
+            apply(edit, in: textView)
+            return true
+        }
+
+        func mediaTextViewDidRequestOutdent(_ textView: MediaTextView) -> Bool {
+            syncRenderedTextFromTextViewIfNeeded(textView)
+            guard let edit = MarkdownEditingEngine.outdentLines(
+                in: renderedText,
+                selectedRange: sourceSelectionRange(from: textView)
+            ) else {
+                return false
+            }
+
+            apply(edit, in: textView)
+            return true
+        }
+
         private static func clamped(range: NSRange, length: Int) -> NSRange {
             NSRange(location: min(range.location, length), length: min(range.length, max(0, length - range.location)))
         }
 
-        private static func lineIndex(in string: String, at location: Int) -> Int {
-            let clampedLocation = min(max(location, 0), (string as NSString).length)
-            let prefix = (string as NSString).substring(to: clampedLocation)
-            return prefix.reduce(0) { count, character in
-                character == "\n" ? count + 1 : count
-            }
-        }
-
-        private static func sourceSelectionRange(
-            from visibleRange: NSRange,
-            visibleText: String,
-            sourceText: String,
-            lineIndex: Int
-        ) -> NSRange {
-            let visibleLineStart = lineStartLocation(in: visibleText, lineIndex: lineIndex)
-            let visibleOffset = max(0, visibleRange.location - visibleLineStart)
-            let sourceLineStart = lineStartLocation(in: sourceText, lineIndex: lineIndex)
-            let sourceLine = line(at: lineIndex, in: sourceText)
-            let sourceOffset = MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: visibleOffset, in: sourceLine)
-            return NSRange(location: sourceLineStart + sourceOffset, length: 0)
-        }
-
-        private static func selectionRangeAfterRender(
-            from currentRange: NSRange,
-            visibleText: String,
-            sourceText: String,
-            lineIndex: Int,
-            revealsTaskMarker: Bool,
-            currentlyRevealsTaskMarker: Bool
-        ) -> NSRange {
-            let sourceLine = line(at: lineIndex, in: sourceText)
-            guard MarkdownEditorTextRenderer.isTaskListItem(sourceLine) else {
-                return sourceSelectionRange(
-                    from: currentRange,
-                    visibleText: visibleText,
-                    sourceText: sourceText,
-                    lineIndex: lineIndex
-                )
-            }
-
-            if revealsTaskMarker {
-                return sourceSelectionRange(
-                    from: currentRange,
-                    visibleText: visibleText,
-                    sourceText: sourceText,
-                    lineIndex: lineIndex
-                )
-            }
-
-            if currentlyRevealsTaskMarker {
-                let currentLineStart = lineStartLocation(in: visibleText, lineIndex: lineIndex)
-                let sourceLineStart = lineStartLocation(in: sourceText, lineIndex: lineIndex)
-                let sourceOffset = max(0, currentRange.location - currentLineStart)
-                let visibleOffset = MarkdownEditorTextRenderer.visibleOffset(forSourceOffset: sourceOffset, in: sourceLine)
-                return NSRange(location: sourceLineStart + visibleOffset, length: 0)
-            }
-
-            return currentRange
-        }
-
-        private static func lineStartLocation(in string: String, lineIndex: Int) -> Int {
-            guard lineIndex > 0 else { return 0 }
-            var currentLine = 0
-            var utf16Location = 0
-
-            for character in string {
-                if currentLine == lineIndex {
-                    return utf16Location
-                }
-                utf16Location += character.utf16.count
-                if character == "\n" {
-                    currentLine += 1
-                }
-            }
-
-            return utf16Location
-        }
-
-        private static func line(at lineIndex: Int, in string: String) -> String {
-            let lines = string.components(separatedBy: .newlines)
-            guard lines.indices.contains(lineIndex) else { return "" }
-            return lines[lineIndex]
-        }
-
         private func apply(_ command: MarkdownEditorCommand, in textView: MediaTextView) {
             MarkdownEditorCommandApplier.apply(command, in: textView)
+        }
+
+        private func apply(_ edit: MarkdownEditingEngine.Edit, in textView: MediaTextView) {
+            let previousText = renderedText
+            textView.undoManager?.registerUndo(withTarget: self) { coordinator in
+                coordinator.replaceMarkdown(previousText)
+            }
+            pendingSelectionAfterRender = edit.selectedRange
+            replaceMarkdown(edit.markdown)
+        }
+
+        private func sourceSelectionRange(from textView: MediaTextView) -> NSRange {
+            textView.selectedRange()
         }
 
         private func replaceMarkdown(_ markdown: String) {

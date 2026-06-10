@@ -19,33 +19,7 @@ enum MarkdownEditorTextRenderer {
         let lines = source.components(separatedBy: .newlines)
 
         for (index, line) in lines.enumerated() {
-            let isActiveLine = index == activeLineIndex
-
-            if let media = EmbeddedMedia(markdownLine: line),
-               media.type == .image,
-               let image = cachedImage(for: media.link, maxWidth: mediaWidth) {
-                let attachment = MarkdownMediaTextAttachment(markdown: line, image: image)
-                if isActiveLine {
-                    result.append(
-                        attributedLine(
-                            line,
-                            revealSyntax: true,
-                            revealTaskSyntax: index == activeTaskMarkerLineIndex
-                        )
-                    )
-                    result.append(NSAttributedString(string: "\n", attributes: previewOnlyAttributes))
-                    attachment.isPreviewOnly = true
-                }
-                result.append(NSAttributedString(attachment: attachment))
-            } else {
-                result.append(
-                    attributedLine(
-                        line,
-                        revealSyntax: isActiveLine,
-                        revealTaskSyntax: index == activeTaskMarkerLineIndex
-                    )
-                )
-            }
+            result.append(attributedLine(line))
 
             if index < lines.count - 1 {
                 result.append(NSAttributedString(string: "\n", attributes: typingAttributes))
@@ -73,109 +47,27 @@ enum MarkdownEditorTextRenderer {
     }
 
     static func markdownString(from attributedString: NSAttributedString) -> String {
-        var markdown = ""
-        var restoredSourceLines: Set<ObjectIdentifier> = []
-        attributedString.enumerateAttributes(
-            in: NSRange(location: 0, length: attributedString.length),
-            options: []
-        ) { attributes, range, _ in
-            if attributes[.markdownPreviewOnly] != nil {
-                return
-            }
-
-            if let sourceLine = attributes[.markdownSourceLine] as? MarkdownSourceLine {
-                let id = ObjectIdentifier(sourceLine)
-                guard !restoredSourceLines.contains(id) else { return }
-                restoredSourceLines.insert(id)
-                markdown += sourceLine.markdown
-            } else if let attachment = attributes[.attachment] as? MarkdownMediaTextAttachment {
-                if attachment.isPreviewOnly {
-                    return
-                }
-                markdown += attachment.markdown
-            } else {
-                markdown += (attributedString.string as NSString).substring(with: range)
-            }
-        }
-        return markdown
+        attributedString.string
     }
 
     static func sourceOffset(forVisibleOffset visibleOffset: Int, in sourceLine: String) -> Int {
-        if let taskMarkerRange = taskMarkerRange(in: sourceLine) {
-            let markerEnd = taskMarkerRange.upperBound
-            return markerEnd + max(0, visibleOffset - taskCheckboxPrefixLength)
-        }
-
-        let nsLine = sourceLine as NSString
-        let hiddenRanges = hiddenSyntaxRanges(in: sourceLine)
-        var visibleUTF16Offset = 0
-        var sourceUTF16Offset = 0
-
-        while sourceUTF16Offset < nsLine.length {
-            if let hiddenRange = hiddenRanges.first(where: { $0.range.location == sourceUTF16Offset }) {
-                if hiddenRange.skipAtBoundary || visibleUTF16Offset < visibleOffset {
-                    sourceUTF16Offset = hiddenRange.range.upperBound
-                    continue
-                }
-                return sourceUTF16Offset
-            }
-
-            guard visibleUTF16Offset < visibleOffset else {
-                return sourceUTF16Offset
-            }
-
-            sourceUTF16Offset += 1
-            visibleUTF16Offset += 1
-        }
-
-        return sourceUTF16Offset
+        visibleOffset
     }
 
     static func visibleOffset(forSourceOffset sourceOffset: Int, in sourceLine: String) -> Int {
-        if let taskMarkerRange = taskMarkerRange(in: sourceLine) {
-            let marker = (sourceLine as NSString).substring(with: taskMarkerRange)
-            let indentationLength = (leadingWhitespace(in: marker) as NSString).length
-            guard sourceOffset > taskMarkerRange.upperBound else {
-                return indentationLength
-            }
-            return taskCheckboxPrefixLength + max(0, sourceOffset - taskMarkerRange.upperBound)
-        }
-
-        return sourceOffset
+        sourceOffset
     }
 
     static func isTaskListItem(_ line: String) -> Bool {
-        taskMarkerRange(in: line) != nil
+        MarkdownEditingEngine.isTaskListItem(line)
     }
 
     static func isTaskMarkerAdjacentVisibleOffset(_ visibleOffset: Int, in sourceLine: String) -> Bool {
-        guard let taskMarkerRange = taskMarkerRange(in: sourceLine) else { return false }
-        let marker = (sourceLine as NSString).substring(with: taskMarkerRange)
-        let indentationLength = (leadingWhitespace(in: marker) as NSString).length
-        let lowerBound = max(0, indentationLength - 1)
-        let upperBound = indentationLength + taskCheckboxPrefixLength
-        return (lowerBound...upperBound).contains(visibleOffset)
+        MarkdownEditingEngine.isTaskMarkerAdjacentVisibleOffset(visibleOffset, in: sourceLine)
     }
 
     static func toggledTaskListItem(in source: String, lineIndex: Int) -> String? {
-        var lines = source.components(separatedBy: .newlines)
-        guard lines.indices.contains(lineIndex),
-              let taskMarkerRange = taskMarkerRange(in: lines[lineIndex]) else {
-            return nil
-        }
-
-        let nsLine = lines[lineIndex] as NSString
-        let marker = nsLine.substring(with: taskMarkerRange)
-        let toggledMarker = taskMarkerIsChecked(marker)
-            ? marker.replacingCheckboxMarker(with: "[ ]")
-            : marker.replacingCheckboxMarker(with: "[x]")
-        lines[lineIndex] = nsLine.replacingCharacters(in: taskMarkerRange, with: toggledMarker)
-        return lines.joined(separator: "\n")
-    }
-
-    private struct HiddenSyntaxRange {
-        let range: NSRange
-        let skipAtBoundary: Bool
+        MarkdownEditingEngine.toggledTaskListItem(in: source, lineIndex: lineIndex)
     }
 
     static var typingAttributes: [NSAttributedString.Key: Any] {
@@ -185,198 +77,11 @@ enum MarkdownEditorTextRenderer {
         ]
     }
 
-    private static var previewOnlyAttributes: [NSAttributedString.Key: Any] {
-        typingAttributes.merging([.markdownPreviewOnly: true]) { current, _ in current }
-    }
-
-    private static func attributedLine(
-        _ line: String,
-        revealSyntax: Bool,
-        revealTaskSyntax: Bool
-    ) -> NSAttributedString {
-        if isTaskListItem(line), !revealTaskSyntax, let hiddenLine = hiddenSyntaxLine(from: line) {
-            return hiddenLine
-        }
-
-        if !revealSyntax, let hiddenLine = hiddenSyntaxLine(from: line) {
-            return hiddenLine
-        }
-
+    private static func attributedLine(_ line: String) -> NSAttributedString {
         let attributedLine = NSMutableAttributedString(string: line, attributes: blockAttributes(for: line))
-        applyInlineStyles(to: attributedLine, in: line, revealSyntax: revealSyntax)
+        applyTaskCheckboxStyle(to: attributedLine, in: line)
+        applyInlineStyles(to: attributedLine, in: line)
         return attributedLine
-    }
-
-    private static func hiddenSyntaxLine(from line: String) -> NSAttributedString? {
-        guard let renderedLine = renderedLineByRemovingSyntax(from: line),
-              renderedLine != line else {
-            return nil
-        }
-
-        let sourceLine = MarkdownSourceLine(markdown: line)
-        let attributedLine = NSMutableAttributedString(
-            string: renderedLine,
-            attributes: blockAttributes(for: line).merging([.markdownSourceLine: sourceLine]) { current, _ in current }
-        )
-        applyHiddenInlineStyles(to: attributedLine, sourceLine: line, renderedLine: renderedLine)
-        return attributedLine
-    }
-
-    private static func renderedLineByRemovingSyntax(from line: String) -> String? {
-        if let headingMarkerRange = headingMarkerRange(in: line) {
-            let nsLine = line as NSString
-            return nsLine.replacingCharacters(in: headingMarkerRange, with: "")
-        }
-
-        if let taskMarkerRange = taskMarkerRange(in: line) {
-            let nsLine = line as NSString
-            let marker = nsLine.substring(with: taskMarkerRange)
-            let indentation = leadingWhitespace(in: marker)
-            let checkbox = String(Character(UnicodeScalar(NSTextAttachment.character)!))
-            return indentation + checkbox + " " + nsLine.substring(from: taskMarkerRange.upperBound)
-        }
-
-        var renderedLine = line
-        renderedLine = stringByReplacingMatches(of: highlightRegex, in: renderedLine, with: "$1")
-        renderedLine = stringByReplacingMatches(of: boldRegex, in: renderedLine, with: "$1")
-        renderedLine = stringByReplacingMatches(of: italicRegex, in: renderedLine, with: "$1")
-        renderedLine = stringByReplacingMatches(of: strikethroughRegex, in: renderedLine, with: "$1")
-        renderedLine = stringByReplacingMatches(of: inlineCodeRegex, in: renderedLine, with: "$1")
-        return renderedLine
-    }
-
-    private static func stringByReplacingMatches(
-        of regex: NSRegularExpression?,
-        in string: String,
-        with template: String
-    ) -> String {
-        guard let regex else { return string }
-        let range = NSRange(string.startIndex..<string.endIndex, in: string)
-        return regex.stringByReplacingMatches(in: string, range: range, withTemplate: template)
-    }
-
-    private static func applyHiddenInlineStyles(
-        to attributedLine: NSMutableAttributedString,
-        sourceLine: String,
-        renderedLine: String
-    ) {
-        if let taskMarkerRange = taskMarkerRange(in: sourceLine) {
-            let marker = (sourceLine as NSString).substring(with: taskMarkerRange)
-            let indentationLength = (leadingWhitespace(in: marker) as NSString).length
-            let checkboxRange = NSRange(location: indentationLength, length: 1)
-            if checkboxRange.upperBound <= attributedLine.length {
-                let sourceLine = attributedLine.attribute(.markdownSourceLine, at: 0, effectiveRange: nil)
-                attributedLine.replaceCharacters(
-                    in: checkboxRange,
-                    with: taskCheckboxAttachment(isChecked: taskMarkerIsChecked(marker), sourceLine: sourceLine)
-                )
-            }
-        }
-
-        var searchLocation = 0
-
-        applyVisibleCapture(regex: inlineCodeRegex, sourceLine: sourceLine, renderedLine: renderedLine, searchLocation: &searchLocation) { range in
-            let fontSize = font(at: range.location, in: attributedLine)?.pointSize ?? 16
-            attributedLine.addAttributes(
-                [
-                    .font: NSFont.monospacedSystemFont(ofSize: max(13, fontSize - 1), weight: .regular),
-                    .backgroundColor: NSColor.controlBackgroundColor.withAlphaComponent(0.75)
-                ],
-                range: range
-            )
-        }
-
-        searchLocation = 0
-        applyVisibleCapture(regex: highlightRegex, sourceLine: sourceLine, renderedLine: renderedLine, searchLocation: &searchLocation) { range in
-            attributedLine.addAttribute(
-                .backgroundColor,
-                value: NSColor.systemYellow.withAlphaComponent(0.35),
-                range: range
-            )
-        }
-
-        searchLocation = 0
-        applyVisibleCapture(regex: boldRegex, sourceLine: sourceLine, renderedLine: renderedLine, searchLocation: &searchLocation) { range in
-            applyFontTrait(.boldFontMask, to: attributedLine, range: range)
-        }
-
-        searchLocation = 0
-        applyVisibleCapture(regex: italicRegex, sourceLine: sourceLine, renderedLine: renderedLine, searchLocation: &searchLocation) { range in
-            applyFontTrait(.italicFontMask, to: attributedLine, range: range)
-        }
-    }
-
-    private static func applyVisibleCapture(
-        regex: NSRegularExpression?,
-        sourceLine: String,
-        renderedLine: String,
-        searchLocation: inout Int,
-        body: (NSRange) -> Void
-    ) {
-        guard let regex else { return }
-        let sourceRange = NSRange(sourceLine.startIndex..<sourceLine.endIndex, in: sourceLine)
-        let renderedNSString = renderedLine as NSString
-
-        for match in regex.matches(in: sourceLine, range: sourceRange) {
-            guard match.numberOfRanges > 1 else { continue }
-            let visibleText = (sourceLine as NSString).substring(with: match.range(at: 1))
-            let remainingRange = NSRange(
-                location: min(searchLocation, renderedNSString.length),
-                length: max(0, renderedNSString.length - min(searchLocation, renderedNSString.length))
-            )
-            let renderedRange = renderedNSString.range(of: visibleText, options: [], range: remainingRange)
-            guard renderedRange.location != NSNotFound else { continue }
-            body(renderedRange)
-            searchLocation = renderedRange.upperBound
-        }
-    }
-
-    private static func hiddenSyntaxRanges(in line: String) -> [HiddenSyntaxRange] {
-        var ranges: [HiddenSyntaxRange] = []
-
-        if let headingMarkerRange = headingMarkerRange(in: line) {
-            ranges.append(HiddenSyntaxRange(range: headingMarkerRange, skipAtBoundary: true))
-        }
-
-        if let taskMarkerRange = taskMarkerRange(in: line) {
-            ranges.append(HiddenSyntaxRange(range: taskMarkerRange, skipAtBoundary: true))
-        }
-
-        ranges.append(contentsOf: hiddenDelimiterRanges(regex: highlightRegex, markerLength: 2, in: line))
-        ranges.append(contentsOf: hiddenDelimiterRanges(regex: boldRegex, markerLength: 2, in: line))
-        ranges.append(contentsOf: hiddenDelimiterRanges(regex: strikethroughRegex, markerLength: 2, in: line))
-        ranges.append(contentsOf: hiddenDelimiterRanges(regex: inlineCodeRegex, markerLength: 1, in: line))
-        ranges.append(contentsOf: hiddenDelimiterRanges(regex: italicRegex, markerLength: 1, in: line))
-
-        return ranges.sorted { lhs, rhs in
-            if lhs.range.location == rhs.range.location {
-                return lhs.range.length > rhs.range.length
-            }
-            return lhs.range.location < rhs.range.location
-        }
-    }
-
-    private static func hiddenDelimiterRanges(
-        regex: NSRegularExpression?,
-        markerLength: Int,
-        in line: String
-    ) -> [HiddenSyntaxRange] {
-        guard let regex else { return [] }
-        let sourceRange = NSRange(line.startIndex..<line.endIndex, in: line)
-
-        return regex.matches(in: line, range: sourceRange).flatMap { match -> [HiddenSyntaxRange] in
-            guard match.range.length >= markerLength * 2 else { return [] }
-            return [
-                HiddenSyntaxRange(
-                    range: NSRange(location: match.range.location, length: markerLength),
-                    skipAtBoundary: true
-                ),
-                HiddenSyntaxRange(
-                    range: NSRange(location: match.range.upperBound - markerLength, length: markerLength),
-                    skipAtBoundary: false
-                )
-            ]
-        }
     }
 
     private static func blockAttributes(for line: String) -> [NSAttributedString.Key: Any] {
@@ -394,10 +99,6 @@ enum MarkdownEditorTextRenderer {
         return typingAttributes
     }
 
-    private static var taskCheckboxPrefixLength: Int {
-        ("\u{2610} " as NSString).length
-    }
-
     private static func taskMarkerRange(in line: String) -> NSRange? {
         guard let taskMarkerRegex else { return nil }
         let range = NSRange(line.startIndex..<line.endIndex, in: line)
@@ -405,43 +106,12 @@ enum MarkdownEditorTextRenderer {
         return match.range(at: 1)
     }
 
-    private static func taskMarkerIsChecked(_ marker: String) -> Bool {
-        marker.range(of: "[x]", options: .caseInsensitive) != nil
-    }
-
-    private static func taskCheckboxAttachment(isChecked: Bool, sourceLine: Any?) -> NSAttributedString {
-        let attachment = NSTextAttachment()
-        attachment.image = taskCheckboxImage(isChecked: isChecked)
-        attachment.bounds = NSRect(x: 0, y: -2, width: 16, height: 16)
-
-        let attributedString = NSMutableAttributedString(attachment: attachment)
-        var attributes: [NSAttributedString.Key: Any] = [
-            .foregroundColor: isChecked ? NSColor.systemGreen : NSColor.secondaryLabelColor,
-            .markdownTaskCheckbox: true
-        ]
-
-        if let sourceLine {
-            attributes[.markdownSourceLine] = sourceLine
-        }
-
-        attributedString.addAttributes(attributes, range: NSRange(location: 0, length: attributedString.length))
-        return attributedString
-    }
-
-    private static func taskCheckboxImage(isChecked: Bool) -> NSImage {
-        let image = NSImage(
-            systemSymbolName: isChecked ? "checkmark.square.fill" : "square",
-            accessibilityDescription: isChecked ? "Done" : "To do"
-        ) ?? NSImage(size: NSSize(width: 16, height: 16))
-
-        let configuration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
-        let configuredImage = image.withSymbolConfiguration(configuration) ?? image
-        configuredImage.isTemplate = true
-        return configuredImage
-    }
-
-    private static func leadingWhitespace(in string: String) -> String {
-        String(string.prefix { $0 == " " || $0 == "\t" })
+    private static func taskCheckboxRange(in line: String) -> NSRange? {
+        guard let markerRange = taskMarkerRange(in: line) else { return nil }
+        let marker = (line as NSString).substring(with: markerRange)
+        let checkboxRange = (marker as NSString).range(of: #"\[[ xX]\]"#, options: .regularExpression)
+        guard checkboxRange.location != NSNotFound else { return nil }
+        return NSRange(location: markerRange.location + checkboxRange.location, length: checkboxRange.length)
     }
 
     private static func headingAttributes(level: Int) -> [NSAttributedString.Key: Any] {
@@ -460,7 +130,25 @@ enum MarkdownEditorTextRenderer {
         ]
     }
 
-    private static func applyInlineStyles(to attributedLine: NSMutableAttributedString, in line: String, revealSyntax: Bool) {
+    private static func applyTaskCheckboxStyle(to attributedLine: NSMutableAttributedString, in line: String) {
+        guard let checkboxRange = taskCheckboxRange(in: line),
+              checkboxRange.upperBound <= attributedLine.length else {
+            return
+        }
+
+        let checkbox = (line as NSString).substring(with: checkboxRange)
+        let isChecked = checkbox.range(of: "x", options: .caseInsensitive) != nil
+        attributedLine.addAttributes(
+            [
+                .foregroundColor: isChecked ? NSColor.systemGreen : NSColor.secondaryLabelColor,
+                .font: NSFont.monospacedSystemFont(ofSize: 16, weight: .medium),
+                .markdownTaskCheckbox: true
+            ],
+            range: checkboxRange
+        )
+    }
+
+    private static func applyInlineStyles(to attributedLine: NSMutableAttributedString, in line: String) {
         apply(regex: inlineCodeRegex, to: attributedLine, in: line) { _, range in
             let fontSize = font(at: range.location, in: attributedLine)?.pointSize ?? 16
             attributedLine.addAttributes(
@@ -564,10 +252,6 @@ enum MarkdownEditorTextRenderer {
 
         return nil
     }
-
-    private static func cachedImage(for link: String, maxWidth: CGFloat) -> NSImage? {
-        VaultStore.cachedImage(forMediaLink: link, maxPixelWidth: maxWidth * 2)
-    }
 }
 
 private extension String {
@@ -585,32 +269,6 @@ private extension String {
     }
 }
 
-private final class MarkdownMediaTextAttachment: NSTextAttachment {
-    let markdown: String
-    var isPreviewOnly = false
-
-    init(markdown: String, image: NSImage) {
-        self.markdown = markdown
-        super.init(data: nil, ofType: nil)
-        attachmentCell = NSTextAttachmentCell(imageCell: image)
-    }
-
-    required init?(coder: NSCoder) {
-        markdown = ""
-        super.init(coder: coder)
-    }
-}
-
-private final class MarkdownSourceLine {
-    let markdown: String
-
-    init(markdown: String) {
-        self.markdown = markdown
-    }
-}
-
 extension NSAttributedString.Key {
-    static let markdownPreviewOnly = NSAttributedString.Key("markdownPreviewOnly")
-    static let markdownSourceLine = NSAttributedString.Key("markdownSourceLine")
     static let markdownTaskCheckbox = NSAttributedString.Key("markdownTaskCheckbox")
 }

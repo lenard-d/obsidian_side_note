@@ -373,7 +373,7 @@ struct ObsidianSideNoteTests {
         let source = "# One\n### Three\n###### Six\n#NoSpace"
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
 
-        #expect(rendered.string == "One\nThree\nSix\n#NoSpace")
+        #expect(rendered.string == source)
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
 
         let h1TextLocation = (rendered.string as NSString).range(of: "One").location
@@ -388,7 +388,7 @@ struct ObsidianSideNoteTests {
         #expect(h1Font.pointSize > h3Font.pointSize)
         #expect(h3Font.pointSize > h6Font.pointSize)
         #expect(plainFont.pointSize == 16)
-        #expect(!rendered.string.contains("# "))
+        #expect(rendered.string.contains("# "))
     }
 
     @MainActor
@@ -473,9 +473,12 @@ struct ObsidianSideNoteTests {
         let rendered = MarkdownEditorTextRenderer.attributedString(from: "- [ ] Task", mediaWidth: 400)
         textView.setAttributedString(rendered)
 
-        #expect(textView.taskCheckboxLocation(atVisibleLocation: 0) == 0)
+        #expect(textView.taskCheckboxLocation(atVisibleLocation: 0) == nil)
         #expect(textView.taskCheckboxLocation(atVisibleLocation: 1) == nil)
-        #expect(textView.taskCheckboxLocation(atVisibleLocation: 2) == nil)
+        #expect(textView.taskCheckboxLocation(atVisibleLocation: 2) == 2)
+        #expect(textView.taskCheckboxLocation(atVisibleLocation: 3) == 3)
+        #expect(textView.taskCheckboxLocation(atVisibleLocation: 4) == 4)
+        #expect(textView.taskCheckboxLocation(atVisibleLocation: 5) == nil)
     }
 
     @MainActor
@@ -491,6 +494,21 @@ struct ObsidianSideNoteTests {
 
         let markdown = MarkdownEditorTextRenderer.markdownString(from: textView.attributedString())
         #expect(markdown == "First\nSecond")
+    }
+
+    @MainActor
+    @Test func mediaTextViewRoutesListEditingCommandsThroughDelegate() {
+        let textView = MediaTextView()
+        let delegate = MediaTextViewProbe()
+        textView.listEditingDelegate = delegate
+
+        textView.insertNewline(nil)
+        textView.insertTab(nil)
+        textView.insertBacktab(nil)
+
+        #expect(delegate.smartNewlineRequestCount == 1)
+        #expect(delegate.indentRequestCount == 1)
+        #expect(delegate.outdentRequestCount == 1)
     }
 
     @MainActor
@@ -558,14 +576,14 @@ struct ObsidianSideNoteTests {
         let source = "This is ==marked==, **bold**, *italic*, ~~plain~~, and `code`."
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
 
-        #expect(rendered.string == "This is marked, bold, italic, plain, and code.")
+        #expect(rendered.string == source)
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
 
-        let markedRange = (rendered.string as NSString).range(of: "marked")
-        let boldRange = (rendered.string as NSString).range(of: "bold")
-        let italicRange = (rendered.string as NSString).range(of: "italic")
-        let strikeRange = (rendered.string as NSString).range(of: "plain")
-        let codeRange = (rendered.string as NSString).range(of: "code")
+        let markedRange = (rendered.string as NSString).range(of: "==marked==")
+        let boldRange = (rendered.string as NSString).range(of: "**bold**")
+        let italicRange = (rendered.string as NSString).range(of: "*italic*")
+        let strikeRange = (rendered.string as NSString).range(of: "~~plain~~")
+        let codeRange = (rendered.string as NSString).range(of: "`code`")
 
         #expect(rendered.attribute(.backgroundColor, at: markedRange.location, effectiveRange: nil) != nil)
 
@@ -582,11 +600,11 @@ struct ObsidianSideNoteTests {
     }
 
     @MainActor
-    @Test func editorRendererRevealsInlineMarkdownSyntaxOnActiveLineOnly() throws {
+    @Test func editorRendererKeepsMarkdownSyntaxStableAcrossActiveLines() throws {
         let source = "==hidden==\n==shown=="
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400, activeLineIndex: 1)
 
-        #expect(rendered.string == "hidden\n==shown==")
+        #expect(rendered.string == source)
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
         let hiddenFont = try #require(rendered.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
         #expect(hiddenFont.pointSize == 16)
@@ -599,38 +617,29 @@ struct ObsidianSideNoteTests {
     @Test func editorRendererDisplaysTaskListMarkersAsCheckboxesWithoutChangingSource() throws {
         let source = "- [ ] Open\n- [x] Done\n  - [X] Nested"
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400)
-        let checkbox = String(Character(UnicodeScalar(NSTextAttachment.character)!))
 
-        #expect(rendered.string == "\(checkbox) Open\n\(checkbox) Done\n  \(checkbox) Nested")
+        #expect(rendered.string == source)
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
 
-        let openCheckboxLocation = (rendered.string as NSString).range(of: checkbox).location
-        let checkedCheckboxLocation = (rendered.string as NSString).range(
-            of: checkbox,
-            options: [],
-            range: NSRange(location: openCheckboxLocation + 1, length: rendered.length - openCheckboxLocation - 1)
-        ).location
-        let openAttachment = try #require(rendered.attribute(.attachment, at: openCheckboxLocation, effectiveRange: nil) as? NSTextAttachment)
-        let checkedAttachment = try #require(rendered.attribute(.attachment, at: checkedCheckboxLocation, effectiveRange: nil) as? NSTextAttachment)
-
-        #expect(openAttachment.bounds == checkedAttachment.bounds)
-        #expect(openAttachment.bounds.size == NSSize(width: 16, height: 16))
+        let openCheckboxLocation = (rendered.string as NSString).range(of: "[ ]").location
+        let checkedCheckboxLocation = (rendered.string as NSString).range(of: "[x]").location
+        #expect(rendered.attribute(.markdownTaskCheckbox, at: openCheckboxLocation, effectiveRange: nil) != nil)
+        #expect(rendered.attribute(.markdownTaskCheckbox, at: checkedCheckboxLocation, effectiveRange: nil) != nil)
         #expect(rendered.attribute(.foregroundColor, at: openCheckboxLocation, effectiveRange: nil) as? NSColor == NSColor.secondaryLabelColor)
         #expect(rendered.attribute(.foregroundColor, at: checkedCheckboxLocation, effectiveRange: nil) as? NSColor == NSColor.systemGreen)
     }
 
     @MainActor
-    @Test func editorRendererKeepsTaskListMarkerHiddenOnActiveLineByDefault() {
+    @Test func editorRendererKeepsTaskListMarkdownStableOnActiveLine() {
         let source = "- [ ] Hidden\n- [x] Shown"
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400, activeLineIndex: 1)
-        let checkbox = String(Character(UnicodeScalar(NSTextAttachment.character)!))
 
-        #expect(rendered.string == "\(checkbox) Hidden\n\(checkbox) Shown")
+        #expect(rendered.string == source)
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
     }
 
     @MainActor
-    @Test func editorRendererRevealsTaskListMarkdownSyntaxOnlyWhenTaskMarkerIsActive() {
+    @Test func editorRendererIgnoresTaskMarkerRevealForStableSourceEditing() {
         let source = "- [ ] Hidden\n- [x] Shown"
         let rendered = MarkdownEditorTextRenderer.attributedString(
             from: source,
@@ -638,9 +647,8 @@ struct ObsidianSideNoteTests {
             activeLineIndex: 1,
             activeTaskMarkerLineIndex: 1
         )
-        let checkbox = String(Character(UnicodeScalar(NSTextAttachment.character)!))
 
-        #expect(rendered.string == "\(checkbox) Hidden\n- [x] Shown")
+        #expect(rendered.string == source)
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
     }
 
@@ -654,33 +662,85 @@ struct ObsidianSideNoteTests {
     }
 
     @Test func editorRendererMapsVisibleCursorOffsetBackToMarkdownSource() {
-        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 0, in: "### Test") == 4)
-        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 4, in: "### Test") == 8)
-        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 0, in: "==mark==") == 2)
-        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 4, in: "==mark==") == 6)
-        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 4, in: "**bold**") == 6)
-        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 0, in: "- [ ] Task") == 6)
-        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 2, in: "- [ ] Task") == 6)
-        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 6, in: "- [ ] Task") == 10)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 0, in: "### Test") == 0)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 4, in: "### Test") == 4)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 0, in: "==mark==") == 0)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 4, in: "==mark==") == 4)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 4, in: "**bold**") == 4)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 0, in: "- [ ] Task") == 0)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 1, in: "- [ ] Task") == 1)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 2, in: "- [ ] Task") == 2)
+        #expect(MarkdownEditorTextRenderer.sourceOffset(forVisibleOffset: 6, in: "- [ ] Task") == 6)
     }
 
     @Test func editorRendererRecognizesOnlyAdjacentTaskMarkerCursorOffsets() {
         #expect(MarkdownEditorTextRenderer.isTaskMarkerAdjacentVisibleOffset(0, in: "- [ ] Task"))
         #expect(MarkdownEditorTextRenderer.isTaskMarkerAdjacentVisibleOffset(1, in: "- [ ] Task"))
-        #expect(MarkdownEditorTextRenderer.isTaskMarkerAdjacentVisibleOffset(2, in: "- [ ] Task"))
+        #expect(!MarkdownEditorTextRenderer.isTaskMarkerAdjacentVisibleOffset(2, in: "- [ ] Task"))
         #expect(!MarkdownEditorTextRenderer.isTaskMarkerAdjacentVisibleOffset(3, in: "- [ ] Task"))
         #expect(!MarkdownEditorTextRenderer.isTaskMarkerAdjacentVisibleOffset(4, in: "- [ ] Task"))
     }
 
     @Test func editorRendererMapsTaskSourceOffsetsBackToVisibleOffsets() {
         #expect(MarkdownEditorTextRenderer.visibleOffset(forSourceOffset: 0, in: "- [ ] Task") == 0)
-        #expect(MarkdownEditorTextRenderer.visibleOffset(forSourceOffset: 6, in: "- [ ] Task") == 0)
-        #expect(MarkdownEditorTextRenderer.visibleOffset(forSourceOffset: 7, in: "- [ ] Task") == 3)
-        #expect(MarkdownEditorTextRenderer.visibleOffset(forSourceOffset: 10, in: "- [ ] Task") == 6)
+        #expect(MarkdownEditorTextRenderer.visibleOffset(forSourceOffset: 5, in: "- [ ] Task") == 5)
+        #expect(MarkdownEditorTextRenderer.visibleOffset(forSourceOffset: 6, in: "- [ ] Task") == 6)
+        #expect(MarkdownEditorTextRenderer.visibleOffset(forSourceOffset: 7, in: "- [ ] Task") == 7)
+        #expect(MarkdownEditorTextRenderer.visibleOffset(forSourceOffset: 10, in: "- [ ] Task") == 10)
+    }
+
+    @Test func markdownEditingEngineContinuesTaskListsOnReturn() throws {
+        let source = "- [ ] Task"
+        let edit = try #require(MarkdownEditingEngine.smartNewline(
+            in: source,
+            selectedRange: NSRange(location: (source as NSString).length, length: 0)
+        ))
+
+        #expect(edit.markdown == "- [ ] Task\n- [ ] ")
+        #expect(edit.selectedRange == NSRange(location: (edit.markdown as NSString).length, length: 0))
+    }
+
+    @Test func markdownEditingEngineExitsEmptyTaskListWithoutMergingNextLine() throws {
+        let source = "- [ ] \nNext"
+        let edit = try #require(MarkdownEditingEngine.smartNewline(
+            in: source,
+            selectedRange: NSRange(location: 6, length: 0)
+        ))
+
+        #expect(edit.markdown == "\nNext")
+        #expect(edit.selectedRange == NSRange(location: 0, length: 0))
+    }
+
+    @Test func markdownEditingEngineContinuesOrderedListsWithNextNumber() throws {
+        let source = "1. Item"
+        let edit = try #require(MarkdownEditingEngine.smartNewline(
+            in: source,
+            selectedRange: NSRange(location: (source as NSString).length, length: 0)
+        ))
+
+        #expect(edit.markdown == "1. Item\n2. ")
+        #expect(edit.selectedRange == NSRange(location: (edit.markdown as NSString).length, length: 0))
+    }
+
+    @Test func markdownEditingEngineIndentsAndOutdentsListLines() throws {
+        let source = "- Item"
+        let indented = try #require(MarkdownEditingEngine.indentLines(
+            in: source,
+            selectedRange: NSRange(location: (source as NSString).length, length: 0)
+        ))
+        let outdented = try #require(MarkdownEditingEngine.outdentLines(
+            in: indented.markdown,
+            selectedRange: indented.selectedRange
+        ))
+
+        #expect(indented.markdown == "  - Item")
+        #expect(indented.selectedRange == NSRange(location: 8, length: 0))
+        #expect(outdented.markdown == source)
+        #expect(outdented.selectedRange == NSRange(location: (source as NSString).length, length: 0))
     }
 
     @MainActor
-    @Test func editorRendererKeepsActiveImagePreviewOutOfMarkdownSource() throws {
+    @Test func editorRendererKeepsImageMarkdownAsEditableSource() throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
@@ -697,7 +757,7 @@ struct ObsidianSideNoteTests {
         let source = "![Pasted](\(relativePath))"
         let rendered = MarkdownEditorTextRenderer.attributedString(from: source, mediaWidth: 400, activeLineIndex: 0)
 
-        #expect(rendered.string.contains("\n"))
+        #expect(rendered.string == source)
         #expect(MarkdownEditorTextRenderer.markdownString(from: rendered) == source)
     }
 
@@ -1323,11 +1383,14 @@ private func commandKeyEvent(_ key: String) -> NSEvent? {
 }
 
 @MainActor
-private final class MediaTextViewProbe: MediaTextViewDelegate, MarkdownCommandTextViewDelegate, TaskListTextViewDelegate {
+private final class MediaTextViewProbe: MediaTextViewDelegate, MarkdownCommandTextViewDelegate, TaskListTextViewDelegate, MarkdownListEditingTextViewDelegate {
     var shouldConsumePaste = false
     var pasteRequestCount = 0
     var requestedWrappers: [String] = []
     var taskToggleLocations: [Int] = []
+    var smartNewlineRequestCount = 0
+    var indentRequestCount = 0
+    var outdentRequestCount = 0
 
     func mediaTextViewDidRequestPasteMedia(_ textView: MediaTextView) -> Bool {
         pasteRequestCount += 1
@@ -1344,5 +1407,20 @@ private final class MediaTextViewProbe: MediaTextViewDelegate, MarkdownCommandTe
 
     func mediaTextView(_ textView: MediaTextView, didRequestTaskToggleAtVisibleLocation location: Int) {
         taskToggleLocations.append(location)
+    }
+
+    func mediaTextViewDidRequestSmartNewline(_ textView: MediaTextView) -> Bool {
+        smartNewlineRequestCount += 1
+        return true
+    }
+
+    func mediaTextViewDidRequestIndent(_ textView: MediaTextView) -> Bool {
+        indentRequestCount += 1
+        return true
+    }
+
+    func mediaTextViewDidRequestOutdent(_ textView: MediaTextView) -> Bool {
+        outdentRequestCount += 1
+        return true
     }
 }
