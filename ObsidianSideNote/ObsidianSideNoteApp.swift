@@ -38,6 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
         AppConfigStore.restorePersistedSettingsIfNeeded()
+        AppConfigStore.synchronizeCurrentSettings()
         AppLogger.app.info("Application did finish launching")
 
         hotKeyManager = GlobalHotKeyManager { [weak self] action in
@@ -295,6 +296,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         newNoteMenuItem?.removeShortcut()
         editFileMenuItem?.removeShortcut()
         settingsMenuItem?.removeShortcut()
+        appendMenuItem?.applyShortcut(.appendDaily)
+        newNoteMenuItem?.applyShortcut(.newNote)
+        editFileMenuItem?.applyShortcut(.editVaultFile)
+        settingsMenuItem?.applyShortcut(.settings)
         hotKeyManager?.registerAll()
     }
 

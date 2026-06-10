@@ -1109,6 +1109,47 @@ struct ObsidianSideNoteTests {
         #expect(ShortcutPreference.definition(for: .newNote).modifiers == [.command, .option, .control])
     }
 
+    @MainActor
+    @Test func persistentConfigSynchronizesCurrentDefaultsToFile() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        let configURL = temporaryDirectory.appendingPathComponent("config.json")
+        let vaultURL = temporaryDirectory.appendingPathComponent("Vault", isDirectory: true)
+        try FileManager.default.createDirectory(at: vaultURL, withIntermediateDirectories: true)
+
+        let originalConfigURL = AppConfigStore.configURLOverride
+        AppConfigStore.configURLOverride = configURL
+        KeyboardShortcuts.reset(.createNewNote)
+        Defaults.reset(.newNoteResumeIntervalMinutes)
+        defer {
+            AppConfigStore.configURLOverride = originalConfigURL
+            KeyboardShortcuts.reset(.createNewNote)
+            Defaults.reset(.newNoteResumeIntervalMinutes)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            UserDefaults.standard.removeObject(forKey: "startAtLogin")
+            try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+
+        UserDefaults.standard.set(vaultURL.path, forKey: VaultStore.pathKey)
+        UserDefaults.standard.set("Vault", forKey: "obsidianVault")
+        UserDefaults.standard.set(true, forKey: "startAtLogin")
+        NewNotePreferences.setResumeIntervalMinutes(15)
+        ShortcutPreference.set("n", modifiers: [.command, .option, .control], for: .newNote)
+
+        AppConfigStore.synchronizeCurrentSettings()
+
+        let config = try #require(AppConfigStore.read())
+        #expect(config.vaultPath == vaultURL.path)
+        #expect(config.vaultName == "Vault")
+        #expect(config.newNoteResumeIntervalMinutes == 15)
+        #expect(config.startAtLogin == true)
+        #expect(config.shortcuts[ShortcutAction.newNote.rawValue]?.key == "n")
+        #expect(FileManager.default.fileExists(atPath: configURL.path))
+    }
+
     @Test func shortcutActionsRoundTripThroughGlobalHotKeyIDs() throws {
         for action in ShortcutAction.allCases {
             #expect(ShortcutAction(hotKeyID: action.hotKeyID) == action)

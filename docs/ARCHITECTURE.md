@@ -58,6 +58,7 @@ These types should stay small and dependency-light.
 - `VaultStore`: selected vault bookmark, vault search, file read/write, note creation, attachment copy, and Markdown media URL resolution.
 - `ShortcutPreference`: UserDefaults-backed shortcut storage and normalization.
 - `NewNotePreferences`: UserDefaults-backed New Note resume interval and draft metadata.
+- `AppConfigStore`: JSON-backed persistence mirror for vault selection, shortcuts, resume interval, and login-item intent so rebuilds can restore setup state.
 - `ShortcutPolicy`: shortcut validation rules, including collision and global-shortcut safety checks.
 - `SetupDiagnostics`: setup/status labels derived from vault access, Obsidian detection, shortcuts, and login-item state.
 - `LoginItemStore`: launch-at-login status and mutation.
@@ -78,7 +79,7 @@ The app edits local Markdown files directly where possible. Obsidian URI is rese
 
 Only Append to Daily Note, Create New Note, and Edit Vault File are global. Settings and Quit are intentionally local to avoid stealing standard shortcuts from the foreground app.
 
-The global shortcut layer deliberately follows the pattern used by established launcher/menu-bar apps: globally trigger only explicit workflow commands, keep app-management commands local, store user choices in `UserDefaults`, and reject Command-only global shortcuts because they commonly collide with foreground-app menu commands.
+The global shortcut layer deliberately follows the pattern used by established launcher/menu-bar apps: globally trigger only explicit workflow commands, keep app-management commands local, store user choices in `UserDefaults`, mirror persistent setup choices into `Application Support/ObsidianSideNote/config.json`, and reject Command-only global shortcuts because they commonly collide with foreground-app menu commands.
 
 ## Views
 

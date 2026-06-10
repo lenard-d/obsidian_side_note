@@ -63,6 +63,32 @@ enum AppConfigStore {
         }
     }
 
+    static func synchronizeCurrentSettings() {
+        update { config in
+            if let vaultPath = UserDefaults.standard.string(forKey: VaultStore.pathKey),
+               !vaultPath.isEmpty {
+                config.vaultPath = vaultPath
+                config.vaultName = UserDefaults.standard.string(forKey: "obsidianVault")
+                    ?? URL(fileURLWithPath: vaultPath).lastPathComponent
+            }
+
+            if let bookmarkData = UserDefaults.standard.data(forKey: VaultStore.bookmarkKey) {
+                config.vaultBookmarkBase64 = bookmarkData.base64EncodedString()
+            }
+
+            config.newNoteResumeIntervalMinutes = NewNotePreferences.resumeIntervalMinutes
+            config.startAtLogin = UserDefaults.standard.bool(forKey: "startAtLogin")
+
+            for action in ShortcutAction.allCases {
+                let shortcut = ShortcutPreference.definition(for: action)
+                config.shortcuts[action.rawValue] = PersistentShortcut(
+                    key: shortcut.key,
+                    modifiers: shortcut.modifiers
+                )
+            }
+        }
+    }
+
     static func saveVault(url: URL, bookmarkData: Data?) {
         update { config in
             config.vaultPath = url.path
