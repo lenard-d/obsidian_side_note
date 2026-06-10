@@ -15,12 +15,7 @@ struct SettingsView: View {
                     .frame(minWidth: 1, idealWidth: 70, maxWidth: 100, minHeight: 16, alignment: .leading)
                 WindowDragHandle()
                     .frame(maxWidth: .infinity, minHeight: 14, maxHeight: 14)
-                Button(action: closeWindow) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
+                WindowCloseButton(action: closeWindow)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 7)

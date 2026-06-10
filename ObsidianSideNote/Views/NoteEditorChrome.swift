@@ -10,21 +10,57 @@ struct NoteEditorHeader: View {
             DraggableWindowTitle(title: mode.title)
                 .frame(minWidth: 1, idealWidth: 180, maxWidth: 220, minHeight: 16, alignment: .leading)
 
-            Spacer(minLength: 8)
+            WindowDragHandle()
+                .frame(maxWidth: .infinity, minHeight: 18, maxHeight: 18)
 
-            Button(action: closeWindow) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Close")
+            WindowCloseButton(action: closeWindow)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 7)
-        .background(WindowDragHandle())
+    }
+}
+
+struct WindowCloseButton: NSViewRepresentable {
+    let action: () -> Void
+    static let hitTargetSize = NSSize(width: 32, height: 32)
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(
+            image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close") ?? NSImage(),
+            target: context.coordinator,
+            action: #selector(Coordinator.close)
+        )
+        button.isBordered = false
+        button.bezelStyle = .regularSquare
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleProportionallyDown
+        button.toolTip = "Close"
+        button.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: Self.hitTargetSize.width),
+            button.heightAnchor.constraint(equalToConstant: Self.hitTargetSize.height)
+        ])
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        context.coordinator.action = action
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func close() {
+            action()
+        }
     }
 }
 
