@@ -37,6 +37,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+        applyUITestingLaunchOverridesIfNeeded()
         AppConfigStore.restorePersistedSettingsIfNeeded()
         AppConfigStore.synchronizeCurrentSettings()
         AppLogger.app.info("Application did finish launching")
@@ -76,8 +77,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Assign the menu to the status item
         statusItem?.menu = menu
 
-        // Keep the app running as an accessory (no dock icon)
-        NSApp.setActivationPolicy(.accessory)
+        if ProcessInfo.processInfo.arguments.contains("--uitesting") {
+            NSApp.setActivationPolicy(.regular)
+        } else {
+            // Keep the app running as an accessory (no dock icon)
+            NSApp.setActivationPolicy(.accessory)
+        }
 
         // Subscribe to space change notifications
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -102,6 +107,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    private func applyUITestingLaunchOverridesIfNeeded() {
+        guard ProcessInfo.processInfo.arguments.contains("--uitesting") else { return }
+
+        let environment = ProcessInfo.processInfo.environment
+        if let vaultPath = environment["OSN_TEST_VAULT_PATH"], !vaultPath.isEmpty {
+            let vaultURL = URL(fileURLWithPath: vaultPath)
+            UserDefaults.standard.set(vaultURL.path, forKey: VaultStore.pathKey)
+            UserDefaults.standard.set(vaultURL.lastPathComponent, forKey: "obsidianVault")
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+        }
+
+        if let editFilePath = environment["OSN_TEST_EDIT_FILE_PATH"], !editFilePath.isEmpty {
+            UserDefaults.standard.set(editFilePath, forKey: NoteMode.editVaultFile.draftTitleKey)
+            UserDefaults.standard.set(editFilePath, forKey: "draft.editVaultFile.search")
+            UserDefaults.standard.removeObject(forKey: NoteMode.editVaultFile.draftTextKey)
+        }
+    }
+
     @objc func openAppendToDaily() {
         AppLogger.app.info("Opening daily note editor")
         _ = getOrBuildWindow(mode: .appendDaily)
@@ -115,20 +138,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openNewNoteWindow(forceNew: Bool) {
-        if forceNew {
+        let shouldResumeDraft = !forceNew && NewNotePreferences.shouldResumeVisibleSession()
+
+        if forceNew || !shouldResumeDraft {
             NewNotePreferences.clearDraft()
         }
 
-        if !forceNew,
+        if shouldResumeDraft,
            currentMode == .newNote,
-           window?.isVisible == true,
-           NewNotePreferences.shouldResumeVisibleSession() {
+           window?.isVisible == true {
             showWindow()
             return
-        }
-
-        if !forceNew, currentMode == .newNote, window?.isVisible == true {
-            NewNotePreferences.clearDraft()
         }
 
         NewNotePreferences.startSession()
@@ -142,7 +162,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func openSettings() {
-        // Open window in "settings" mode
         AppLogger.app.info("Opening settings")
         _ = getOrBuildWindow(mode: .settings)
         showWindow()
@@ -239,7 +258,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showWindow() {
         guard let window = window else { return }
+        if !ProcessInfo.processInfo.arguments.contains("--uitesting") {
+            NSApp.setActivationPolicy(.accessory)
+        }
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
         focusContentAfterWindowActivation()
     }
@@ -265,12 +288,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func shouldCloseVisibleWindow(for action: ShortcutAction) -> Bool {
         guard let actionMode = action.noteMode else { return false }
-        guard action != .newNote else { return false }
         return window?.isVisible == true && currentMode == actionMode
     }
 
     private func closeWindow() {
         window?.orderOut(nil)
+        restoreAccessoryActivationPolicyIfNeeded()
+    }
+
+    private func restoreAccessoryActivationPolicyIfNeeded() {
+        guard !ProcessInfo.processInfo.arguments.contains("--uitesting") else { return }
+        DispatchQueue.main.async {
+            guard self.window?.isVisible != true else { return }
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 
     private func focusContentAfterWindowActivation() {

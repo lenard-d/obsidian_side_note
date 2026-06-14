@@ -27,24 +27,49 @@ struct VaultStore {
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
             ) {
+                if let storedURL = selectedVaultURLFromStoredPath(clearMissing: false),
+                   !sameFileURL(url, storedURL) {
+                    UserDefaults.standard.removeObject(forKey: bookmarkKey)
+                    return storedURL
+                }
+
+                guard directoryExists(at: url, usingSecurityScope: true) else {
+                    UserDefaults.standard.removeObject(forKey: bookmarkKey)
+                    return selectedVaultURLFromStoredPath()
+                }
+
                 if isStale {
                     saveVaultURL(url)
                 }
                 return url
             }
+            UserDefaults.standard.removeObject(forKey: bookmarkKey)
         }
 
+        return selectedVaultURLFromStoredPath()
+    }
+
+    private static func selectedVaultURLFromStoredPath(clearMissing: Bool = true) -> URL? {
         if let path = UserDefaults.standard.string(forKey: pathKey), !path.isEmpty {
-            return URL(fileURLWithPath: path)
+            let url = URL(fileURLWithPath: path)
+            guard directoryExists(at: url) else {
+                if clearMissing {
+                    clearStoredVaultSelection()
+                }
+                return nil
+            }
+            return url
         }
 
         return nil
     }
 
     static var selectedVaultName: String {
-        selectedVaultURL?.lastPathComponent
-            ?? UserDefaults.standard.string(forKey: "obsidianVault")
-            ?? ""
+        selectedVaultURL?.lastPathComponent ?? ""
+    }
+
+    static var selectedVaultPath: String {
+        selectedVaultURL?.path ?? ""
     }
 
     static var isVaultConfigured: Bool {
@@ -53,19 +78,22 @@ struct VaultStore {
 
     static var canAccessSelectedVault: Bool {
         guard let vaultURL = selectedVaultURL else { return false }
-        let didAccess = vaultURL.startAccessingSecurityScopedResource()
-        defer {
-            if didAccess {
-                vaultURL.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        return FileManager.default.fileExists(atPath: vaultURL.path)
+        return directoryExists(at: vaultURL, usingSecurityScope: true)
     }
 
     static func saveVaultURL(_ url: URL) {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard directoryExists(at: url) else { return }
+
         var savedBookmarkData: Data?
-        if let bookmarkData = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) {
+        if !isRunningUnderXCTest,
+           let bookmarkData = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) {
             UserDefaults.standard.set(bookmarkData, forKey: bookmarkKey)
             savedBookmarkData = bookmarkData
         }
@@ -74,6 +102,39 @@ struct VaultStore {
         AppConfigStore.saveVault(url: url, bookmarkData: savedBookmarkData)
         invalidateCaches()
         AppLogger.vault.info("Selected vault \(url.path, privacy: .public)")
+    }
+
+    @discardableResult
+    static func sanitizePersistedVaultSelection() -> URL? {
+        selectedVaultURL
+    }
+
+    static func directoryExists(at url: URL, usingSecurityScope: Bool = false) -> Bool {
+        let didAccess = usingSecurityScope && url.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
+    }
+
+    private static func sameFileURL(_ lhs: URL, _ rhs: URL) -> Bool {
+        lhs.standardizedFileURL.path == rhs.standardizedFileURL.path
+    }
+
+    private static var isRunningUnderXCTest: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
+
+    private static func clearStoredVaultSelection() {
+        UserDefaults.standard.removeObject(forKey: pathKey)
+        UserDefaults.standard.removeObject(forKey: bookmarkKey)
+        UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        invalidateCaches()
     }
 
     static func chooseVaultFolder(message: String = "Choose your Obsidian vault folder.") -> URL? {
@@ -150,7 +211,7 @@ struct VaultStore {
                 continue
             }
 
-            let relativePath = fileURL.path.replacingOccurrences(of: vaultURL.path + "/", with: "")
+            let relativePath = vaultRelativePath(for: fileURL, in: vaultURL)
             let title = fileURL.deletingPathExtension().lastPathComponent
             notes.append(VaultNote(relativePath: relativePath, title: title, url: fileURL))
         }
@@ -163,6 +224,10 @@ struct VaultStore {
     }
 
     static func read(_ note: VaultNote) -> String {
+        (try? readNote(note)) ?? ""
+    }
+
+    static func readNote(_ note: VaultNote) throws -> String {
         let vaultURL = selectedVaultURL
         let didAccess = vaultURL?.startAccessingSecurityScopedResource() ?? false
         defer {
@@ -171,7 +236,7 @@ struct VaultStore {
             }
         }
 
-        return (try? String(contentsOf: note.url, encoding: .utf8)) ?? ""
+        return try String(contentsOf: note.url, encoding: .utf8)
     }
 
     static func write(_ text: String, to note: VaultNote) throws {
@@ -247,13 +312,23 @@ struct VaultStore {
     }
 
     static func note(relativePath: String) -> VaultNote? {
-        guard let vaultURL = selectedVaultURL, !relativePath.isEmpty else { return nil }
-        guard let fileURL = inVaultURL(forRelativePath: relativePath, in: vaultURL),
-              let safeRelativePath = safeVaultRelativePath(relativePath) else {
+        guard let vaultURL = selectedVaultURL,
+              !relativePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
-        let title = fileURL.deletingPathExtension().lastPathComponent
-        return VaultNote(relativePath: safeRelativePath, title: title, url: fileURL)
+
+        for candidatePath in relativePathCandidates(for: relativePath) {
+            guard let fileURL = inVaultURL(forRelativePath: candidatePath, in: vaultURL),
+                  isExistingMarkdownFile(at: fileURL) else {
+                continue
+            }
+
+            return vaultNote(for: fileURL, in: vaultURL)
+        }
+
+        let candidateKeys = Set(relativePathCandidates(for: relativePath).map { comparableRelativePath($0) })
+        return indexedMarkdownNotes(in: vaultURL)
+            .first { candidateKeys.contains(comparableRelativePath($0.relativePath)) }
     }
 
     static func copyAttachment(from sourceURL: URL) -> String? {
@@ -647,6 +722,100 @@ struct VaultStore {
 
         let title = fileURL.deletingPathExtension().lastPathComponent
         return VaultNote(relativePath: safeRelativePath, title: title, url: fileURL)
+    }
+
+    private static func isExistingMarkdownFile(at url: URL) -> Bool {
+        guard url.pathExtension.lowercased() == "md" else { return false }
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            && !isDirectory.boolValue
+    }
+
+    private static func relativePathCandidates(for path: String) -> [String] {
+        var candidates: [String] = []
+
+        func appendCandidate(_ candidate: String) {
+            guard let safePath = safeVaultRelativePath(candidate),
+                  !candidates.contains(safePath) else {
+                return
+            }
+            candidates.append(safePath)
+        }
+
+        let decodedPath = path.removingPercentEncoding ?? path
+        for basePath in [decodedPath, repairingLiteralUnicodeEscapes(in: decodedPath)] {
+            appendCandidate(basePath)
+            appendCandidate(basePath.precomposedStringWithCanonicalMapping)
+            appendCandidate(basePath.decomposedStringWithCanonicalMapping)
+        }
+
+        return candidates
+    }
+
+    private static func comparableRelativePath(_ path: String) -> String {
+        path.decomposedStringWithCanonicalMapping.lowercased()
+    }
+
+    private static func repairingLiteralUnicodeEscapes(in text: String) -> String {
+        var repaired = ""
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            if let parsedScalar = parseUnicodeEscape(in: text, from: index) {
+                repaired.append(String(parsedScalar.scalar))
+                index = parsedScalar.nextIndex
+                continue
+            }
+
+            repaired.append(text[index])
+            index = text.index(after: index)
+        }
+
+        return repaired
+    }
+
+    private static func parseUnicodeEscape(in text: String, from index: String.Index) -> (scalar: UnicodeScalar, nextIndex: String.Index)? {
+        let character = text[index]
+
+        if character == "\\" {
+            let uIndex = text.index(after: index)
+            guard uIndex < text.endIndex else { return nil }
+
+            switch text[uIndex] {
+            case "u":
+                return parseUnicodeScalar(in: text, from: text.index(after: uIndex), digitCount: 4)
+            case "U":
+                return parseUnicodeScalar(in: text, from: text.index(after: uIndex), digitCount: 8)
+            default:
+                return nil
+            }
+        }
+
+        guard character == "u",
+              let parsed = parseUnicodeScalar(in: text, from: text.index(after: index), digitCount: 4),
+              (0x0300...0x036F).contains(parsed.scalar.value) else {
+            return nil
+        }
+
+        return parsed
+    }
+
+    private static func parseUnicodeScalar(in text: String, from startIndex: String.Index, digitCount: Int) -> (scalar: UnicodeScalar, nextIndex: String.Index)? {
+        var index = startIndex
+        var hex = ""
+
+        for _ in 0..<digitCount {
+            guard index < text.endIndex, text[index].isHexDigit else { return nil }
+            hex.append(text[index])
+            index = text.index(after: index)
+        }
+
+        guard let value = UInt32(hex, radix: 16),
+              let scalar = UnicodeScalar(value) else {
+            return nil
+        }
+
+        return (scalar, index)
     }
 
     private static func inVaultURL(

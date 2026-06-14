@@ -66,27 +66,16 @@ struct WindowCloseButton: NSViewRepresentable {
 
 struct VaultSearchPanel: View {
     @Binding var query: String
-    @Binding var selectedNote: VaultNote?
-    @Binding var highlightedIndex: Int
     var isSearchFocused: FocusState<Bool>.Binding
     let vaultName: String
     let filePath: String
-    let results: [VaultNote]
-    let showsSuggestions: Bool
     let openInObsidian: () -> Void
-    let selectNote: (VaultNote) -> Void
-
-    private var visibleResults: ArraySlice<VaultNote> {
-        results.prefix(8)
-    }
 
     var body: some View {
-        VStack(spacing: 8) {
-            searchField
-            suggestions
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 8)
+        searchField
+            .anchorPreference(key: VaultSearchFieldBoundsPreferenceKey.self, value: .bounds) { $0 }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
     }
 
     private var searchField: some View {
@@ -103,29 +92,52 @@ struct VaultSearchPanel: View {
             .help("Open file in Obsidian")
         }
     }
+}
 
-    @ViewBuilder
-    private var suggestions: some View {
-        if showsSuggestions {
-            VStack(spacing: 0) {
-                if results.isEmpty {
-                    emptyState
-                } else {
-                    ForEach(Array(visibleResults.enumerated()), id: \.element.id) { index, note in
-                        suggestionButton(for: note, at: index)
-                        if index < visibleResults.count - 1 {
-                            Divider()
+struct VaultSearchSuggestionsPopup: View {
+    let results: [VaultNote]
+    let highlightedIndex: Int
+    let selectNote: (VaultNote) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if results.isEmpty {
+                emptyState
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(results.enumerated()), id: \.element.id) { index, note in
+                                suggestionButton(for: note, at: index)
+                                    .id(note.id)
+                                if index < results.count - 1 {
+                                    Divider()
+                                }
+                            }
                         }
+                    }
+                    .frame(maxHeight: 220)
+                    .onChange(of: highlightedIndex) { _, newIndex in
+                        guard results.indices.contains(newIndex) else { return }
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            proxy.scrollTo(results[newIndex].id, anchor: .center)
+                        }
+                    }
+                    .onChange(of: results.map(\.id)) { _, _ in
+                        guard results.indices.contains(highlightedIndex) else { return }
+                        proxy.scrollTo(results[highlightedIndex].id, anchor: .center)
                     }
                 }
             }
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.92))
-            .clipShape(RoundedRectangle(cornerRadius: 7))
-            .overlay(
-                RoundedRectangle(cornerRadius: 7)
-                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
-            )
         }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(Color(NSColor.windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(Color.secondary.opacity(0.22), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.24), radius: 14, x: 0, y: 8)
     }
 
     private var emptyState: some View {
@@ -159,7 +171,6 @@ struct VaultSearchPanel: View {
         .buttonStyle(.plain)
         .background(index == highlightedIndex ? Color.accentColor.opacity(0.18) : Color.clear)
     }
-
 }
 
 struct MissingVaultPrompt: View {
@@ -170,5 +181,13 @@ struct MissingVaultPrompt: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
+    }
+}
+
+struct VaultSearchFieldBoundsPreferenceKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>?
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
     }
 }

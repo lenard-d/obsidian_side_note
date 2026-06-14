@@ -33,15 +33,22 @@ struct ContentView: View {
                 SetupView(vaultName: $viewModel.vaultName, vaultPath: $viewModel.vaultPath, closeWindow: closeWindow)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                VStack(spacing: 0) {
-                    header
-                    MarkdownEditorView(
-                        text: $viewModel.noteText,
-                        isFocused: $isTextEditorFocused,
-                        focusRequestID: $editorFocusRequestID,
-                        cursorEndRequestID: $viewModel.cursorEndRequestID,
-                        insertMedia: viewModel.insertMediaLink
-                    )
+                ZStack(alignment: .topLeading) {
+                    VStack(spacing: 0) {
+                        header
+                            .zIndex(1)
+                        MarkdownEditorView(
+                            text: $viewModel.noteText,
+                            isFocused: $isTextEditorFocused,
+                            focusRequestID: $editorFocusRequestID,
+                            cursorEndRequestID: $viewModel.cursorEndRequestID,
+                            insertMedia: viewModel.insertMediaLink
+                        )
+                        .zIndex(0)
+                    }
+                }
+                .overlayPreferenceValue(VaultSearchFieldBoundsPreferenceKey.self) { anchor in
+                    searchSuggestionsOverlay(anchor: anchor)
                 }
             }
         }
@@ -74,6 +81,26 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
+    private func searchSuggestionsOverlay(anchor: Anchor<CGRect>?) -> some View {
+        if mode == .editVaultFile,
+           viewModel.shouldShowSearchSuggestions,
+           isVaultSearchFocused,
+           let anchor {
+            GeometryReader { proxy in
+                let fieldBounds = proxy[anchor]
+                VaultSearchSuggestionsPopup(
+                    results: viewModel.searchResults,
+                    highlightedIndex: viewModel.highlightedSearchIndex,
+                    selectNote: viewModel.selectNote
+                )
+                .frame(width: fieldBounds.width)
+                .offset(x: fieldBounds.minX, y: fieldBounds.maxY + 4)
+                .zIndex(20)
+            }
+        }
+    }
+
     private var header: some View {
         VStack(spacing: 0) {
             NoteEditorHeader(mode: mode, closeWindow: closeWindow)
@@ -92,15 +119,10 @@ struct ContentView: View {
             if mode == .editVaultFile {
                 VaultSearchPanel(
                     query: $viewModel.vaultSearchQuery,
-                    selectedNote: $viewModel.selectedNote,
-                    highlightedIndex: $viewModel.highlightedSearchIndex,
                     isSearchFocused: $isVaultSearchFocused,
                     vaultName: viewModel.vaultName,
                     filePath: viewModel.noteTitle,
-                    results: viewModel.searchResults,
-                    showsSuggestions: viewModel.shouldShowSearchSuggestions && isVaultSearchFocused,
-                    openInObsidian: viewModel.openVaultFile,
-                    selectNote: viewModel.selectNote
+                    openInObsidian: viewModel.openVaultFile
                 )
             }
 

@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import OSLog
 import SwiftUI
 
 final class ContentViewModel: ObservableObject {
@@ -9,7 +10,7 @@ final class ContentViewModel: ObservableObject {
     @Published var noteTitle: String = ""
     @Published var vaultSearchQuery: String = ""
     @Published var vaultName: String = VaultStore.selectedVaultName
-    @Published var vaultPath: String = UserDefaults.standard.string(forKey: VaultStore.pathKey) ?? ""
+    @Published var vaultPath: String = VaultStore.selectedVaultPath
     @Published var searchResults: [VaultNote] = []
     @Published var selectedNote: VaultNote?
     @Published var createdNewNote: VaultNote?
@@ -23,6 +24,9 @@ final class ContentViewModel: ObservableObject {
     private var pendingSelectedNoteAutosave: DispatchWorkItem?
     private var pendingNewNoteAutosave: DispatchWorkItem?
     private var clearSearchFocus: (() -> Void)?
+    private let activeNoteFileMonitor = VaultNoteFileMonitor()
+    private var lastSyncedActiveNoteText: String?
+    private var textAutosaveSuppressionValue: String?
 
     init(mode: NoteMode) {
         self.mode = mode
@@ -49,6 +53,7 @@ final class ContentViewModel: ObservableObject {
         loadDraft()
         refreshSearchResults()
         loadDailyNoteIfNeeded()
+        startActiveNoteFileMonitorIfNeeded()
         DispatchQueue.main.async(execute: focusEditor)
         installSearchKeyMonitor()
         installOpenNoteKeyMonitor()
@@ -57,6 +62,7 @@ final class ContentViewModel: ObservableObject {
     func stop() {
         flushSelectedNoteAutosave()
         flushNewNoteAutosave()
+        activeNoteFileMonitor.stop()
         removeSearchKeyMonitor()
         removeOpenNoteKeyMonitor()
         clearSearchFocus = nil
@@ -65,6 +71,12 @@ final class ContentViewModel: ObservableObject {
     func textDidChange() {
         saveDraft()
         saveErrorMessage = nil
+        if let suppressedText = textAutosaveSuppressionValue {
+            textAutosaveSuppressionValue = nil
+            if suppressedText == noteText {
+                return
+            }
+        }
         scheduleSelectedNoteAutosave()
         autosaveNewNote()
     }
@@ -90,13 +102,15 @@ final class ContentViewModel: ObservableObject {
 
     func selectNote(_ note: VaultNote) {
         flushSelectedNoteAutosave()
+        activeNoteFileMonitor.stop()
         isLoadingNote = true
         selectedNote = note
         noteTitle = note.relativePath
-        noteText = VaultStore.read(note)
+        loadText(from: note)
         vaultSearchQuery = note.relativePath
         clearSearchFocus?()
         isLoadingNote = false
+        startActiveNoteFileMonitorIfNeeded()
     }
 
     func insertMediaLink(_ relativePath: String) {
@@ -129,7 +143,7 @@ final class ContentViewModel: ObservableObject {
     private func loadDraft() {
         guard mode != .appendDaily else {
             vaultName = VaultStore.selectedVaultName
-            vaultPath = UserDefaults.standard.string(forKey: VaultStore.pathKey) ?? ""
+            vaultPath = VaultStore.selectedVaultPath
             return
         }
 
@@ -140,11 +154,15 @@ final class ContentViewModel: ObservableObject {
         }
         vaultSearchQuery = UserDefaults.standard.string(forKey: "draft.editVaultFile.search") ?? ""
         vaultName = VaultStore.selectedVaultName
-        vaultPath = UserDefaults.standard.string(forKey: VaultStore.pathKey) ?? ""
+        vaultPath = VaultStore.selectedVaultPath
+        restoreSelectedVaultFileDraftIfNeeded()
 
         if mode == .newNote,
            let relativePath = UserDefaults.standard.string(forKey: NewNotePreferences.draftFilePathKey) {
             createdNewNote = VaultStore.note(relativePath: relativePath)
+            if let createdNewNote {
+                loadText(from: createdNewNote)
+            }
         }
     }
 
@@ -164,9 +182,40 @@ final class ContentViewModel: ObservableObject {
         isLoadingNote = true
         selectedNote = note
         noteTitle = note.relativePath
-        noteText = VaultStore.read(note)
+        loadText(from: note)
         cursorEndRequestID += 1
         isLoadingNote = false
+        startActiveNoteFileMonitorIfNeeded()
+    }
+
+    private func restoreSelectedVaultFileDraftIfNeeded() {
+        guard mode == .editVaultFile else { return }
+
+        let storedPath = noteTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let queryPath = vaultSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let relativePath = !storedPath.isEmpty ? storedPath : queryPath
+        guard let note = VaultStore.note(relativePath: relativePath) else { return }
+
+        selectedNote = note
+        noteTitle = note.relativePath
+        vaultSearchQuery = note.relativePath
+        UserDefaults.standard.set(note.relativePath, forKey: mode.draftTitleKey)
+        UserDefaults.standard.set(note.relativePath, forKey: "draft.editVaultFile.search")
+        loadText(from: note)
+    }
+
+    private func loadText(from note: VaultNote) {
+        do {
+            let loadedText = try VaultStore.readNote(note)
+            noteText = loadedText
+            lastSyncedActiveNoteText = loadedText
+            saveErrorMessage = nil
+        } catch {
+            noteText = ""
+            lastSyncedActiveNoteText = nil
+            saveErrorMessage = "Could not load note: \(error.localizedDescription)"
+            AppLogger.vault.error("Could not read note \(note.relativePath, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func saveDraft() {
@@ -187,17 +236,16 @@ final class ContentViewModel: ObservableObject {
         }
 
         searchResults = VaultStore.markdownNotes(matching: vaultSearchQuery)
-        highlightedSearchIndex = min(highlightedSearchIndex, max(searchResults.prefix(8).count - 1, 0))
-        if let selectedNote, !searchResults.contains(selectedNote) {
+        highlightedSearchIndex = min(highlightedSearchIndex, max(searchResults.count - 1, 0))
+        if let selectedNote, !searchResults.contains(where: { $0.relativePath == selectedNote.relativePath }) {
             self.selectedNote = nil
         }
     }
 
     private func selectHighlightedSearchResult() {
-        let visibleResults = Array(searchResults.prefix(8))
-        guard !visibleResults.isEmpty else { return }
-        let index = min(max(highlightedSearchIndex, 0), visibleResults.count - 1)
-        selectNote(visibleResults[index])
+        guard !searchResults.isEmpty else { return }
+        let index = min(max(highlightedSearchIndex, 0), searchResults.count - 1)
+        selectNote(searchResults[index])
     }
 
     private func installSearchKeyMonitor() {
@@ -208,14 +256,13 @@ final class ContentViewModel: ObservableObject {
                 return event
             }
 
-            let visibleCount = searchResults.prefix(8).count
-            guard visibleCount > 0 else {
+            guard !searchResults.isEmpty else {
                 return event
             }
 
             switch event.keyCode {
             case 125:
-                highlightedSearchIndex = min(highlightedSearchIndex + 1, visibleCount - 1)
+                highlightedSearchIndex = min(highlightedSearchIndex + 1, searchResults.count - 1)
                 return nil
             case 126:
                 highlightedSearchIndex = max(highlightedSearchIndex - 1, 0)
@@ -258,6 +305,55 @@ final class ContentViewModel: ObservableObject {
         }
     }
 
+    private var activeAutosavedNote: VaultNote? {
+        switch mode {
+        case .appendDaily, .editVaultFile:
+            return selectedNote
+        case .newNote:
+            return createdNewNote
+        case .settings, .setup:
+            return nil
+        }
+    }
+
+    private func startActiveNoteFileMonitorIfNeeded() {
+        guard let activeAutosavedNote else {
+            activeNoteFileMonitor.stop()
+            return
+        }
+
+        activeNoteFileMonitor.start(url: activeAutosavedNote.url) { [weak self] in
+            self?.syncActiveNoteFromDiskIfNeeded()
+        }
+    }
+
+    func syncActiveNoteFromDiskIfNeeded() {
+        guard let activeAutosavedNote else { return }
+
+        do {
+            let diskText = try VaultStore.readNote(activeAutosavedNote)
+            guard diskText != lastSyncedActiveNoteText else {
+                saveErrorMessage = nil
+                return
+            }
+
+            pendingSelectedNoteAutosave?.cancel()
+            pendingSelectedNoteAutosave = nil
+            pendingNewNoteAutosave?.cancel()
+            pendingNewNoteAutosave = nil
+            lastSyncedActiveNoteText = diskText
+            saveErrorMessage = nil
+
+            guard diskText != noteText else { return }
+            textAutosaveSuppressionValue = diskText
+            noteText = diskText
+            saveDraft()
+        } catch {
+            saveErrorMessage = "Could not reload note: \(error.localizedDescription)"
+            AppLogger.vault.error("Could not reload note \(activeAutosavedNote.relativePath, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     private func scheduleSelectedNoteAutosave() {
         guard (mode == .editVaultFile || mode == .appendDaily), !isLoadingNote, let selectedNote else { return }
         pendingSelectedNoteAutosave?.cancel()
@@ -266,6 +362,9 @@ final class ContentViewModel: ObservableObject {
         let workItem = DispatchWorkItem { [weak self] in
             do {
                 try VaultStore.write(textSnapshot, to: noteSnapshot)
+                DispatchQueue.main.async {
+                    self?.markActiveNotePersisted(textSnapshot, to: noteSnapshot)
+                }
             } catch {
                 DispatchQueue.main.async {
                     self?.saveErrorMessage = "Could not save note: \(error.localizedDescription)"
@@ -280,7 +379,7 @@ final class ContentViewModel: ObservableObject {
         guard (mode == .editVaultFile || mode == .appendDaily), !isLoadingNote, let selectedNote else { return }
         pendingSelectedNoteAutosave?.cancel()
         pendingSelectedNoteAutosave = nil
-        writeSelectedNote(noteText, to: selectedNote)
+        writeActiveNote(noteText, to: selectedNote)
     }
 
     private func scheduleNewNoteAutosave() {
@@ -306,7 +405,7 @@ final class ContentViewModel: ObservableObject {
 
         guard !trimmedText.isEmpty else {
             if let createdNewNote {
-                writeSelectedNote(noteText, to: createdNewNote)
+                writeActiveNote(noteText, to: createdNewNote)
             } else {
                 UserDefaults.standard.removeObject(forKey: NewNotePreferences.draftFilePathKey)
             }
@@ -318,10 +417,11 @@ final class ContentViewModel: ObservableObject {
                let renamedNote = VaultStore.rename(createdNewNote, toTitle: noteTitle) {
                 self.createdNewNote = renamedNote
                 UserDefaults.standard.set(renamedNote.relativePath, forKey: NewNotePreferences.draftFilePathKey)
-                writeSelectedNote(noteText, to: renamedNote)
+                writeActiveNote(noteText, to: renamedNote)
+                startActiveNoteFileMonitorIfNeeded()
                 return
             }
-            writeSelectedNote(noteText, to: createdNewNote)
+            writeActiveNote(noteText, to: createdNewNote)
             return
         }
 
@@ -332,14 +432,23 @@ final class ContentViewModel: ObservableObject {
 
         createdNewNote = note
         UserDefaults.standard.set(note.relativePath, forKey: NewNotePreferences.draftFilePathKey)
+        markActiveNotePersisted(noteText, to: note)
+        startActiveNoteFileMonitorIfNeeded()
     }
 
-    private func writeSelectedNote(_ text: String, to note: VaultNote) {
+    private func writeActiveNote(_ text: String, to note: VaultNote) {
         do {
             try VaultStore.write(text, to: note)
+            markActiveNotePersisted(text, to: note)
         } catch {
             saveErrorMessage = "Could not save note: \(error.localizedDescription)"
         }
+    }
+
+    private func markActiveNotePersisted(_ text: String, to note: VaultNote) {
+        guard activeAutosavedNote?.url.standardizedFileURL.path == note.url.standardizedFileURL.path else { return }
+        lastSyncedActiveNoteText = text
+        saveErrorMessage = nil
     }
 
     private func dateString() -> String {
