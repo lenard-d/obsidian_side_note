@@ -1,6 +1,57 @@
 import AppKit
-import STTextView
+import OSLog
 import SwiftUI
+import WebKit
+
+enum MarkdownEditorResource {
+    enum ResourceError: Error {
+        case missingIndexHTML
+        case missingEditorJavaScript
+        case unreadableResource(URL)
+    }
+
+    static func bundledHTML() throws -> String {
+        let indexURL = try resourceURL(named: "index", extension: "html")
+        let editorURL = try resourceURL(named: "editor", extension: "js")
+
+        guard let indexHTML = try? String(contentsOf: indexURL, encoding: .utf8) else {
+            throw ResourceError.unreadableResource(indexURL)
+        }
+        guard let editorJavaScript = try? String(contentsOf: editorURL, encoding: .utf8) else {
+            throw ResourceError.unreadableResource(editorURL)
+        }
+
+        return inlineHTML(indexHTML: indexHTML, editorJavaScript: editorJavaScript)
+    }
+
+    static func inlineHTML(indexHTML: String, editorJavaScript: String) -> String {
+        let escapedJavaScript = editorJavaScript.replacingOccurrences(of: "</script", with: "<\\/script")
+        let inlineScript = "<script>\n\(escapedJavaScript)\n</script>"
+        let externalScript = #"<script src="editor.js"></script>"#
+
+        if indexHTML.contains(externalScript) {
+            return indexHTML.replacingOccurrences(of: externalScript, with: inlineScript)
+        }
+
+        return indexHTML.replacingOccurrences(of: "</body>", with: "\(inlineScript)\n  </body>")
+    }
+
+    private static func resourceURL(named name: String, extension fileExtension: String) throws -> URL {
+        if let nestedURL = Bundle.main.url(
+            forResource: name,
+            withExtension: fileExtension,
+            subdirectory: "MarkdownEditor"
+        ) {
+            return nestedURL
+        }
+
+        if let flatURL = Bundle.main.url(forResource: name, withExtension: fileExtension) {
+            return flatURL
+        }
+
+        throw fileExtension == "html" ? ResourceError.missingIndexHTML : ResourceError.missingEditorJavaScript
+    }
+}
 
 struct RichMarkdownEditorView: NSViewRepresentable {
     @Binding var text: String
@@ -10,8 +61,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     @Binding var commandRequest: MarkdownEditorCommandRequest?
     let insertMedia: (String) -> Void
     let didInsertMedia: () -> Void
-    private let horizontalEditorPadding: CGFloat = 10
-    private let topEditorPadding: CGFloat = 8
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -25,58 +74,40 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         )
     }
 
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = MediaScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = false
-        scrollView.borderType = .noBorder
-        scrollView.configureEditorTopPadding(topEditorPadding)
-        scrollView.focusTextView = { [weak coordinator = context.coordinator] in
-            coordinator?.focusEditorAtEnd()
-        }
-        scrollView.onLayout = { [weak coordinator = context.coordinator, weak scrollView] in
-            guard let scrollView else { return }
-            coordinator?.updateLayout(contentSize: scrollView.contentSize)
-        }
+    func makeNSView(context: Context) -> MarkdownEditorWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.add(context.coordinator, name: "editor")
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
 
-        let textView = MediaTextView()
-        textView.textDelegate = context.coordinator
-        textView.mediaDelegate = context.coordinator
-        textView.markdownCommandDelegate = context.coordinator
-        textView.taskListDelegate = context.coordinator
-        textView.listEditingDelegate = context.coordinator
-        textView.isEditable = true
-        textView.isSelectable = true
-        textView.allowsUndo = true
-        textView.font = .systemFont(ofSize: 16)
-        textView.textColor = .textColor
-        textView.configureHorizontalEditorPadding(horizontalEditorPadding)
-        textView.configureForVerticalScrolling(contentSize: NSSize(width: 560, height: 320))
-        textView.registerForDraggedTypes(MediaAttachmentImporter.pasteboardTypes)
+        let webView = MarkdownEditorWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
+        webView.editorDelegate = context.coordinator
+        webView.setValue(false, forKey: "drawsBackground")
+        webView.registerForDraggedTypes(MediaAttachmentImporter.pasteboardTypes)
 
-        scrollView.documentView = textView
-        context.coordinator.textView = textView
-        context.coordinator.observeEditingNotifications(for: textView)
+        context.coordinator.webView = webView
         context.coordinator.observeFocusRequests()
-        context.coordinator.render(text)
-        DispatchQueue.main.async {
-            context.coordinator.applyFocusIfNeeded()
-        }
+        context.coordinator.loadEditor()
 
-        return scrollView
+        return webView
     }
 
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        if context.coordinator.renderedText != text {
-            context.coordinator.render(text)
-        }
+    func updateNSView(_ webView: MarkdownEditorWebView, context: Context) {
+        context.coordinator.webView = webView
+        context.coordinator.syncMarkdownToWebViewIfNeeded(text)
+        context.coordinator.syncAppearanceToWebViewIfNeeded()
         context.coordinator.applyFocusIfNeeded()
         context.coordinator.applyFocusRequestIfNeeded()
         context.coordinator.applyCursorEndRequestIfNeeded()
         context.coordinator.applyCommandRequestIfNeeded()
     }
 
-    final class Coordinator: NSObject, STTextViewDelegate, MediaTextViewDelegate, MarkdownCommandTextViewDelegate, TaskListTextViewDelegate, MarkdownListEditingTextViewDelegate {
+    static func dismantleNSView(_ webView: MarkdownEditorWebView, coordinator: Coordinator) {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "editor")
+        coordinator.stopObserving()
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler, MarkdownEditorWebViewDelegate {
         @Binding private var text: String
         @FocusState.Binding private var isFocused: Bool
         @Binding private var focusRequestID: Int
@@ -84,16 +115,16 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         @Binding private var commandRequest: MarkdownEditorCommandRequest?
         private let insertMedia: (String) -> Void
         private let didInsertMedia: () -> Void
-        fileprivate weak var textView: MediaTextView?
-        fileprivate var renderedText = ""
-        private var pendingSelectionAfterRender: NSRange?
-        private var mediaWidth: CGFloat = 560
-        private var isRendering = false
+        fileprivate weak var webView: MarkdownEditorWebView?
+        private var loadedResourceURL: URL?
+        private var isReady = false
+        private var markdownInWebView = ""
+        private var pendingMarkdownInWebView: String?
+        private var pendingFocusAtEnd = false
+        private var appliedAppearanceScheme: String?
         private var appliedFocusRequestID = 0
         private var appliedCursorEndRequestID = 0
         private var appliedCommandRequestID = 0
-        private var pendingMediaLoads: Set<String> = []
-        private var editingNotificationObservers: [NSObjectProtocol] = []
         private var focusRequestObserver: NSObjectProtocol?
 
         init(
@@ -115,92 +146,83 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         deinit {
-            for observer in editingNotificationObservers {
-                NotificationCenter.default.removeObserver(observer)
+            stopObserving()
+        }
+
+        func loadEditor() {
+            guard loadedResourceURL == nil, let webView else { return }
+            do {
+                let html = try MarkdownEditorResource.bundledHTML()
+                loadedResourceURL = Bundle.main.bundleURL
+                webView.loadHTMLString(html, baseURL: nil)
+            } catch {
+                AppLogger.app.error("Failed to load bundled markdown editor: \(error.localizedDescription, privacy: .public)")
+                assertionFailure("Missing or unreadable bundled MarkdownEditor resources")
             }
-            if let focusRequestObserver {
-                NotificationCenter.default.removeObserver(focusRequestObserver)
+        }
+
+        func syncMarkdownToWebViewIfNeeded(_ markdown: String) {
+            guard isReady else { return }
+            guard markdown != markdownInWebView else { return }
+            guard markdown != pendingMarkdownInWebView else { return }
+
+            pendingMarkdownInWebView = markdown
+            callEditorFunction("setMarkdown", argument: markdown) { [weak self] error in
+                guard let self else { return }
+                if self.pendingMarkdownInWebView == markdown {
+                    self.pendingMarkdownInWebView = nil
+                }
+
+                if let error {
+                    AppLogger.app.error("Failed to sync markdown into web editor: \(error.localizedDescription, privacy: .public)")
+                    return
+                }
+
+                self.markdownInWebView = markdown
             }
         }
 
-        func render(_ source: String) {
-            guard let textView else { return }
-            isRendering = true
-            renderedText = source
-            let selectedRange = pendingSelectionAfterRender ?? textView.selectedRange()
-            pendingSelectionAfterRender = nil
-            textView.setAttributedString(
-                MarkdownEditorTextRenderer.attributedString(
-                    from: source,
-                    mediaWidth: mediaWidth
-                )
-            )
-            textView.typingAttributes = MarkdownEditorTextRenderer.typingAttributes
-            textView.setSelectedRange(Self.clamped(range: selectedRange, length: textView.string.utf16.count))
-            textView.resizeToFitTextContent()
-            isRendering = false
+        func syncAppearanceToWebViewIfNeeded() {
+            guard isReady, let webView else { return }
+            let isDark = webView.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let scheme = isDark ? "dark" : "light"
+            guard scheme != appliedAppearanceScheme else { return }
 
-            applyFocusIfNeeded()
-
-            preloadMissingMedia(in: source)
+            appliedAppearanceScheme = scheme
+            callEditorFunction("setAppearance", argument: scheme)
         }
 
-        func textViewDidChangeText(_ notification: Notification) {
-            guard !isRendering, let textView else { return }
-            let markdown = MarkdownEditorTextRenderer.markdownString(from: textView.attributedString())
-            renderedText = markdown
-            text = markdown
-            textView.resizeToFitTextContent()
+        func applyFocusIfNeeded() {
+            guard isFocused else { return }
+            focusEditor()
         }
 
-        func textViewDidChangeSelection(_ notification: Notification) {
-            guard !isRendering, let textView else { return }
-            syncRenderedTextFromTextViewIfNeeded(textView)
+        func applyFocusRequestIfNeeded() {
+            guard isReady, appliedFocusRequestID != focusRequestID else { return }
+            appliedFocusRequestID = focusRequestID
+            focusEditorAtEnd()
         }
 
-        private func syncRenderedTextFromTextViewIfNeeded(_ textView: MediaTextView) {
-            let markdown = MarkdownEditorTextRenderer.markdownString(from: textView.attributedString())
-            guard markdown != renderedText else { return }
-            renderedText = markdown
-            text = markdown
+        func applyCursorEndRequestIfNeeded() {
+            guard isReady, appliedCursorEndRequestID != cursorEndRequestID else { return }
+            appliedCursorEndRequestID = cursorEndRequestID
+            focusEditorAtEnd()
         }
 
-        func observeEditingNotifications(for textView: MediaTextView) {
-            for observer in editingNotificationObservers {
-                NotificationCenter.default.removeObserver(observer)
+        func applyCommandRequestIfNeeded() {
+            guard isReady,
+                  let commandRequest,
+                  commandRequest.id != appliedCommandRequestID else {
+                return
             }
 
-            let center = NotificationCenter.default
-            editingNotificationObservers = [
-                center.addObserver(
-                    forName: NSText.didBeginEditingNotification,
-                    object: textView,
-                    queue: .main
-                ) { [weak self] notification in
-                    self?.textViewDidBeginEditing(notification)
-                },
-                center.addObserver(
-                    forName: NSText.didEndEditingNotification,
-                    object: textView,
-                    queue: .main
-                ) { [weak self] notification in
-                    self?.textViewDidEndEditing(notification)
-                },
-            ]
-        }
-
-        private func textViewDidBeginEditing(_ notification: Notification) {
-            isFocused = true
-        }
-
-        private func textViewDidEndEditing(_ notification: Notification) {
-            guard !isRendering else { return }
-            isFocused = false
+            appliedCommandRequestID = commandRequest.id
+            callEditorFunction("applyCommand", argument: webCommand(for: commandRequest.command))
         }
 
         func observeFocusRequests() {
-            if let focusRequestObserver {
-                NotificationCenter.default.removeObserver(focusRequestObserver)
+            if focusRequestObserver != nil {
+                stopObserving()
             }
 
             focusRequestObserver = NotificationCenter.default.addObserver(
@@ -210,8 +232,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             ) { [weak self] notification in
                 guard let self else { return }
                 if let targetWindow = notification.object as? NSWindow,
-                   let textWindow = self.textView?.window,
-                   targetWindow !== textWindow {
+                   let editorWindow = self.webView?.window,
+                   targetWindow !== editorWindow {
                     return
                 }
 
@@ -225,201 +247,227 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             }
         }
 
-        func updateMediaWidth(_ width: CGFloat) {
-            let adjustedWidth = max(80, floor(width - (textView?.horizontalEditorPadding ?? 0) * 2))
-            guard abs(adjustedWidth - mediaWidth) > 1 else { return }
-            mediaWidth = adjustedWidth
-            render(renderedText)
+        func stopObserving() {
+            if let focusRequestObserver {
+                NotificationCenter.default.removeObserver(focusRequestObserver)
+                self.focusRequestObserver = nil
+            }
         }
 
-        func updateLayout(contentSize: NSSize) {
-            textView?.configureForVerticalScrolling(contentSize: contentSize)
-            updateMediaWidth(contentSize.width)
-        }
-
-        func applyCursorEndRequestIfNeeded() {
-            guard appliedCursorEndRequestID != cursorEndRequestID, let textView else { return }
-            appliedCursorEndRequestID = cursorEndRequestID
-            let end = textView.string.utf16.count
-            textView.setSelectedRange(NSRange(location: end, length: 0))
-            textView.scrollRangeToVisible(NSRange(location: end, length: 0))
-        }
-
-        func applyCommandRequestIfNeeded() {
-            guard let commandRequest,
-                  commandRequest.id != appliedCommandRequestID,
-                  let textView else {
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let body = message.body as? [String: Any],
+                  let type = body["type"] as? String else {
                 return
             }
 
-            appliedCommandRequestID = commandRequest.id
-            apply(commandRequest.command, in: textView)
-            textViewDidChangeText(Notification(name: NSText.didChangeNotification, object: textView))
-            render(renderedText)
-        }
-
-        func applyFocusIfNeeded() {
-            guard isFocused,
-                  let textView,
-                  let window = textView.window,
-                  window.firstResponder !== textView else {
-                return
+            switch type {
+            case "ready":
+                isReady = true
+                AppLogger.app.info("Markdown editor ready")
+                markdownInWebView = ""
+                pendingMarkdownInWebView = nil
+                appliedAppearanceScheme = nil
+                syncMarkdownToWebViewIfNeeded(text)
+                syncAppearanceToWebViewIfNeeded()
+                applyFocusIfNeeded()
+                applyFocusRequestIfNeeded()
+                applyCursorEndRequestIfNeeded()
+                applyCommandRequestIfNeeded()
+                if pendingFocusAtEnd {
+                    focusEditorAtEnd()
+                }
+            case "change":
+                guard let markdown = body["text"] as? String else { return }
+                pendingMarkdownInWebView = nil
+                markdownInWebView = markdown
+                if markdown != text {
+                    text = markdown
+                }
+            case "focus":
+                isFocused = true
+            case "blur":
+                isFocused = false
+            case "pasteMedia":
+                importMediaFromPasteboard(.general)
+            case "dropMedia":
+                break
+            case "error":
+                let message = body["message"] as? String ?? "Unknown editor error"
+                AppLogger.app.error("Markdown editor error: \(message, privacy: .public)")
+            default:
+                break
             }
-
-            focusEditorAtEnd()
         }
 
-        func applyFocusRequestIfNeeded() {
-            guard appliedFocusRequestID != focusRequestID else { return }
-            appliedFocusRequestID = focusRequestID
-            focusEditorAtEnd()
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
+            isReady = false
+            appliedAppearanceScheme = nil
         }
 
-        func focusEditorAtEnd() {
-            guard let textView else { return }
-            isFocused = true
-            if let window = textView.window {
-                window.endEditing(for: nil)
-                window.makeFirstResponder(textView)
-            }
-            let end = textView.string.utf16.count
-            textView.setSelectedRange(NSRange(location: end, length: 0))
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation?, withError error: Error) {
+            isReady = false
+            AppLogger.app.error("Markdown editor navigation failed: \(error.localizedDescription, privacy: .public)")
         }
 
-        func mediaTextViewDidRequestPasteMedia(_ textView: MediaTextView) -> Bool {
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation?, withError error: Error) {
+            isReady = false
+            AppLogger.app.error("Markdown editor provisional navigation failed: \(error.localizedDescription, privacy: .public)")
+        }
+
+        func markdownEditorWebViewDidRequestPasteMedia(_ webView: MarkdownEditorWebView) -> Bool {
             guard MediaAttachmentImporter.canImportFromPasteboard() else {
                 return false
             }
 
-            MediaAttachmentImporter.importFromPasteboard { [weak self] relativePath in
-                DispatchQueue.main.async {
-                    guard let self, let relativePath else { return }
-                    self.insertMedia(relativePath)
-                    self.didInsertMedia()
-                }
-            }
+            importMediaFromPasteboard(.general)
             return true
         }
 
-        func mediaTextView(_ textView: MediaTextView, didReceiveDrop pasteboard: NSPasteboard) -> Bool {
+        func markdownEditorWebView(_ webView: MarkdownEditorWebView, didReceiveDrop pasteboard: NSPasteboard) -> Bool {
             guard MediaAttachmentImporter.canImportFromPasteboard(pasteboard) else {
                 return false
             }
 
+            importMediaFromPasteboard(pasteboard)
+            return true
+        }
+
+        private func importMediaFromPasteboard(_ pasteboard: NSPasteboard) {
             MediaAttachmentImporter.importFromPasteboard(pasteboard) { [weak self] relativePath in
                 DispatchQueue.main.async {
                     guard let self, let relativePath else { return }
-                    self.insertMedia(relativePath)
-                    self.didInsertMedia()
+                    self.insertMediaLink(relativePath)
                 }
             }
-            return true
         }
 
-        func mediaTextView(_ textView: MediaTextView, didRequestMarkdownWrapper wrapper: String) {
-            MarkdownEditorCommandApplier.wrapSelection(in: textView, wrapper: wrapper)
-            textViewDidChangeText(Notification(name: NSText.didChangeNotification, object: textView))
-            render(renderedText)
+        private func insertMediaLink(_ relativePath: String) {
+            let insertion = "![[\(relativePath)]]"
+            if isReady {
+                callEditorFunction("insertMarkdown", argument: insertion)
+            } else {
+                insertMedia(relativePath)
+            }
+            didInsertMedia()
         }
 
-        func mediaTextView(_ textView: MediaTextView, didRequestTaskToggleAtVisibleLocation location: Int) {
-            let lineIndex = MarkdownEditingEngine.lineIndex(in: textView.string, at: location)
-            guard let toggledText = MarkdownEditingEngine.toggledTaskListItem(in: renderedText, lineIndex: lineIndex) else {
+        private func focusEditor() {
+            guard isReady, let webView else {
+                pendingFocusAtEnd = true
                 return
             }
+            pendingFocusAtEnd = false
+            isFocused = true
+            webView.window?.endEditing(for: nil)
+            webView.window?.makeFirstResponder(webView)
+            webView.becomeFirstResponder()
+            callEditorFunction("focus")
+        }
 
-            let previousText = renderedText
-            textView.undoManager?.registerUndo(withTarget: self) { coordinator in
-                coordinator.replaceMarkdown(previousText)
+        private func focusEditorAtEnd() {
+            guard isReady, let webView else {
+                pendingFocusAtEnd = true
+                return
             }
-            replaceMarkdown(toggledText)
+            pendingFocusAtEnd = false
+            isFocused = true
+            webView.window?.endEditing(for: nil)
+            webView.window?.makeFirstResponder(webView)
+            webView.becomeFirstResponder()
+            callEditorFunction("focusEnd")
         }
 
-        func mediaTextViewDidRequestSmartNewline(_ textView: MediaTextView) -> Bool {
-            syncRenderedTextFromTextViewIfNeeded(textView)
-            guard let edit = MarkdownEditingEngine.smartNewline(
-                in: renderedText,
-                selectedRange: sourceSelectionRange(from: textView)
-            ) else {
-                return false
-            }
-
-            apply(edit, in: textView)
-            return true
-        }
-
-        func mediaTextViewDidRequestIndent(_ textView: MediaTextView) -> Bool {
-            syncRenderedTextFromTextViewIfNeeded(textView)
-            guard let edit = MarkdownEditingEngine.indentLines(
-                in: renderedText,
-                selectedRange: sourceSelectionRange(from: textView)
-            ) else {
-                return false
-            }
-
-            apply(edit, in: textView)
-            return true
-        }
-
-        func mediaTextViewDidRequestOutdent(_ textView: MediaTextView) -> Bool {
-            syncRenderedTextFromTextViewIfNeeded(textView)
-            guard let edit = MarkdownEditingEngine.outdentLines(
-                in: renderedText,
-                selectedRange: sourceSelectionRange(from: textView)
-            ) else {
-                return false
-            }
-
-            apply(edit, in: textView)
-            return true
-        }
-
-        private static func clamped(range: NSRange, length: Int) -> NSRange {
-            NSRange(location: min(range.location, length), length: min(range.length, max(0, length - range.location)))
-        }
-
-        private func apply(_ command: MarkdownEditorCommand, in textView: MediaTextView) {
-            MarkdownEditorCommandApplier.apply(command, in: textView)
-        }
-
-        private func apply(_ edit: MarkdownEditingEngine.Edit, in textView: MediaTextView) {
-            let previousText = renderedText
-            textView.undoManager?.registerUndo(withTarget: self) { coordinator in
-                coordinator.replaceMarkdown(previousText)
-            }
-            pendingSelectionAfterRender = edit.selectedRange
-            replaceMarkdown(edit.markdown)
-        }
-
-        private func sourceSelectionRange(from textView: MediaTextView) -> NSRange {
-            textView.selectedRange()
-        }
-
-        private func replaceMarkdown(_ markdown: String) {
-            renderedText = markdown
-            text = markdown
-            render(markdown)
-        }
-
-        private func preloadMissingMedia(in source: String) {
-            let links = MarkdownEditorTextRenderer.imageLinksNeedingPreload(from: source, mediaWidth: mediaWidth)
-            guard !links.isEmpty else { return }
-
-            for link in links where !pendingMediaLoads.contains(link) {
-                pendingMediaLoads.insert(link)
-                let pixelWidth = mediaWidth * 2
-
-                DispatchQueue.global(qos: .utility).async { [weak self] in
-                    _ = VaultStore.image(forMediaLink: link, maxPixelWidth: pixelWidth)
-                    DispatchQueue.main.async {
-                        guard let self else { return }
-                        self.pendingMediaLoads.remove(link)
-                        if self.renderedText == source {
-                            self.render(source)
-                        }
-                    }
+        private func callEditorFunction(_ name: String) {
+            guard isReady, let webView else { return }
+            webView.evaluateJavaScript("window.editor?.\(name)();") { _, error in
+                if let error {
+                    AppLogger.app.error("Markdown editor command \(name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
         }
+
+        private func callEditorFunction(_ name: String, argument: Any, completion: ((Error?) -> Void)? = nil) {
+            guard isReady, let webView else { return }
+            let argumentJSON = Self.javaScriptLiteral(for: argument)
+            webView.evaluateJavaScript("window.editor?.\(name)(\(argumentJSON));") { _, error in
+                if let error {
+                    AppLogger.app.error("Markdown editor command \(name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                }
+                completion?(error)
+            }
+        }
+
+        private func webCommand(for command: MarkdownEditorCommand) -> [String: Any] {
+            switch command {
+            case let .wrap(wrapper):
+                return ["type": "wrap", "wrapper": wrapper]
+            case .insertLink:
+                return ["type": "insertLink"]
+            case let .insertPrefix(prefix):
+                return ["type": "insertPrefix", "prefix": prefix]
+            }
+        }
+
+        private static func javaScriptLiteral(for value: Any) -> String {
+            guard JSONSerialization.isValidJSONObject(value) || value is String else {
+                return "null"
+            }
+
+            let object: Any
+            if let string = value as? String {
+                object = [string]
+            } else {
+                object = value
+            }
+
+            guard let data = try? JSONSerialization.data(withJSONObject: object),
+                  var literal = String(data: data, encoding: .utf8) else {
+                return "null"
+            }
+
+            if value is String {
+                literal.removeFirst()
+                literal.removeLast()
+            }
+            return literal
+        }
+    }
+}
+
+protocol MarkdownEditorWebViewDelegate: AnyObject {
+    func markdownEditorWebViewDidRequestPasteMedia(_ webView: MarkdownEditorWebView) -> Bool
+    func markdownEditorWebView(_ webView: MarkdownEditorWebView, didReceiveDrop pasteboard: NSPasteboard) -> Bool
+}
+
+final class MarkdownEditorWebView: WKWebView {
+    weak var editorDelegate: MarkdownEditorWebViewDelegate?
+
+    override var mouseDownCanMoveWindow: Bool {
+        false
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if MediaAttachmentImporter.canImportFromPasteboard(sender.draggingPasteboard) {
+            return .copy
+        }
+
+        return super.draggingEntered(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if editorDelegate?.markdownEditorWebView(self, didReceiveDrop: sender.draggingPasteboard) == true {
+            return true
+        }
+
+        if MediaAttachmentImporter.canImportFromPasteboard(sender.draggingPasteboard) {
+            return true
+        }
+
+        return super.performDragOperation(sender)
     }
 }
