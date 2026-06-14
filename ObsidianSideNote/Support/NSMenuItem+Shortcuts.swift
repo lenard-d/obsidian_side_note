@@ -1,9 +1,10 @@
 import AppKit
-import KeyboardShortcuts
 
 extension NSMenuItem {
     func applyShortcut(_ action: ShortcutAction) {
-        setShortcut(for: action.shortcutName)
+        let shortcut = ShortcutPreference.definition(for: action)
+        keyEquivalent = shortcut.key
+        keyEquivalentModifierMask = shortcut.modifiers
     }
 
     func removeShortcut() {

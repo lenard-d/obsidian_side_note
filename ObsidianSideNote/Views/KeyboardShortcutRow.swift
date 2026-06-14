@@ -28,11 +28,19 @@ struct KeyboardShortcutRow: View {
 
             Spacer()
 
-            KeyboardShortcuts.Recorder(for: action.shortcutName) { shortcut in
-                updateShortcut(shortcut)
+            if let shortcutName = action.globalShortcutName {
+                KeyboardShortcuts.Recorder(for: shortcutName) { shortcut in
+                    updateShortcut(shortcut)
+                }
+                .frame(width: 112)
+                .help("Click, then press the full shortcut")
+            } else {
+                Text(shortcut.displayValue)
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundColor(.secondary)
+                    .frame(width: 112, alignment: .trailing)
+                    .help("Local app shortcut. It only works while Obsidian Side Note is focused.")
             }
-            .frame(width: 112)
-            .help("Click, then press the full shortcut")
         }
         .frame(maxWidth: .infinity)
     }
@@ -49,12 +57,17 @@ struct KeyboardShortcutRow: View {
         let modifiers = ShortcutPreference.menuModifierFlags(from: recordedShortcut.modifiers)
         if let message = ShortcutPolicy.validationMessage(for: action, key: key, modifiers: modifiers) {
             validationMessage = message
-            KeyboardShortcuts.setShortcut(ShortcutPreference.keyboardShortcut(key: shortcut.key, modifiers: shortcut.modifiers), for: action.shortcutName)
+            if let shortcutName = action.globalShortcutName {
+                KeyboardShortcuts.setShortcut(
+                    ShortcutPreference.keyboardShortcut(key: shortcut.key, modifiers: shortcut.modifiers),
+                    for: shortcutName
+                )
+            }
             return
         }
 
+        ShortcutPreference.set(key, modifiers: modifiers, for: action)
         shortcut = ShortcutDefinition(key: key, modifiers: modifiers)
         validationMessage = nil
-        NotificationCenter.default.post(name: .shortcutPreferencesDidChange, object: nil)
     }
 }

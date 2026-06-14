@@ -90,7 +90,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         ShortcutPreference.definition(for: self)
     }
 
-    var shortcutName: KeyboardShortcuts.Name {
+    var globalShortcutName: KeyboardShortcuts.Name? {
         switch self {
         case .appendDaily:
             return .appendDailyNote
@@ -99,7 +99,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .editVaultFile:
             return .editVaultFile
         case .settings:
-            return .openSettings
+            return nil
         }
     }
 
@@ -133,9 +133,5 @@ extension KeyboardShortcuts.Name {
     static let editVaultFile = Self(
         "editVaultFile",
         default: ShortcutPreference.keyboardShortcut(key: "v", modifiers: [.command, .option, .control])
-    )
-    static let openSettings = Self(
-        "openSettings",
-        default: ShortcutPreference.keyboardShortcut(key: ",", modifiers: .command)
     )
 }

@@ -15,8 +15,9 @@ final class GlobalHotKeyManager {
         didRegisterHandlers = true
 
         for action in ShortcutAction.globalActions {
+            guard let shortcutName = action.globalShortcutName else { continue }
             _ = ShortcutPreference.definition(for: action)
-            KeyboardShortcuts.onKeyUp(for: action.shortcutName) { [handler] in
+            KeyboardShortcuts.onKeyUp(for: shortcutName) { [handler] in
                 handler(action)
             }
         }
