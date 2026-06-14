@@ -12,6 +12,7 @@ import SwiftUI
 import Defaults
 import KeyboardShortcuts
 import STTextView
+import WebKit
 @testable import ObsidianSideNote
 
 @Suite(.serialized)
@@ -239,6 +240,218 @@ struct ObsidianSideNoteTests {
         #expect(viewModel.searchResults.isEmpty)
     }
 
+    @MainActor
+    @Test func editVaultFileSearchKeepsAllMatchesNavigable() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            UserDefaults.standard.removeObject(forKey: "draft.editVaultFile.search")
+        }
+
+        for index in 0..<12 {
+            try "Body".write(
+                to: temporaryVaultURL.appendingPathComponent(String(format: "Note %02d.md", index)),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let viewModel = ContentViewModel(mode: .editVaultFile)
+        viewModel.highlightedSearchIndex = 11
+        viewModel.vaultSearchQuery = "Note"
+        viewModel.searchQueryDidChange()
+
+        #expect(viewModel.searchResults.count == 12)
+        #expect(viewModel.highlightedSearchIndex == 11)
+    }
+
+    @MainActor
+    @Test func editVaultFileRestoresSelectedDraftPathAndLoadsContent() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let personalFolder = "0009 Perso\u{0308}nliches"
+        let noteDirectory = temporaryVaultURL.appendingPathComponent("\(personalFolder)/00 Inbox", isDirectory: true)
+        let relativePath = "\(personalFolder)/00 Inbox/00 Inbox.md"
+        let persistedPathWithLiteralCombiningEscape = "0009 Persou0308nliches/00 Inbox/00 Inbox.md"
+        let noteURL = temporaryVaultURL.appendingPathComponent(relativePath)
+        let noteBody = "# 00 Inbox\n\nThis content must be visible."
+
+        try FileManager.default.createDirectory(at: noteDirectory, withIntermediateDirectories: true)
+        try noteBody.write(to: noteURL, atomically: true, encoding: .utf8)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            UserDefaults.standard.removeObject(forKey: "draft.editVaultFile.path")
+            UserDefaults.standard.removeObject(forKey: "draft.editVaultFile.search")
+            UserDefaults.standard.removeObject(forKey: "draft.editVaultFile.text")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        UserDefaults.standard.set(persistedPathWithLiteralCombiningEscape, forKey: "draft.editVaultFile.path")
+        UserDefaults.standard.set(persistedPathWithLiteralCombiningEscape, forKey: "draft.editVaultFile.search")
+        UserDefaults.standard.set("", forKey: "draft.editVaultFile.text")
+
+        let viewModel = ContentViewModel(mode: .editVaultFile)
+        viewModel.start(clearSearchFocus: {}, focusEditor: {})
+        defer { viewModel.stop() }
+
+        #expect(viewModel.selectedNote?.relativePath == relativePath)
+        #expect(viewModel.noteTitle == relativePath)
+        #expect(viewModel.vaultSearchQuery == relativePath)
+        #expect(viewModel.noteText == noteBody)
+        #expect(viewModel.saveErrorMessage == nil)
+        #expect(UserDefaults.standard.string(forKey: "draft.editVaultFile.path") == relativePath)
+        #expect(UserDefaults.standard.string(forKey: "draft.editVaultFile.search") == relativePath)
+    }
+
+    @MainActor
+    @Test func editVaultFileReloadsExternalFileChangesBeforeNextAutosave() async throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        let noteURL = temporaryVaultURL.appendingPathComponent("Draft.md")
+        try "Before".write(to: noteURL, atomically: true, encoding: .utf8)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            UserDefaults.standard.removeObject(forKey: "draft.editVaultFile.text")
+            UserDefaults.standard.removeObject(forKey: "draft.editVaultFile.path")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let note = try #require(VaultStore.note(relativePath: "Draft.md"))
+        let viewModel = ContentViewModel(mode: .editVaultFile)
+        viewModel.selectNote(note)
+        defer { viewModel.stop() }
+
+        try "Changed in Obsidian".write(to: noteURL, atomically: true, encoding: .utf8)
+        viewModel.syncActiveNoteFromDiskIfNeeded()
+
+        #expect(viewModel.noteText == "Changed in Obsidian")
+        #expect(VaultStore.read(note) == "Changed in Obsidian")
+
+        viewModel.noteText += "\nSide Note continues from latest disk text"
+        viewModel.textDidChange()
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        #expect(VaultStore.read(note) == "Changed in Obsidian\nSide Note continues from latest disk text")
+    }
+
+    @MainActor
+    @Test func editVaultFileExternalChangeCancelsPendingStaleAutosave() async throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        let noteURL = temporaryVaultURL.appendingPathComponent("Draft.md")
+        try "Original".write(to: noteURL, atomically: true, encoding: .utf8)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            UserDefaults.standard.removeObject(forKey: "draft.editVaultFile.text")
+            UserDefaults.standard.removeObject(forKey: "draft.editVaultFile.path")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let note = try #require(VaultStore.note(relativePath: "Draft.md"))
+        let viewModel = ContentViewModel(mode: .editVaultFile)
+        viewModel.selectNote(note)
+        defer { viewModel.stop() }
+
+        viewModel.noteText = "Stale Side Note edit"
+        viewModel.textDidChange()
+        try "External Obsidian edit wins".write(to: noteURL, atomically: true, encoding: .utf8)
+        viewModel.syncActiveNoteFromDiskIfNeeded()
+
+        try await Task.sleep(nanoseconds: 600_000_000)
+
+        #expect(viewModel.noteText == "External Obsidian edit wins")
+        #expect(VaultStore.read(note) == "External Obsidian edit wins")
+    }
+
+    @MainActor
+    @Test func newNoteMonitorReloadsExternalChangesAutomatically() async throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            NewNotePreferences.clearDraft()
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let viewModel = ContentViewModel(mode: .newNote)
+        viewModel.noteTitle = "Draft"
+        viewModel.noteText = "Created in Side Note"
+        viewModel.textDidChange()
+        defer { viewModel.stop() }
+
+        let note = try #require(viewModel.createdNewNote)
+        #expect(VaultStore.read(note) == "Created in Side Note")
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        try "Changed in Obsidian".write(to: note.url, atomically: true, encoding: .utf8)
+
+        let deadline = Date().addingTimeInterval(2)
+        while viewModel.noteText != "Changed in Obsidian" && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(viewModel.noteText == "Changed in Obsidian")
+
+        viewModel.noteText += "\nSide Note continues from latest disk text"
+        viewModel.textDidChange()
+
+        #expect(VaultStore.read(note) == "Changed in Obsidian\nSide Note continues from latest disk text")
+    }
+
+    @MainActor
+    @Test func editVaultFileMonitorReloadsExternalChangesAutomatically() async throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        let noteURL = temporaryVaultURL.appendingPathComponent("Draft.md")
+        try "Original".write(to: noteURL, atomically: true, encoding: .utf8)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            UserDefaults.standard.removeObject(forKey: "draft.editVaultFile.text")
+            UserDefaults.standard.removeObject(forKey: "draft.editVaultFile.path")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let note = try #require(VaultStore.note(relativePath: "Draft.md"))
+        let viewModel = ContentViewModel(mode: .editVaultFile)
+        viewModel.selectNote(note)
+        defer { viewModel.stop() }
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        try "Automatic external update".write(to: noteURL, atomically: true, encoding: .utf8)
+
+        let deadline = Date().addingTimeInterval(2)
+        while viewModel.noteText != "Automatic external update" && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(viewModel.noteText == "Automatic external update")
+    }
+
     @Test func vaultWriteUpdatesSelectedMarkdownFile() throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -257,6 +470,32 @@ struct ObsidianSideNoteTests {
         try VaultStore.write("After", to: note)
 
         #expect(VaultStore.read(note) == "After")
+    }
+
+    @Test func noteFileMonitorReportsAtomicExternalWrite() throws {
+        let temporaryDirectoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryDirectoryURL, withIntermediateDirectories: true)
+        let noteURL = temporaryDirectoryURL.appendingPathComponent("Draft.md")
+        try "Before".write(to: noteURL, atomically: true, encoding: .utf8)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryDirectoryURL)
+        }
+
+        let monitor = VaultNoteFileMonitor(
+            callbackQueue: .global(qos: .utility),
+            notificationDelay: 0.01
+        )
+        let didChange = DispatchSemaphore(value: 0)
+        monitor.start(url: noteURL) {
+            didChange.signal()
+        }
+        defer { monitor.stop() }
+
+        Thread.sleep(forTimeInterval: 0.05)
+        try "After".write(to: noteURL, atomically: true, encoding: .utf8)
+
+        #expect(didChange.wait(timeout: .now() + 2) == .success)
     }
 
     @Test func vaultStoreResolvesRelativeMarkdownLinksInsideSelectedVault() throws {
@@ -311,7 +550,7 @@ struct ObsidianSideNoteTests {
         VaultStore.saveVaultURL(temporaryVaultURL)
         let resolvedURL = try #require(VaultStore.url(forWikiLink: "Project Plan"))
 
-        #expect(resolvedURL.path == linkedURL.path)
+        #expect(resolvedURL.standardizedFileURL.path == linkedURL.standardizedFileURL.path)
     }
 
     @Test func vaultStoreConfigurationReflectsSavedVault() throws {
@@ -1150,6 +1389,253 @@ struct ObsidianSideNoteTests {
         #expect(FileManager.default.fileExists(atPath: configURL.path))
     }
 
+    @MainActor
+    @Test func persistentConfigRestoresVaultPathWithoutBookmark() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        let configURL = temporaryDirectory.appendingPathComponent("config.json")
+        let vaultURL = temporaryDirectory.appendingPathComponent("Vault", isDirectory: true)
+        try FileManager.default.createDirectory(at: vaultURL, withIntermediateDirectories: true)
+
+        let originalConfigURL = AppConfigStore.configURLOverride
+        AppConfigStore.configURLOverride = configURL
+        defer {
+            AppConfigStore.configURLOverride = originalConfigURL
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+
+        var config = PersistentAppConfig()
+        config.vaultPath = vaultURL.path
+        config.vaultName = "Vault"
+        let data = try JSONEncoder().encode(config)
+        try data.write(to: configURL, options: .atomic)
+
+        UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+        UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+        UserDefaults.standard.removeObject(forKey: "obsidianVault")
+
+        AppConfigStore.restorePersistedSettingsIfNeeded()
+
+        #expect(UserDefaults.standard.string(forKey: VaultStore.pathKey) == vaultURL.path)
+        #expect(UserDefaults.standard.string(forKey: "obsidianVault") == "Vault")
+        #expect(VaultStore.selectedVaultURL?.standardizedFileURL.path == vaultURL.standardizedFileURL.path)
+    }
+
+    @Test func legacySandboxDefaultsMigrationRestoresDraftFileSelection() throws {
+        let suiteName = "ObsidianSideNoteTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        defaults.set("Keep Existing", forKey: NoteMode.newNote.draftTitleKey)
+
+        AppConfigStore.migrateUserDefaults(
+            from: [
+                "draft.editVaultFile.path": "Inbox/Existing.md",
+                "draft.editVaultFile.search": "Inbox/Existing.md",
+                NoteMode.newNote.draftTitleKey: "Legacy Title",
+                VaultStore.pathKey: "/Users/example/Vault"
+            ],
+            to: defaults
+        )
+
+        #expect(defaults.string(forKey: "draft.editVaultFile.path") == "Inbox/Existing.md")
+        #expect(defaults.string(forKey: "draft.editVaultFile.search") == "Inbox/Existing.md")
+        #expect(defaults.string(forKey: VaultStore.pathKey) == "/Users/example/Vault")
+        #expect(defaults.string(forKey: NoteMode.newNote.draftTitleKey) == "Keep Existing")
+    }
+
+    @MainActor
+    @Test func persistentConfigSynchronizePreservesRestorableVaultWhenDefaultsAreEmpty() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        let configURL = temporaryDirectory.appendingPathComponent("config.json")
+        let vaultURL = temporaryDirectory.appendingPathComponent("Vault", isDirectory: true)
+        try FileManager.default.createDirectory(at: vaultURL, withIntermediateDirectories: true)
+        let bookmarkData = try vaultURL.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+
+        let originalConfigURL = AppConfigStore.configURLOverride
+        AppConfigStore.configURLOverride = configURL
+        defer {
+            AppConfigStore.configURLOverride = originalConfigURL
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            UserDefaults.standard.removeObject(forKey: "startAtLogin")
+            try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+
+        var config = PersistentAppConfig()
+        config.vaultPath = vaultURL.path
+        config.vaultName = "Vault"
+        config.vaultBookmarkBase64 = bookmarkData.base64EncodedString()
+        let data = try JSONEncoder().encode(config)
+        try data.write(to: configURL, options: .atomic)
+
+        UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+        UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+        UserDefaults.standard.removeObject(forKey: "obsidianVault")
+
+        AppConfigStore.synchronizeCurrentSettings()
+
+        let synchronizedConfig = try #require(AppConfigStore.read())
+        #expect(synchronizedConfig.vaultPath == vaultURL.path)
+        #expect(synchronizedConfig.vaultName == "Vault")
+        #expect(synchronizedConfig.vaultBookmarkBase64 == bookmarkData.base64EncodedString())
+    }
+
+    @Test func selectedVaultIgnoresBrokenBookmarkAndFallsBackToStoredPath() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let staleBookmarkURL = temporaryDirectory.appendingPathComponent("Deleted-\(UUID().uuidString)", isDirectory: true)
+        let vaultURL = temporaryDirectory.appendingPathComponent("Vault", isDirectory: true)
+        try FileManager.default.createDirectory(at: staleBookmarkURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: vaultURL, withIntermediateDirectories: true)
+        let staleBookmark = try staleBookmarkURL.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+
+        defer {
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+
+        try FileManager.default.removeItem(at: staleBookmarkURL)
+        UserDefaults.standard.set(staleBookmark, forKey: VaultStore.bookmarkKey)
+        UserDefaults.standard.set(vaultURL.path, forKey: VaultStore.pathKey)
+        UserDefaults.standard.set("Vault", forKey: "obsidianVault")
+
+        #expect(VaultStore.selectedVaultURL?.standardizedFileURL.path == vaultURL.standardizedFileURL.path)
+        #expect(UserDefaults.standard.data(forKey: VaultStore.bookmarkKey) == nil)
+    }
+
+    @Test func selectedVaultPrefersStoredPathOverDifferentValidBookmark() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let bookmarkVaultURL = temporaryDirectory.appendingPathComponent("Bookmark-\(UUID().uuidString)", isDirectory: true)
+        let storedVaultURL = temporaryDirectory.appendingPathComponent("StoredVault", isDirectory: true)
+        try FileManager.default.createDirectory(at: bookmarkVaultURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: storedVaultURL, withIntermediateDirectories: true)
+        let bookmarkData = try bookmarkVaultURL.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+
+        defer {
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+
+        UserDefaults.standard.set(bookmarkData, forKey: VaultStore.bookmarkKey)
+        UserDefaults.standard.set(storedVaultURL.path, forKey: VaultStore.pathKey)
+        UserDefaults.standard.set(storedVaultURL.lastPathComponent, forKey: "obsidianVault")
+
+        #expect(VaultStore.selectedVaultURL?.standardizedFileURL.path == storedVaultURL.standardizedFileURL.path)
+        #expect(UserDefaults.standard.data(forKey: VaultStore.bookmarkKey) == nil)
+    }
+
+    @Test func selectedVaultClearsMissingStoredPathAndName() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let missingVaultURL = temporaryDirectory.appendingPathComponent("Missing-\(UUID().uuidString)", isDirectory: true)
+
+        defer {
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        UserDefaults.standard.set(missingVaultURL.path, forKey: VaultStore.pathKey)
+        UserDefaults.standard.set(missingVaultURL.lastPathComponent, forKey: "obsidianVault")
+
+        #expect(VaultStore.selectedVaultURL == nil)
+        #expect(VaultStore.selectedVaultName == "")
+        #expect(VaultStore.selectedVaultPath == "")
+        #expect(UserDefaults.standard.string(forKey: VaultStore.pathKey) == nil)
+        #expect(UserDefaults.standard.string(forKey: "obsidianVault") == nil)
+    }
+
+    @MainActor
+    @Test func persistentConfigDoesNotOverwriteVaultWithMissingPath() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        let configURL = temporaryDirectory.appendingPathComponent("config.json")
+        let missingVaultURL = temporaryDirectory.appendingPathComponent("Missing-\(UUID().uuidString)", isDirectory: true)
+
+        let originalConfigURL = AppConfigStore.configURLOverride
+        AppConfigStore.configURLOverride = configURL
+        defer {
+            AppConfigStore.configURLOverride = originalConfigURL
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+
+        UserDefaults.standard.set(missingVaultURL.path, forKey: VaultStore.pathKey)
+        UserDefaults.standard.set(missingVaultURL.lastPathComponent, forKey: "obsidianVault")
+
+        AppConfigStore.synchronizeCurrentSettings()
+
+        let config = try #require(AppConfigStore.read())
+        #expect(config.vaultPath == nil)
+        #expect(config.vaultName == nil)
+    }
+
+    @MainActor
+    @Test func persistentConfigDoesNotRestoreMissingVaultPath() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        let configURL = temporaryDirectory.appendingPathComponent("config.json")
+        let missingVaultURL = temporaryDirectory.appendingPathComponent("Missing-\(UUID().uuidString)", isDirectory: true)
+
+        let originalConfigURL = AppConfigStore.configURLOverride
+        AppConfigStore.configURLOverride = configURL
+        defer {
+            AppConfigStore.configURLOverride = originalConfigURL
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+
+        var config = PersistentAppConfig()
+        config.vaultPath = missingVaultURL.path
+        config.vaultName = missingVaultURL.lastPathComponent
+        let data = try JSONEncoder().encode(config)
+        try data.write(to: configURL, options: .atomic)
+
+        AppConfigStore.restorePersistedSettingsIfNeeded()
+
+        #expect(UserDefaults.standard.string(forKey: VaultStore.pathKey) == nil)
+        #expect(UserDefaults.standard.string(forKey: "obsidianVault") == nil)
+
+        AppConfigStore.synchronizeCurrentSettings()
+
+        let cleanedConfig = try #require(AppConfigStore.read())
+        #expect(cleanedConfig.vaultPath == nil)
+        #expect(cleanedConfig.vaultName == nil)
+    }
+
     @Test func shortcutActionsRoundTripThroughGlobalHotKeyIDs() throws {
         for action in ShortcutAction.allCases {
             #expect(ShortcutAction(hotKeyID: action.hotKeyID) == action)
@@ -1167,6 +1653,25 @@ struct ObsidianSideNoteTests {
     @Test func globalShortcutActionsExcludeLocalAppCommands() {
         #expect(ShortcutAction.globalActions == [.appendDaily, .newNote, .editVaultFile])
         #expect(!ShortcutAction.settings.isGlobal)
+        #expect(ShortcutAction.settings.globalShortcutName == nil)
+    }
+
+    @Test func settingsShortcutRestoresAsLocalAppShortcutOnly() {
+        UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.preferenceKey)
+        UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.modifierPreferenceKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.preferenceKey)
+            UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.modifierPreferenceKey)
+        }
+
+        ShortcutPreference.restore(
+            ShortcutDefinition(key: ",", modifiers: .command),
+            for: .settings
+        )
+
+        let shortcut = ShortcutPreference.definition(for: .settings)
+        #expect(shortcut.key == ",")
+        #expect(shortcut.modifiers == .command)
     }
 
     @Test func globalShortcutsUseRequestedDefaultKeys() {
@@ -1201,6 +1706,283 @@ struct ObsidianSideNoteTests {
         #expect(!NoteMode.settings.startsWithEditorFocus)
     }
 
+    @Test func markdownEditorResourceInlinesJavaScriptForSandboxedWKWebView() {
+        let html = MarkdownEditorResource.inlineHTML(
+            indexHTML: """
+            <html>
+              <body>
+                <main id="editor"></main>
+                <script src="editor.js"></script>
+              </body>
+            </html>
+            """,
+            editorJavaScript: "window.editor = {}; console.log('</script>');"
+        )
+
+        #expect(!html.contains(#"<script src="editor.js"></script>"#))
+        #expect(html.contains("window.editor = {};"))
+        #expect(html.contains("<\\/script>"))
+    }
+
+    @MainActor
+    @Test func markdownEditorBundledHTMLInitializesInWKWebViewAndRoundTripsMarkdown() async throws {
+        let html = try MarkdownEditorResource.bundledHTML()
+        let messageHandler = MarkdownEditorReadyMessageHandler()
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.userContentController.add(messageHandler, name: "editor")
+        defer {
+            configuration.userContentController.removeScriptMessageHandler(forName: "editor")
+        }
+
+        let webView = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 480),
+            configuration: configuration
+        )
+        webView.loadHTMLString(html, baseURL: nil)
+
+        let deadline = Date().addingTimeInterval(3)
+        while !messageHandler.isReady && messageHandler.errorMessage == nil && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(messageHandler.errorMessage == nil)
+        #expect(messageHandler.isReady)
+
+        let markdown = "# Inbox\n\n- [ ] visible content"
+        try await webView.evaluateJavaScript("window.editor.setMarkdown(\(javaScriptStringLiteral(markdown)));")
+        let result = try await webView.evaluateJavaScript("window.editor.getMarkdown();") as? String
+
+        #expect(result == markdown)
+
+        let blankAreaClickMovedCursorToDocumentEnd = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              window.editor.setSelection(0);
+              const handled = window.editor.simulateBlankAreaMouseDownForTests();
+              const after = window.editor.getSelection();
+              return handled === true &&
+                after.head === after.docLength &&
+                after.anchor === after.docLength;
+            })();
+            """
+        ) as? Bool
+
+        #expect(blankAreaClickMovedCursorToDocumentEnd == true)
+
+        let editorPresentationJSON = try #require(try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const source = "# One\\n## Two\\n### Heading\\n\\n- [ ] Task\\n- [x] Done\\n- Plain";
+              window.editor.setMarkdown(source);
+              window.editor.setSelection(source.length);
+              const inactiveText = window.editor.visibleTextForTests();
+              const checkboxCount = window.editor.taskCheckboxCountForTests();
+              const bulletCount = window.editor.bulletMarkerCountForTests();
+              const colors = window.editor.textColorsForTests();
+              const styles = window.editor.presentationStylesForTests();
+              const checkboxToken = source.indexOf("[ ]");
+              window.editor.setSelection(checkboxToken);
+              const activeCheckboxText = window.editor.visibleTextForTests();
+              window.editor.setSelection(source.indexOf("Task"));
+              const checkboxSpacerText = window.editor.visibleTextForTests();
+              const checkboxSpacerCount = window.editor.taskCheckboxCountForTests();
+              const bulletToken = source.indexOf("- Plain");
+              window.editor.setSelection(bulletToken + 1);
+              const activeBulletText = window.editor.visibleTextForTests();
+              window.editor.setSelection(bulletToken + 2);
+              const bulletSpacerText = window.editor.visibleTextForTests();
+              const bulletSpacerCount = window.editor.bulletMarkerCountForTests();
+              window.editor.setSelection(source.indexOf("###") + 4);
+              const activeHeadingText = window.editor.visibleTextForTests();
+              window.editor.selectAllForTests();
+              const selectAllText = window.editor.visibleTextForTests();
+              window.editor.setSelection(source.length);
+              const checkboxAlignment = window.editor.taskCheckboxAlignmentForTests();
+              const checkboxToggle = window.editor.firstTaskCheckboxMetricsForTests();
+              return JSON.stringify({
+                inactiveText,
+                activeCheckboxText,
+                checkboxSpacerText,
+                checkboxSpacerCount,
+                activeBulletText,
+                bulletSpacerText,
+                bulletSpacerCount,
+                activeHeadingText,
+                selectAllText,
+                checkboxCount,
+                bulletCount,
+                colors,
+                styles,
+                checkboxAlignment,
+                checkboxToggle
+              });
+            })();
+            """
+        ) as? String)
+        let editorPresentationData = try #require(editorPresentationJSON.data(using: .utf8))
+        let editorPresentation = try #require(
+            JSONSerialization.jsonObject(with: editorPresentationData) as? [String: Any]
+        )
+        let inactiveText = try #require(editorPresentation["inactiveText"] as? String)
+        let activeCheckboxText = try #require(editorPresentation["activeCheckboxText"] as? String)
+        let checkboxSpacerText = try #require(editorPresentation["checkboxSpacerText"] as? String)
+        let checkboxSpacerCount = try #require(editorPresentation["checkboxSpacerCount"] as? Int)
+        let activeBulletText = try #require(editorPresentation["activeBulletText"] as? String)
+        let bulletSpacerText = try #require(editorPresentation["bulletSpacerText"] as? String)
+        let bulletSpacerCount = try #require(editorPresentation["bulletSpacerCount"] as? Int)
+        let activeHeadingText = try #require(editorPresentation["activeHeadingText"] as? String)
+        let selectAllText = try #require(editorPresentation["selectAllText"] as? String)
+        let checkboxCount = try #require(editorPresentation["checkboxCount"] as? Int)
+        let bulletCount = try #require(editorPresentation["bulletCount"] as? Int)
+        let colors = try #require(editorPresentation["colors"] as? [String])
+        let styles = try #require(editorPresentation["styles"] as? [String: Any])
+        let checkboxStyles = try #require(styles["checkbox"] as? [String: String])
+        let bulletStyles = try #require(styles["bullet"] as? [String: String])
+        let headingLines = try #require(styles["headingLines"] as? [[String: Any]])
+        let checkboxAlignment = try #require(editorPresentation["checkboxAlignment"] as? [[String: Any]])
+        let checkboxToggle = try #require(editorPresentation["checkboxToggle"] as? [String: Any])
+        let toggleBefore = try #require(checkboxToggle["before"] as? [String: Int])
+        let toggleAfter = try #require(checkboxToggle["after"] as? [String: Int])
+        let toggledMarkdown = try #require(checkboxToggle["markdown"] as? String)
+        let scrollerLineHeight = try #require(styles["scrollerLineHeight"] as? String)
+        let headingFontSizes = headingLines.compactMap { line -> Double? in
+            guard let fontSize = line["fontSize"] as? String else { return nil }
+            return Double(fontSize.replacingOccurrences(of: "px", with: ""))
+        }
+        let headingFontWeights = headingLines.compactMap { line -> Double? in
+            guard let fontWeight = line["fontWeight"] as? String else { return nil }
+            return Double(fontWeight)
+        }
+
+        #expect(inactiveText.contains("Heading"))
+        #expect(!inactiveText.contains("###"))
+        #expect(!inactiveText.contains("- [ ]"))
+        #expect(!inactiveText.contains("- Plain"))
+        #expect(activeCheckboxText.contains("[ ] Task"))
+        #expect(!checkboxSpacerText.contains("[ ]"))
+        #expect(checkboxSpacerCount == 2)
+        #expect(activeBulletText.contains("- Plain"))
+        #expect(!bulletSpacerText.contains("- Plain"))
+        #expect(bulletSpacerCount == 1)
+        #expect(activeHeadingText.contains("### Heading"))
+        #expect(selectAllText.contains("### Heading"))
+        #expect(selectAllText.contains("- Plain"))
+        #expect(checkboxCount == 2)
+        #expect(bulletCount == 1)
+        #expect(colors.allSatisfy { $0 == "rgb(255, 255, 255)" })
+        #expect(checkboxStyles["borderColor"] == "rgb(255, 255, 255)")
+        #expect(checkboxStyles["display"] == "inline-flex")
+        #expect(checkboxStyles["alignItems"] == "center")
+        #expect(checkboxStyles["justifyContent"] == "center")
+        #expect(bulletStyles["text"] == "\u{2022}")
+        #expect(bulletStyles["color"] == "rgb(255, 255, 255)")
+        #expect(bulletStyles["display"] == "inline-flex")
+        #expect(Double(scrollerLineHeight.replacingOccurrences(of: "px", with: "")) ?? 0 > 24)
+        #expect(headingFontSizes.count == 3)
+        #expect(headingFontSizes[0] > headingFontSizes[1])
+        #expect(headingFontSizes[1] > headingFontSizes[2])
+        #expect(headingFontSizes[2] > 18)
+        #expect(headingFontWeights.count == 3)
+        #expect(headingFontWeights[0] > headingFontWeights[1])
+        #expect(headingFontWeights[1] > headingFontWeights[2])
+        #expect(headingFontWeights[2] >= 700)
+        let uncheckedCheckbox = try #require(checkboxAlignment.first { ($0["checked"] as? Bool) == false })
+        let checkedCheckbox = try #require(checkboxAlignment.first { ($0["checked"] as? Bool) == true })
+        let uncheckedWidth = try #require(uncheckedCheckbox["width"] as? Double)
+        let checkedWidth = try #require(checkedCheckbox["width"] as? Double)
+        let uncheckedHeight = try #require(uncheckedCheckbox["height"] as? Double)
+        let checkedHeight = try #require(checkedCheckbox["height"] as? Double)
+        let uncheckedCenterDelta = try #require(uncheckedCheckbox["centerDelta"] as? Double)
+        let checkedCenterDelta = try #require(checkedCheckbox["centerDelta"] as? Double)
+        let uncheckedTopWithinLine = try #require(uncheckedCheckbox["topWithinLine"] as? Double)
+        let checkedTopWithinLine = try #require(checkedCheckbox["topWithinLine"] as? Double)
+        #expect(abs(uncheckedWidth - checkedWidth) < 0.5)
+        #expect(abs(uncheckedHeight - checkedHeight) < 0.5)
+        #expect(abs(uncheckedCenterDelta - checkedCenterDelta) < 0.5)
+        #expect(abs(uncheckedTopWithinLine - checkedTopWithinLine) < 0.5)
+        #expect(toggleBefore == toggleAfter)
+        #expect(toggledMarkdown == "# One\n## Two\n### Heading\n\n- [x] Task\n- [x] Done\n- Plain")
+    }
+
+    @MainActor
+    @Test func markdownEditorHandlesListIndentationKeysInWebView() async throws {
+        let html = try MarkdownEditorResource.bundledHTML()
+        let messageHandler = MarkdownEditorReadyMessageHandler()
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.userContentController.add(messageHandler, name: "editor")
+        defer {
+            configuration.userContentController.removeScriptMessageHandler(forName: "editor")
+        }
+
+        let webView = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 480),
+            configuration: configuration
+        )
+        webView.loadHTMLString(html, baseURL: nil)
+
+        let deadline = Date().addingTimeInterval(3)
+        while !messageHandler.isReady && messageHandler.errorMessage == nil && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(messageHandler.errorMessage == nil)
+        #expect(messageHandler.isReady)
+
+        let indentationJSON = try #require(try await webView.evaluateJavaScript(
+            """
+            (() => {
+              window.editor.setMarkdown("- Item");
+              window.editor.setSelection(6);
+              const tabHandled = window.editor.dispatchKeyForTests("Tab");
+              const afterTab = window.editor.getMarkdown();
+
+              window.editor.setSelection(afterTab.length);
+              const enterHandled = window.editor.dispatchKeyForTests("Enter");
+              const afterEnter = window.editor.getMarkdown();
+
+              window.editor.setMarkdown("  - Item");
+              window.editor.setSelection("  - Item".length);
+              const commandShiftTabHandled = window.editor.dispatchKeyForTests("Tab", {
+                metaKey: true,
+                shiftKey: true
+              });
+              const afterCommandShiftTab = window.editor.getMarkdown();
+
+              window.editor.setMarkdown("    - ");
+              window.editor.setSelection("    - ".length);
+              const backspaceHandled = window.editor.dispatchKeyForTests("Backspace");
+              const afterBackspace = window.editor.getMarkdown();
+
+              return JSON.stringify({
+                tabHandled,
+                afterTab,
+                enterHandled,
+                afterEnter,
+                commandShiftTabHandled,
+                afterCommandShiftTab,
+                backspaceHandled,
+                afterBackspace
+              });
+            })();
+            """
+        ) as? String)
+        let indentationData = try #require(indentationJSON.data(using: .utf8))
+        let indentation = try #require(
+            JSONSerialization.jsonObject(with: indentationData) as? [String: Any]
+        )
+
+        #expect(indentation["tabHandled"] as? Bool == true)
+        #expect(indentation["afterTab"] as? String == "  - Item")
+        #expect(indentation["enterHandled"] as? Bool == true)
+        #expect(indentation["afterEnter"] as? String == "  - Item\n  - ")
+        #expect(indentation["commandShiftTabHandled"] as? Bool == true)
+        #expect(indentation["afterCommandShiftTab"] as? String == "- Item")
+        #expect(indentation["backspaceHandled"] as? Bool == true)
+        #expect(indentation["afterBackspace"] as? String == "  - ")
+    }
+
     @MainActor
     @Test func titleFieldReturnCommitsAndRequestsEditorFocus() async throws {
         var title = "Old Title"
@@ -1224,6 +2006,58 @@ struct ObsidianSideNoteTests {
         )
 
         #expect(handled)
+        #expect(title == "New Title")
+        #expect(textField.stringValue == "New Title")
+        try await Task.sleep(nanoseconds: 1_000_000)
+        #expect(didCommit)
+    }
+
+    @MainActor
+    @Test func titleFieldReturnIgnoringFieldEditorCommitsAndRequestsEditorFocus() async throws {
+        var title = "Old Title"
+        var didCommit = false
+        let binding = Binding<String>(
+            get: { title },
+            set: { title = $0 }
+        )
+        let coordinator = SelectAllOnFocusTextField.Coordinator(text: binding)
+        coordinator.onCommit = { _ in
+            didCommit = true
+        }
+        let textField = NSTextField()
+        let fieldEditor = NSTextView()
+        fieldEditor.string = "New Title"
+
+        let handled = coordinator.control(
+            textField,
+            textView: fieldEditor,
+            doCommandBy: #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:))
+        )
+
+        #expect(handled)
+        #expect(title == "New Title")
+        #expect(textField.stringValue == "New Title")
+        try await Task.sleep(nanoseconds: 1_000_000)
+        #expect(didCommit)
+    }
+
+    @MainActor
+    @Test func titleFieldDirectReturnKeyCommitsAndRequestsEditorFocus() async throws {
+        var title = "Old Title"
+        var didCommit = false
+        let binding = Binding<String>(
+            get: { title },
+            set: { title = $0 }
+        )
+        let coordinator = SelectAllOnFocusTextField.Coordinator(text: binding)
+        coordinator.onCommit = { _ in
+            didCommit = true
+        }
+        let textField = ReturnCommittingTextField()
+        textField.stringValue = "New Title"
+
+        coordinator.commitReturn(from: textField)
+
         #expect(title == "New Title")
         #expect(textField.stringValue == "New Title")
         try await Task.sleep(nanoseconds: 1_000_000)
@@ -1354,6 +2188,35 @@ private func pngData(from image: NSImage) -> Data? {
     }
 
     return bitmap.representation(using: .png, properties: [:])
+}
+
+private func javaScriptStringLiteral(_ string: String) -> String {
+    let data = try? JSONSerialization.data(withJSONObject: [string])
+    guard var literal = data.flatMap({ String(data: $0, encoding: .utf8) }) else {
+        return "\"\""
+    }
+
+    literal.removeFirst()
+    literal.removeLast()
+    return literal
+}
+
+private final class MarkdownEditorReadyMessageHandler: NSObject, WKScriptMessageHandler {
+    var isReady = false
+    var errorMessage: String?
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any],
+              let type = body["type"] as? String else {
+            return
+        }
+
+        if type == "ready" {
+            isReady = true
+        } else if type == "error" {
+            errorMessage = body["message"] as? String ?? "Unknown editor error"
+        }
+    }
 }
 
 private func downloadRemoteMedia(maxBytes: Int) throws -> (data: Data?, response: URLResponse?) {

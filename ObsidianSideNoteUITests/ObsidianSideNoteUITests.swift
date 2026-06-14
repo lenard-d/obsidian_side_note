@@ -25,7 +25,7 @@ final class ObsidianSideNoteUITests: XCTestCase {
     @MainActor
     func testExample() throws {
         // UI tests must launch the application that they test.
-        let app = XCUIApplication()
+        let app = testApplication()
         app.launch()
 
         // Use XCTAssert and related functions to verify your tests produce the correct results.
@@ -34,11 +34,75 @@ final class ObsidianSideNoteUITests: XCTestCase {
     @MainActor
     func testRepeatedLaunchesDoNotCrash() throws {
         for _ in 0..<3 {
-            let app = XCUIApplication()
+            let app = testApplication()
             app.launch()
             XCTAssertTrue(waitUntilRunning(app))
             app.terminate()
         }
+    }
+
+    @MainActor
+    func testEditVaultShortcutLoadsContentAndAcceptsTyping() throws {
+        try XCTSkipIf(
+            ProcessInfo.processInfo.environment["OSN_ENABLE_FLOATING_WINDOW_UI_TEST"] != "1",
+            "Floating-window global-shortcut automation is opt-in because XCUI does not reliably expose the accessory window in this test session."
+        )
+
+        let bundleIdentifier = "live.lukesmith.ObsidianSideNote"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: bundleIdentifier))
+        let originalDefaults = defaults.persistentDomain(forName: bundleIdentifier)
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ObsidianSideNoteUITests-\(UUID().uuidString)", isDirectory: true)
+        let vaultURL = temporaryDirectory.appendingPathComponent("Vault", isDirectory: true)
+        let noteDirectory = vaultURL.appendingPathComponent("Inbox", isDirectory: true)
+        let noteURL = noteDirectory.appendingPathComponent("Existing.md")
+        let configURL = temporaryDirectory.appendingPathComponent("config.json")
+        let noteText = "# Existing\n\nVisible UI test content."
+
+        try FileManager.default.createDirectory(at: noteDirectory, withIntermediateDirectories: true)
+        try noteText.write(to: noteURL, atomically: true, encoding: .utf8)
+        defer {
+            if let originalDefaults {
+                defaults.setPersistentDomain(originalDefaults, forName: bundleIdentifier)
+            } else {
+                defaults.removePersistentDomain(forName: bundleIdentifier)
+            }
+            defaults.synchronize()
+            try? FileManager.default.removeItem(at: temporaryDirectory)
+        }
+
+        let app = testApplication()
+        app.launchEnvironment["OSN_TEST_CONFIG_URL"] = configURL.path
+        app.launchEnvironment["OSN_TEST_VAULT_PATH"] = vaultURL.path
+        app.launchEnvironment["OSN_TEST_EDIT_FILE_PATH"] = "Inbox/Existing.md"
+        app.launch()
+        defer {
+            app.terminate()
+        }
+
+        XCTAssertTrue(waitUntilRunning(app))
+        app.typeKey("v", modifierFlags: [.command, .option, .control])
+
+        let title = app.staticTexts["Edit Vault File"]
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+
+        let searchField = app.textFields.firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 4))
+        XCTAssertEqual(searchField.value as? String, "Inbox/Existing.md")
+
+        let editor = app.textViews.firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 4))
+        XCTAssertTrue((editor.value as? String)?.contains("Visible UI test content.") == true)
+
+        app.typeText("OSN_UI_TEST")
+        XCTAssertTrue((editor.value as? String)?.contains("OSN_UI_TEST") == true)
+        app.typeKey("z", modifierFlags: .command)
+    }
+
+    private func testApplication() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments.append("--uitesting")
+        return app
     }
 
     private func waitUntilRunning(_ app: XCUIApplication, timeout: TimeInterval = 5) -> Bool {
