@@ -19,7 +19,10 @@ Obsidian Side Note opens a compact floating editor from the menu bar or a global
 - Autosaves new notes and edits to existing vault files.
 - Avoids empty files: a title-only draft stays local until the note has body text.
 - Searches Markdown files by title or vault-relative path.
+- Shows Edit Vault File results in a scrollable overlay without shrinking the editor.
+- Watches the open note file and reloads external Obsidian edits before the next autosave.
 - Renders Markdown preview, Obsidian wikilinks, images, videos, and embeds.
+- Uses a bundled CodeMirror editor for source-preserving Markdown editing, list indentation, task checkboxes, bullet markers, and heading styling.
 - Copies pasted or dropped media into the vault attachment folder when configured.
 - Keeps Settings and Quit local so the app does not steal normal shortcuts from other apps.
 
@@ -27,6 +30,7 @@ Obsidian Side Note opens a compact floating editor from the menu bar or a global
 
 - macOS compatible with the project target.
 - Xcode 26 or newer for local builds.
+- Node.js and npm for local builds of the bundled CodeMirror editor.
 - Obsidian for Daily Note creation and "Open in Obsidian" behavior.
 - A local Obsidian vault folder.
 - The Obsidian Daily notes core plugin for Daily Note workflows.
@@ -36,7 +40,7 @@ The app is built with SwiftUI, AppKit, Carbon global hotkeys, AVKit, and [swift-
 
 ## Installation
 
-Download a release `.dmg` from [GitHub Releases](https://github.com/lenard-d/obsidian_side_note/releases), open it, and drag `ObsidianSideNote.app` into `/Applications`.
+Download a release `.zip` from [GitHub Releases](https://github.com/lenard-d/obsidian_side_note/releases), unzip it, and drag `ObsidianSideNote.app` into `/Applications`.
 
 Release builds may not be notarized yet. If macOS blocks the first launch:
 
@@ -52,18 +56,10 @@ xattr -dr com.apple.quarantine /Applications/ObsidianSideNote.app
 open /Applications/ObsidianSideNote.app
 ```
 
-For a local build:
+For a local build and install:
 
 ```bash
-xcodebuild \
-  -project ObsidianSideNote.xcodeproj \
-  -scheme ObsidianSideNote \
-  -configuration Release \
-  -derivedDataPath build/DerivedData \
-  build
-
-cp -R build/DerivedData/Build/Products/Release/ObsidianSideNote.app /Applications/
-open /Applications/ObsidianSideNote.app
+script/build_and_run.sh run
 ```
 
 More setup notes are in [docs/INSTALLATION.md](docs/INSTALLATION.md).
@@ -78,7 +74,7 @@ More setup notes are in [docs/INSTALLATION.md](docs/INSTALLATION.md).
 6. Review the default keyboard shortcuts.
 7. Choose how long New Note drafts should be resumed.
 
-The selected vault is stored as a security-scoped bookmark so the sandboxed app can keep access across launches.
+The selected vault is stored in app configuration so the menu bar app can keep access across launches.
 
 ## Usage
 
@@ -107,7 +103,9 @@ Reopening New Note from the menu can resume the current draft within the configu
 
 ### Existing Notes
 
-Choose `Edit Vault File`, type part of a note title or path, and select a result with the mouse, arrow keys, Tab, or Return. Edits save back to the Markdown file immediately.
+Choose `Edit Vault File`, type part of a note title or path, and select a result with the mouse, arrow keys, Tab, or Return. The result list is scrollable and overlays the editor instead of moving the layout. Edits save back to the Markdown file immediately.
+
+If the same file changes in Obsidian while it is open in Side Note, the editor reloads the disk version and cancels stale pending autosaves.
 
 ### Media And Links
 
@@ -133,6 +131,18 @@ Open the project:
 
 ```bash
 open ObsidianSideNote.xcodeproj
+```
+
+Install JavaScript editor dependencies once:
+
+```bash
+npm --prefix EditorWeb install
+```
+
+Build the embedded editor bundle:
+
+```bash
+npm --prefix EditorWeb run build
 ```
 
 Run unit tests:
@@ -169,6 +179,11 @@ ObsidianSideNote/
   Stores/       UserDefaults preferences, vault access, and file persistence.
   Support/      AppKit and SwiftUI integration helpers.
   Views/        Settings, setup, editor chrome, Markdown editor, and preview UI.
+  MarkdownEditor/
+                Bundled HTML and generated JavaScript for the WKWebView editor.
+
+EditorWeb/
+  src/          Source for the bundled CodeMirror editor.
 
 ObsidianSideNoteTests/
   Unit tests for vault behavior, shortcuts, URIs, drafts, search, and media parsing.
@@ -178,10 +193,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the internal design notes.
 
 ## Status
 
-Obsidian Side Note is usable, but still evolving. Known next steps:
+Obsidian Side Note 2.0 is usable, but still evolving. Known next steps:
 
 - Developer ID signing and notarization.
-- Built-in launch-at-login management.
 - Window size and position preferences.
 - Multiple vault support.
 - Note templates.

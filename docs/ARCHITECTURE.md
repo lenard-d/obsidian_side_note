@@ -72,6 +72,7 @@ Store types are static because the app currently has a single active vault and a
 - `GlobalHotKeyManager`: registers configured note-workflow shortcuts as global Carbon hotkeys.
 - `MediaAttachmentImporter`: normalizes paste/drop/import sources for local files, pasteboard images, remote media URLs, and media size/content-type checks.
 - `RemoteMediaDownloader`: downloads remote media with an explicit byte limit.
+- `VaultNoteFileMonitor`: watches the active Markdown file for external writes and atomic replacements so edits made in Obsidian can update the open Side Note editor.
 - `ObsidianURIBuilder`: builds Obsidian URIs for opening daily notes and files in Obsidian.
 - `AppLogger`: central OSLog categories.
 
@@ -89,10 +90,9 @@ The global shortcut layer deliberately follows the pattern used by established l
 - `SetupView`: first-run setup and diagnostic checklist.
 - `KeyboardShortcutRow`: shortcut recorder UI.
 - `MarkdownEditorView`: Markdown toolbar, rich text editor shell, and paste/drop handling.
-- `RichMarkdownEditorView`: AppKit/STTextView bridge that renders source-preserving Markdown attributes, handles focus, media preloading, paste/drop callbacks, and coordinates editor commands.
-- `MediaTextView`: STTextView subclass for media paste/drop routing, Markdown shortcut routing, list-editing command routing, scrolling, and task-checkbox hit testing.
-- `MarkdownEditingEngine`: pure Markdown editing rules for list markers, task toggles, smart Return behavior, and list indent/outdent.
-- `MarkdownEditorTextRenderer`: source-preserving Markdown-to-attributed-text renderer. It styles the exact Markdown string held by the editor instead of replacing syntax with shorter display text, so native selection, arrow navigation, undo, and click handling operate on the same offsets that are written to disk.
+- `RichMarkdownEditorView`: WKWebView bridge for the editable Markdown surface. SwiftUI owns the Markdown string and focus requests; the embedded CodeMirror editor owns text editing, selection, command application, task-checkbox widgets, bullet-marker widgets, heading line styling, and Markdown key handling.
+- `MarkdownEditor/`: bundled HTML and generated CodeMirror JavaScript loaded by the WKWebView editor.
+- `MediaTextView`, `MarkdownEditingEngine`, and `MarkdownEditorTextRenderer`: legacy/native editor helpers retained for existing regression coverage and markdown behavior references while the production editor runs through WKWebView.
 - `RichMarkdownView`: Markdown rendering plus line-level image/video embed rendering.
 - `NoteEditorChrome`: shared header, search panel, and missing-vault prompt.
 
@@ -106,19 +106,22 @@ New Note mode:
 2. No file is created while the body is empty.
 3. Once the body has content, `VaultStore.createOrUpdateNote` creates the Markdown file.
 4. Subsequent body changes write to the same created note.
+5. Once a note file exists, the active file is watched while open. External writes from Obsidian reload the editor text and cancel any pending stale autosave.
 
 Edit Vault File mode:
 
 1. Search returns `VaultNote` values from the selected vault.
 2. Selecting a note loads its current Markdown text.
 3. Editor changes write back to that file immediately.
+4. The selected file is watched while open. External writes from Obsidian reload the editor text and cancel any pending stale autosave.
 
 Append to Daily Note mode:
 
 1. The editor resolves today's daily note from Obsidian's Daily Notes settings.
 2. If the file is missing, the app creates it directly in the configured daily-note folder and applies the configured template when available.
 3. Editor changes autosave directly to that Markdown file.
-4. Opening the daily note in Obsidian is a separate command.
+4. The daily note file is watched while open, so external Obsidian edits are pulled into the editor before subsequent Side Note autosaves.
+5. Opening the daily note in Obsidian is a separate command.
 
 ## Media Handling
 
@@ -129,12 +132,13 @@ Paste and drag-and-drop handling live in `MarkdownEditorView` and are normalized
 - Remote media URLs are accepted only for supported extensions, bounded to 25 MB, and rejected when an explicit `Content-Type` is not an image/video match.
 - Files are stored in Obsidian's configured attachment folder when it is a safe vault-relative path, otherwise in the vault root.
 - The editor inserts a Markdown embed pointing at the vault-relative attachment path.
-- Plain text paste is left to the native text editor.
+- Plain text paste is left to CodeMirror/WKWebView. Media paste/drop is detected by the WebKit bridge and routed through `MediaAttachmentImporter`.
 
-Read-only preview rendering lives in `RichMarkdownView`; the main editor surface uses `RichMarkdownEditorView` and `MarkdownEditorTextRenderer`.
+Read-only preview rendering lives in `RichMarkdownView`; the main editor surface uses `RichMarkdownEditorView` and the bundled CodeMirror editor.
 
-- The editable editor intentionally keeps the raw Markdown string as the text storage string.
-- Markdown styling is applied as attributes only. Task checkbox hit testing marks the `[ ]` / `[x]` range with an attribute, but does not replace it with an attachment.
+- The editable editor intentionally keeps the raw Markdown string as the CodeMirror document.
+- Task checkboxes are rendered as CodeMirror replacement widgets over the `[ ]` / `[x]` marker. The marker remains in the document source, and CodeMirror maps cursor/selection through the widget range.
+- When the cursor is adjacent to the checkbox marker, the raw marker is revealed so source editing remains predictable without turning the whole task line back into text.
 - Rendered image/video embeds belong to the read-only preview path. The editable surface keeps embed Markdown as normal text to avoid cursor and source-offset drift.
 - Markdown text is rendered through `swift-markdown-ui`.
 - Embed lines such as `![Title](path-or-url)` are rendered as images or videos when their extension is supported.
@@ -156,7 +160,8 @@ Read-only preview rendering lives in `RichMarkdownView`; the main editor surface
 - Relative vault media URL resolution.
 - Vault-relative path traversal rejection for Markdown links and Obsidian-configured folders.
 - Remote media byte-limit and content-type checks.
-- Rich Markdown editor rendering, command application, task-list toggling, smart list editing, and media preload behavior.
+- Two-way active-note sync, including New Note, Edit Vault File, atomic external writes, and cancellation of stale pending autosaves.
+- Rich Markdown editor rendering, command application, heading hierarchy, task-list toggling, bullet-marker presentation, smart list editing, and media preload behavior.
 
 Run:
 

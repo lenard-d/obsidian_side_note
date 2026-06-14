@@ -1,6 +1,9 @@
 build/
 DerivedData/
 dist/
+EditorWeb/node_modules/
+EditorWeb/dist/
+*.profraw
 
 *.xcuserstate
 *.xcscmblueprint
