@@ -36,6 +36,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var localShortcutMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        ShortcutPreference.cleanupObsoleteSettingsShortcutRegistration()
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
         applyUITestingLaunchOverridesIfNeeded()
         AppConfigStore.restorePersistedSettingsIfNeeded()
@@ -323,6 +324,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func applyShortcutPreferences() {
+        ShortcutPreference.cleanupObsoleteSettingsShortcutRegistration()
         appendMenuItem?.removeShortcut()
         newNoteMenuItem?.removeShortcut()
         editFileMenuItem?.removeShortcut()

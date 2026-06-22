@@ -1751,20 +1751,24 @@ struct ObsidianSideNoteTests {
         #expect(ShortcutAction.settings.globalShortcutName == nil)
     }
 
-    @Test func localSettingsShortcutStillHasRecorderName() {
+    @Test func localSettingsShortcutDoesNotUseGlobalRecorderName() {
         #expect(!ShortcutAction.settings.isGlobal)
         #expect(ShortcutAction.settings.globalShortcutName == nil)
-        #expect(ShortcutAction.settings.recorderShortcutName == .settings)
+        #expect(ShortcutAction.settings.recorderShortcutName == nil)
     }
 
     @Test func settingsShortcutRestoresAsLocalAppShortcutOnly() {
+        let settingsName = KeyboardShortcuts.Name("settings")
+        let openSettingsName = KeyboardShortcuts.Name("openSettings")
         UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.preferenceKey)
         UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.modifierPreferenceKey)
-        KeyboardShortcuts.reset(.settings)
+        KeyboardShortcuts.setShortcut(nil, for: settingsName)
+        KeyboardShortcuts.setShortcut(nil, for: openSettingsName)
         defer {
             UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.preferenceKey)
             UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.modifierPreferenceKey)
-            KeyboardShortcuts.reset(.settings)
+            KeyboardShortcuts.setShortcut(nil, for: settingsName)
+            KeyboardShortcuts.setShortcut(nil, for: openSettingsName)
         }
 
         ShortcutPreference.restore(
@@ -1775,51 +1779,81 @@ struct ObsidianSideNoteTests {
         let shortcut = ShortcutPreference.definition(for: .settings)
         #expect(shortcut.key == ",")
         #expect(shortcut.modifiers == .command)
+        #expect(KeyboardShortcuts.getShortcut(for: settingsName) == nil)
+        #expect(KeyboardShortcuts.getShortcut(for: openSettingsName) == nil)
     }
 
     @MainActor
-    @Test func settingsShortcutChangesUpdateLocalPreferenceAndRecorder() {
+    @Test func settingsShortcutChangesUpdateLocalPreferenceOnly() {
+        let settingsName = KeyboardShortcuts.Name("settings")
+        let openSettingsName = KeyboardShortcuts.Name("openSettings")
         UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.preferenceKey)
         UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.modifierPreferenceKey)
-        KeyboardShortcuts.reset(.settings)
+        KeyboardShortcuts.setShortcut(nil, for: settingsName)
+        KeyboardShortcuts.setShortcut(nil, for: openSettingsName)
         defer {
             UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.preferenceKey)
             UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.modifierPreferenceKey)
-            KeyboardShortcuts.reset(.settings)
+            KeyboardShortcuts.setShortcut(nil, for: settingsName)
+            KeyboardShortcuts.setShortcut(nil, for: openSettingsName)
         }
 
         ShortcutPreference.set("s", modifiers: [.command, .shift], for: .settings)
 
         let shortcut = ShortcutPreference.definition(for: .settings)
-        let recorderShortcut = KeyboardShortcuts.getShortcut(for: .settings)
         #expect(shortcut.key == "s")
         #expect(shortcut.modifiers == [.command, .shift])
-        #expect(recorderShortcut?.carbonKeyCode == GlobalHotKeyManager.keyCode(for: "s"))
-        #expect(ShortcutPreference.menuModifierFlags(from: recorderShortcut?.modifiers ?? []) == [.command, .shift])
+        #expect(KeyboardShortcuts.getShortcut(for: settingsName) == nil)
+        #expect(KeyboardShortcuts.getShortcut(for: openSettingsName) == nil)
         #expect(ShortcutAction.settings.globalShortcutName == nil)
     }
 
     @MainActor
-    @Test func localSettingsShortcutMigratesToRecorderBeforeUsingDefault() {
+    @Test func localSettingsShortcutReadsLegacyLocalValueWithoutRecorderMigration() {
+        let settingsName = KeyboardShortcuts.Name("settings")
+        let openSettingsName = KeyboardShortcuts.Name("openSettings")
         UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.preferenceKey)
         UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.modifierPreferenceKey)
-        KeyboardShortcuts.reset(.settings)
+        KeyboardShortcuts.setShortcut(nil, for: settingsName)
+        KeyboardShortcuts.setShortcut(nil, for: openSettingsName)
         defer {
             UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.preferenceKey)
             UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.modifierPreferenceKey)
-            KeyboardShortcuts.reset(.settings)
+            KeyboardShortcuts.setShortcut(nil, for: settingsName)
+            KeyboardShortcuts.setShortcut(nil, for: openSettingsName)
         }
 
         UserDefaults.standard.set("s", forKey: ShortcutAction.settings.preferenceKey)
         UserDefaults.standard.set(1 << 0 | 1 << 3, forKey: ShortcutAction.settings.modifierPreferenceKey)
 
         let shortcut = ShortcutPreference.definition(for: .settings)
-        let recorderShortcut = KeyboardShortcuts.getShortcut(for: .settings)
 
         #expect(shortcut.key == "s")
         #expect(shortcut.modifiers == [.command, .shift])
-        #expect(recorderShortcut?.carbonKeyCode == GlobalHotKeyManager.keyCode(for: "s"))
-        #expect(ShortcutPreference.menuModifierFlags(from: recorderShortcut?.modifiers ?? []) == [.command, .shift])
+        #expect(KeyboardShortcuts.getShortcut(for: settingsName) == nil)
+        #expect(KeyboardShortcuts.getShortcut(for: openSettingsName) == nil)
+    }
+
+    @Test func obsoleteGlobalSettingsShortcutsAreCleared() {
+        let settingsName = KeyboardShortcuts.Name("settings")
+        let openSettingsName = KeyboardShortcuts.Name("openSettings")
+        KeyboardShortcuts.setShortcut(
+            ShortcutPreference.keyboardShortcut(key: ",", modifiers: .command),
+            for: settingsName
+        )
+        KeyboardShortcuts.setShortcut(
+            ShortcutPreference.keyboardShortcut(key: ",", modifiers: .command),
+            for: openSettingsName
+        )
+        defer {
+            KeyboardShortcuts.setShortcut(nil, for: settingsName)
+            KeyboardShortcuts.setShortcut(nil, for: openSettingsName)
+        }
+
+        ShortcutPreference.cleanupObsoleteSettingsShortcutRegistration()
+
+        #expect(KeyboardShortcuts.getShortcut(for: settingsName) == nil)
+        #expect(KeyboardShortcuts.getShortcut(for: openSettingsName) == nil)
     }
 
     @Test func globalShortcutsUseRequestedDefaultKeys() {

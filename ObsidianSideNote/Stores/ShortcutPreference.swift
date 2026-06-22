@@ -25,13 +25,14 @@ struct ShortcutPreference {
     }
 
     static func definition(for action: ShortcutAction) -> ShortcutDefinition {
-        let shortcutName = action.recorderShortcutName
+        guard let shortcutName = action.globalShortcutName else {
+            cleanupObsoleteSettingsShortcutRegistration()
+            return localDefinition(for: action)
+        }
+
         migrateLegacyShortcutIfNeeded(for: action, shortcutName: shortcutName)
 
         guard let shortcut = KeyboardShortcuts.getShortcut(for: shortcutName) else {
-            if !action.isGlobal {
-                return localDefinition(for: action)
-            }
             return ShortcutDefinition(key: action.defaultKey, modifiers: action.defaultModifiers)
         }
 
@@ -52,10 +53,6 @@ struct ShortcutPreference {
             )
         } else {
             storeLocalDefinition(key: normalizedValue, modifiers: normalizedModifiers, for: action)
-            KeyboardShortcuts.setShortcut(
-                keyboardShortcut(key: normalizedValue, modifiers: normalizedModifiers),
-                for: action.recorderShortcutName
-            )
         }
         AppConfigStore.saveShortcut(action: action, key: normalizedValue, modifiers: normalizedModifiers)
         NotificationCenter.default.post(name: .shortcutPreferencesDidChange, object: nil)
@@ -79,15 +76,30 @@ struct ShortcutPreference {
         }
 
         storeLocalDefinition(key: normalizedValue, modifiers: normalizedModifiers, for: action)
-        syncRecorderShortcut(for: action)
     }
 
     static func syncRecorderShortcut(for action: ShortcutAction) {
+        guard let shortcutName = action.recorderShortcutName else {
+            cleanupObsoleteSettingsShortcutRegistration()
+            return
+        }
+
         let definition = definition(for: action)
         KeyboardShortcuts.setShortcut(
             keyboardShortcut(key: definition.key, modifiers: definition.modifiers),
-            for: action.recorderShortcutName
+            for: shortcutName
         )
+    }
+
+    static func cleanupObsoleteSettingsShortcutRegistration() {
+        let obsoleteNames = ["settings", "openSettings"]
+        for name in obsoleteNames.map({ KeyboardShortcuts.Name($0, default: nil) }) {
+            KeyboardShortcuts.removeHandler(for: name)
+            KeyboardShortcuts.setShortcut(nil, for: name)
+            UserDefaults.standard.removeObject(forKey: "KeyboardShortcuts_\(name.rawValue)")
+        }
+        cleanupLegacySandboxPreferences(keys: obsoleteNames.map { "KeyboardShortcuts_\($0)" })
+        UserDefaults.standard.synchronize()
     }
 
     static func keyboardShortcut(key: String, modifiers: NSEvent.ModifierFlags) -> KeyboardShortcuts.Shortcut? {
@@ -128,7 +140,12 @@ struct ShortcutPreference {
     private static func localDefinition(for action: ShortcutAction) -> ShortcutDefinition {
         let key = UserDefaults.standard.string(forKey: action.preferenceKey) ?? action.defaultKey
         let rawModifiers = UserDefaults.standard.object(forKey: action.modifierPreferenceKey) as? Int
-        let modifiers = rawModifiers.map(legacyModifierFlags(from:)) ?? action.defaultModifiers
+        let modifiers: NSEvent.ModifierFlags
+        if let rawModifiers {
+            modifiers = legacyModifierFlags(from: rawModifiers)
+        } else {
+            modifiers = action.defaultModifiers
+        }
         return ShortcutDefinition(
             key: normalized(key, fallback: action.defaultKey),
             modifiers: menuModifierFlags(from: modifiers)
@@ -148,6 +165,10 @@ struct ShortcutPreference {
     }
 
     private static func migrateLegacyShortcutIfNeeded(for action: ShortcutAction, shortcutName: KeyboardShortcuts.Name) {
+        guard action.isGlobal else {
+            return
+        }
+
         guard UserDefaults.standard.object(forKey: action.preferenceKey) != nil else {
             return
         }
@@ -162,10 +183,8 @@ struct ShortcutPreference {
             KeyboardShortcuts.setShortcut(storedShortcut, for: shortcutName)
         }
 
-        if action.isGlobal {
-            UserDefaults.standard.removeObject(forKey: action.preferenceKey)
-            UserDefaults.standard.removeObject(forKey: action.modifierPreferenceKey)
-        }
+        UserDefaults.standard.removeObject(forKey: action.preferenceKey)
+        UserDefaults.standard.removeObject(forKey: action.modifierPreferenceKey)
     }
 
     private static func legacyRawValue(from modifiers: NSEvent.ModifierFlags) -> Int {
@@ -185,5 +204,27 @@ struct ShortcutPreference {
         if rawValue & (1 << 2) != 0 { modifiers.insert(.control) }
         if rawValue & (1 << 3) != 0 { modifiers.insert(.shift) }
         return modifiers
+    }
+
+    private static func cleanupLegacySandboxPreferences(keys: [String]) {
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "live.lukesmith.ObsidianSideNote"
+        let preferencesURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Containers", isDirectory: true)
+            .appendingPathComponent(bundleIdentifier, isDirectory: true)
+            .appendingPathComponent("Data/Library/Preferences", isDirectory: true)
+            .appendingPathComponent("\(bundleIdentifier).plist")
+        guard let preferences = NSMutableDictionary(contentsOf: preferencesURL) else {
+            return
+        }
+
+        var didChange = false
+        for key in keys where preferences.object(forKey: key) != nil {
+            preferences.removeObject(forKey: key)
+            didChange = true
+        }
+
+        if didChange {
+            preferences.write(to: preferencesURL, atomically: true)
+        }
     }
 }

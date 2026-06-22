@@ -91,14 +91,6 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     }
 
     var globalShortcutName: KeyboardShortcuts.Name? {
-        guard isGlobal else {
-            return nil
-        }
-
-        return recorderShortcutName
-    }
-
-    var recorderShortcutName: KeyboardShortcuts.Name {
         switch self {
         case .appendDaily:
             return .appendDailyNote
@@ -107,8 +99,12 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .editVaultFile:
             return .editVaultFile
         case .settings:
-            return .settings
+            return nil
         }
+    }
+
+    var recorderShortcutName: KeyboardShortcuts.Name? {
+        globalShortcutName
     }
 
     var isGlobal: Bool {
@@ -141,9 +137,5 @@ extension KeyboardShortcuts.Name {
     static let editVaultFile = Self(
         "editVaultFile",
         default: ShortcutPreference.keyboardShortcut(key: "v", modifiers: [.command, .option, .control])
-    )
-    static let settings = Self(
-        "settings",
-        default: ShortcutPreference.keyboardShortcut(key: ",", modifiers: .command)
     )
 }
