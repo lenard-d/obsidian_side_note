@@ -2309,6 +2309,11 @@ struct ObsidianSideNoteTests {
         #expect(shortcut.displayValue == "⌃⌥⌘ Space")
     }
 
+    @Test func spaceShortcutUsesLiteralSpaceForMenuKeyEquivalent() {
+        #expect(ShortcutDefinition(key: "space", modifiers: [.command, .option, .control]).menuKeyEquivalent == " ")
+        #expect(ShortcutDefinition(key: "s", modifiers: [.command, .option, .control]).menuKeyEquivalent == "s")
+    }
+
     @Test func emptyModifierFlagsDoNotBecomeCommandShortcuts() {
         #expect(ShortcutPreference.menuModifierFlags(from: []) == [])
         #expect(ShortcutPreference.menuModifierFlags(from: .command) == .command)
