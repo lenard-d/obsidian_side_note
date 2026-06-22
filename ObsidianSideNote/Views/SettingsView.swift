@@ -29,11 +29,11 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     vaultSection
                     Divider()
-                    appSection
-                    Divider()
                     newNoteSection
                     Divider()
                     shortcutsSection
+                    Divider()
+                    appSection
                 }
                 .padding(16)
             }

@@ -5,7 +5,11 @@ struct ShortcutDefinition: Equatable {
     var modifiers: NSEvent.ModifierFlags
 
     var displayValue: String {
-        "\(ShortcutPreference.displayModifiers(modifiers)) \(key.uppercased())"
+        "\(ShortcutPreference.displayModifiers(modifiers)) \(displayKey)"
             .trimmingCharacters(in: .whitespaces)
+    }
+
+    private var displayKey: String {
+        key == "space" ? "Space" : key.uppercased()
     }
 }

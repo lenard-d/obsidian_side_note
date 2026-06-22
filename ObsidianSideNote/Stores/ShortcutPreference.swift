@@ -4,13 +4,23 @@ import KeyboardShortcuts
 
 struct ShortcutPreference {
     static func normalized(_ value: String, fallback: String = "d") -> String {
-        let trimmedValue = value
+        let valueWithoutModifierSymbols = value
             .replacingOccurrences(of: "⌘", with: "")
             .replacingOccurrences(of: "⌃", with: "")
             .replacingOccurrences(of: "⌥", with: "")
             .replacingOccurrences(of: "⇧", with: "")
+
+        if valueWithoutModifierSymbols == " " {
+            return "space"
+        }
+
+        let trimmedValue = valueWithoutModifierSymbols
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
+        if trimmedValue == "space" {
+            return "space"
+        }
+
         return trimmedValue.first.map(String.init) ?? fallback
     }
 

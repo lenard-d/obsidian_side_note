@@ -18,12 +18,7 @@ struct ObsidianSideNoteApp: App {
             EmptyView()
         }
         .commands {
-            CommandGroup(replacing: .appSettings) {
-                Button("Settings") {
-                    (NSApp.delegate as? AppDelegate)?.openSettings()
-                }
-                .keyboardShortcut(",", modifiers: .command)
-            }
+            CommandGroup(replacing: .appSettings) {}
         }
     }
 }
@@ -344,7 +339,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard NSApp.isActive else { return event }
             guard KeyboardEventRouting.shouldHandleLocalShortcut(event) else { return event }
 
-            if self?.matches(event, action: .settings) == true {
+            if self?.window?.isVisible == true,
+               self?.matches(event, action: .settings) == true {
                 self?.openSettings()
                 return nil
             }

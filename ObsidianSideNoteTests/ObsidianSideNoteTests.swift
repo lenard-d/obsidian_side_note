@@ -1740,6 +1740,8 @@ struct ObsidianSideNoteTests {
         #expect(GlobalHotKeyManager.keyCode(for: "n") == 45)
         #expect(GlobalHotKeyManager.keyCode(for: "v") == 9)
         #expect(GlobalHotKeyManager.keyCode(for: ",") == 43)
+        #expect(GlobalHotKeyManager.keyCode(for: "space") == 49)
+        #expect(GlobalHotKeyManager.key(forKeyCode: 49) == "space")
         #expect(GlobalHotKeyManager.keyCode(for: "C") == 8)
     }
 
@@ -2253,7 +2255,24 @@ struct ObsidianSideNoteTests {
 
     @Test func shortcutNormalizationKeepsSingleLowercaseKey() {
         #expect(ShortcutPreference.normalized(" N ") == "n")
+        #expect(ShortcutPreference.normalized(" ") == "space")
+        #expect(ShortcutPreference.normalized("space") == "space")
         #expect(ShortcutPreference.normalized("", fallback: "d") == "d")
+    }
+
+    @MainActor
+    @Test func globalShortcutPreferencesSupportSpaceKey() {
+        KeyboardShortcuts.reset(.createNewNote)
+        defer {
+            KeyboardShortcuts.reset(.createNewNote)
+        }
+
+        ShortcutPreference.set("space", modifiers: [.command, .option, .control], for: .newNote)
+        let shortcut = ShortcutPreference.definition(for: .newNote)
+
+        #expect(shortcut.key == "space")
+        #expect(shortcut.modifiers == [.command, .option, .control])
+        #expect(shortcut.displayValue == "⌃⌥⌘ Space")
     }
 
     @Test func emptyModifierFlagsDoNotBecomeCommandShortcuts() {
