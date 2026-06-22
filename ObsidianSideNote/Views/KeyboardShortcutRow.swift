@@ -9,6 +9,7 @@ struct KeyboardShortcutRow: View {
 
     init(action: ShortcutAction) {
         self.action = action
+        ShortcutPreference.syncRecorderShortcut(for: action)
         _shortcut = State(initialValue: ShortcutPreference.definition(for: action))
     }
 
@@ -28,28 +29,22 @@ struct KeyboardShortcutRow: View {
 
             Spacer()
 
-            if let shortcutName = action.globalShortcutName {
-                KeyboardShortcuts.Recorder(for: shortcutName) { shortcut in
-                    updateShortcut(shortcut)
-                }
-                .frame(width: 112)
-                .help("Click, then press the full shortcut")
-            } else {
-                Text(shortcut.displayValue)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundColor(.secondary)
-                    .frame(width: 112, alignment: .trailing)
-                    .help("Local app shortcut. It only works while Obsidian Side Note is focused.")
+            KeyboardShortcuts.Recorder(for: action.recorderShortcutName) { shortcut in
+                updateShortcut(shortcut)
             }
+            .frame(width: 112)
+            .help(action.isGlobal
+                  ? "Click, then press the full shortcut"
+                  : "Local app shortcut. It only works while Obsidian Side Note is focused.")
         }
         .frame(maxWidth: .infinity)
     }
 
     private func updateShortcut(_ recordedShortcut: KeyboardShortcuts.Shortcut?) {
         guard let recordedShortcut else {
+            ShortcutPreference.resetToDefault(for: action)
             shortcut = action.shortcut
             validationMessage = nil
-            NotificationCenter.default.post(name: .shortcutPreferencesDidChange, object: nil)
             return
         }
 
@@ -57,12 +52,7 @@ struct KeyboardShortcutRow: View {
         let modifiers = ShortcutPreference.menuModifierFlags(from: recordedShortcut.modifiers)
         if let message = ShortcutPolicy.validationMessage(for: action, key: key, modifiers: modifiers) {
             validationMessage = message
-            if let shortcutName = action.globalShortcutName {
-                KeyboardShortcuts.setShortcut(
-                    ShortcutPreference.keyboardShortcut(key: shortcut.key, modifiers: shortcut.modifiers),
-                    for: shortcutName
-                )
-            }
+            ShortcutPreference.syncRecorderShortcut(for: action)
             return
         }
 

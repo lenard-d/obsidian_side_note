@@ -49,9 +49,18 @@ struct ShortcutPreference {
             )
         } else {
             storeLocalDefinition(key: normalizedValue, modifiers: normalizedModifiers, for: action)
+            KeyboardShortcuts.setShortcut(
+                keyboardShortcut(key: normalizedValue, modifiers: normalizedModifiers),
+                for: action.recorderShortcutName
+            )
         }
         AppConfigStore.saveShortcut(action: action, key: normalizedValue, modifiers: normalizedModifiers)
         NotificationCenter.default.post(name: .shortcutPreferencesDidChange, object: nil)
+    }
+
+    static func resetToDefault(for action: ShortcutAction) {
+        set(action.defaultKey, modifiers: action.defaultModifiers, for: action)
+        syncRecorderShortcut(for: action)
     }
 
     static func restore(_ shortcut: ShortcutDefinition, for action: ShortcutAction) {
@@ -67,6 +76,15 @@ struct ShortcutPreference {
         }
 
         storeLocalDefinition(key: normalizedValue, modifiers: normalizedModifiers, for: action)
+        syncRecorderShortcut(for: action)
+    }
+
+    static func syncRecorderShortcut(for action: ShortcutAction) {
+        let definition = definition(for: action)
+        KeyboardShortcuts.setShortcut(
+            keyboardShortcut(key: definition.key, modifiers: definition.modifiers),
+            for: action.recorderShortcutName
+        )
     }
 
     static func keyboardShortcut(key: String, modifiers: NSEvent.ModifierFlags) -> KeyboardShortcuts.Shortcut? {
