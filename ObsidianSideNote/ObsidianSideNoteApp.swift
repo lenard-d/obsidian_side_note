@@ -330,7 +330,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appendMenuItem?.applyShortcut(.appendDaily)
         newNoteMenuItem?.applyShortcut(.newNote)
         editFileMenuItem?.applyShortcut(.editVaultFile)
-        settingsMenuItem?.applyShortcut(.settings)
         hotKeyManager?.registerAll()
     }
 
@@ -339,7 +338,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard NSApp.isActive else { return event }
             guard KeyboardEventRouting.shouldHandleLocalShortcut(event) else { return event }
 
-            if self?.window?.isVisible == true,
+            if self?.window?.isKeyWindow == true,
                self?.matches(event, action: .settings) == true {
                 self?.openSettings()
                 return nil
