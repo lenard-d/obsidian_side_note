@@ -6,6 +6,8 @@ struct SettingsView: View {
     @Binding var vaultPath: String
     let closeWindow: () -> Void
     @State private var resumeIntervalMinutes = NewNotePreferences.resumeIntervalMinutes
+    @State private var useObsidianNewNoteFolder = NewNotePreferences.useObsidianNewNoteFolder
+    @State private var newNoteFolderPath = NewNotePreferences.folderPath
     @State private var launchAtLogin = LoginItemStore.isEnabled
 
     var body: some View {
@@ -91,6 +93,24 @@ struct SettingsView: View {
             Text("Within this window, reopening New Note keeps the current draft unless you use the shortcut.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
+
+            Toggle("Use new-note folder from Obsidian settings", isOn: $useObsidianNewNoteFolder)
+                .onChange(of: useObsidianNewNoteFolder) { oldValue, newValue in
+                    NewNotePreferences.setUseObsidianNewNoteFolder(newValue)
+                }
+
+            if !useObsidianNewNoteFolder {
+                TextField("Relative path for new notes", text: $newNoteFolderPath)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: newNoteFolderPath) { oldValue, newValue in
+                        NewNotePreferences.setFolderPath(newValue)
+                        newNoteFolderPath = NewNotePreferences.folderPath
+                    }
+
+                Text("Leave empty to create new notes at the vault root.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
         }
     }
 

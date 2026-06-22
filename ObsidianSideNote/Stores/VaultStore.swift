@@ -565,6 +565,15 @@ struct VaultStore {
     }
 
     private static func newNoteDirectoryURL(in vaultURL: URL) -> URL {
+        if !NewNotePreferences.useObsidianNewNoteFolder {
+            return inVaultURL(
+                forRelativePath: NewNotePreferences.folderPath,
+                in: vaultURL,
+                isDirectory: true,
+                allowEmpty: true
+            ) ?? vaultURL
+        }
+
         let settings = appSettings(in: vaultURL)
         guard settings.newFileLocation == "folder",
               let folderPath = settings.newFileFolderPath,

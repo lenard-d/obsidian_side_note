@@ -27,6 +27,7 @@ struct ObsidianSideNoteTests {
             UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
             UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
             UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            clearNewNoteFolderPreferences()
         }
 
         VaultStore.saveVaultURL(temporaryVaultURL)
@@ -75,8 +76,10 @@ struct ObsidianSideNoteTests {
             UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
             UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
             UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            clearNewNoteFolderPreferences()
         }
 
+        clearNewNoteFolderPreferences()
         VaultStore.saveVaultURL(temporaryVaultURL)
         let note = try #require(VaultStore.createOrUpdateNote(
             title: "Project Plan",
@@ -103,8 +106,10 @@ struct ObsidianSideNoteTests {
             UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
             UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
             UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            clearNewNoteFolderPreferences()
         }
 
+        NewNotePreferences.setUseObsidianNewNoteFolder(true)
         VaultStore.saveVaultURL(temporaryVaultURL)
         let note = try #require(VaultStore.createOrUpdateNote(
             title: "",
@@ -114,6 +119,69 @@ struct ObsidianSideNoteTests {
 
         #expect(note.relativePath == "Inbox/QuickNote 2026-06-01 13-30.md")
         #expect(FileManager.default.fileExists(atPath: temporaryVaultURL.appendingPathComponent(note.relativePath).path))
+    }
+
+    @Test func newNoteCanUseConfiguredSideNoteFolderInsteadOfObsidianDefault() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let configURL = temporaryVaultURL.appendingPathComponent(".obsidian", isDirectory: true)
+        try FileManager.default.createDirectory(at: configURL, withIntermediateDirectories: true)
+        try #"{"newFileLocation":"folder","newFileFolderPath":"Obsidian Inbox"}"#.write(
+            to: configURL.appendingPathComponent("app.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            clearNewNoteFolderPreferences()
+        }
+
+        NewNotePreferences.setUseObsidianNewNoteFolder(false)
+        NewNotePreferences.setFolderPath("./Side Note Inbox")
+        VaultStore.saveVaultURL(temporaryVaultURL)
+
+        let note = try #require(VaultStore.createOrUpdateNote(
+            title: "Capture",
+            text: "Body",
+            fallbackDate: "2026-06-01 13-30"
+        ))
+
+        #expect(NewNotePreferences.folderPath == "Side Note Inbox")
+        #expect(note.relativePath == "Side Note Inbox/Capture.md")
+        #expect(FileManager.default.fileExists(atPath: temporaryVaultURL.appendingPathComponent(note.relativePath).path))
+        #expect(!FileManager.default.fileExists(atPath: temporaryVaultURL.appendingPathComponent("Obsidian Inbox/Capture.md").path))
+    }
+
+    @Test func newNoteRejectsUnsafeSideNoteFolderOverride() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let outsideURL = temporaryVaultURL.deletingLastPathComponent().appendingPathComponent("Outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            try? FileManager.default.removeItem(at: outsideURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            clearNewNoteFolderPreferences()
+        }
+
+        NewNotePreferences.setUseObsidianNewNoteFolder(false)
+        NewNotePreferences.setFolderPath("../Outside")
+        VaultStore.saveVaultURL(temporaryVaultURL)
+
+        let note = try #require(VaultStore.createOrUpdateNote(
+            title: "Capture",
+            text: "Body",
+            fallbackDate: "2026-06-01 13-30"
+        ))
+
+        #expect(note.relativePath == "Capture.md")
+        #expect(FileManager.default.fileExists(atPath: temporaryVaultURL.appendingPathComponent("Capture.md").path))
+        #expect(!FileManager.default.fileExists(atPath: outsideURL.appendingPathComponent("Capture.md").path))
     }
 
     @Test func newNoteRejectsUnsafeConfiguredDefaultFolder() throws {
@@ -133,8 +201,10 @@ struct ObsidianSideNoteTests {
             UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
             UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
             UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            clearNewNoteFolderPreferences()
         }
 
+        NewNotePreferences.setUseObsidianNewNoteFolder(true)
         VaultStore.saveVaultURL(temporaryVaultURL)
         let note = try #require(VaultStore.createOrUpdateNote(
             title: "Capture",
@@ -156,8 +226,10 @@ struct ObsidianSideNoteTests {
             UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
             UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
             UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            clearNewNoteFolderPreferences()
         }
 
+        clearNewNoteFolderPreferences()
         VaultStore.saveVaultURL(temporaryVaultURL)
         let original = try #require(VaultStore.createOrUpdateNote(
             title: "QuickNote 2026-06-01 13-30",
@@ -169,6 +241,11 @@ struct ObsidianSideNoteTests {
         #expect(renamed.relativePath == "Meeting Notes.md")
         #expect(!FileManager.default.fileExists(atPath: original.url.path))
         #expect((try? String(contentsOf: renamed.url, encoding: .utf8)) == "Capture")
+    }
+
+    private func clearNewNoteFolderPreferences() {
+        UserDefaults.standard.removeObject(forKey: NewNotePreferences.useObsidianNewNoteFolderKey)
+        UserDefaults.standard.removeObject(forKey: NewNotePreferences.folderPathKey)
     }
 
     @Test func vaultSearchFindsMarkdownAndSkipsObsidianMetadata() throws {
@@ -202,8 +279,10 @@ struct ObsidianSideNoteTests {
             UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
             UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
             UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            clearNewNoteFolderPreferences()
         }
 
+        clearNewNoteFolderPreferences()
         VaultStore.saveVaultURL(temporaryVaultURL)
         #expect(VaultStore.markdownNotes().isEmpty)
 
@@ -1326,16 +1405,22 @@ struct ObsidianSideNoteTests {
             UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
             UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
             UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            UserDefaults.standard.removeObject(forKey: NewNotePreferences.useObsidianNewNoteFolderKey)
+            UserDefaults.standard.removeObject(forKey: NewNotePreferences.folderPathKey)
             try? FileManager.default.removeItem(at: temporaryDirectory)
         }
 
         VaultStore.saveVaultURL(vaultURL)
         ShortcutPreference.set("c", modifiers: [.command, .option, .control], for: .newNote)
         NewNotePreferences.setResumeIntervalMinutes(10)
+        NewNotePreferences.setUseObsidianNewNoteFolder(false)
+        NewNotePreferences.setFolderPath("Side Note Inbox")
 
         UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
         UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
         UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        UserDefaults.standard.removeObject(forKey: NewNotePreferences.useObsidianNewNoteFolderKey)
+        UserDefaults.standard.removeObject(forKey: NewNotePreferences.folderPathKey)
         KeyboardShortcuts.reset(.createNewNote)
         Defaults.reset(.newNoteResumeIntervalMinutes)
 
@@ -1344,6 +1429,8 @@ struct ObsidianSideNoteTests {
         #expect(UserDefaults.standard.string(forKey: VaultStore.pathKey) == vaultURL.path)
         #expect(UserDefaults.standard.string(forKey: "obsidianVault") == "Vault")
         #expect(NewNotePreferences.resumeIntervalMinutes == 10)
+        #expect(!NewNotePreferences.useObsidianNewNoteFolder)
+        #expect(NewNotePreferences.folderPath == "Side Note Inbox")
         #expect(ShortcutPreference.definition(for: .newNote).key == "c")
         #expect(ShortcutPreference.definition(for: .newNote).modifiers == [.command, .option, .control])
     }
@@ -1369,6 +1456,8 @@ struct ObsidianSideNoteTests {
             UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
             UserDefaults.standard.removeObject(forKey: "obsidianVault")
             UserDefaults.standard.removeObject(forKey: "startAtLogin")
+            UserDefaults.standard.removeObject(forKey: NewNotePreferences.useObsidianNewNoteFolderKey)
+            UserDefaults.standard.removeObject(forKey: NewNotePreferences.folderPathKey)
             try? FileManager.default.removeItem(at: temporaryDirectory)
         }
 
@@ -1376,6 +1465,8 @@ struct ObsidianSideNoteTests {
         UserDefaults.standard.set("Vault", forKey: "obsidianVault")
         UserDefaults.standard.set(true, forKey: "startAtLogin")
         NewNotePreferences.setResumeIntervalMinutes(15)
+        NewNotePreferences.setUseObsidianNewNoteFolder(false)
+        NewNotePreferences.setFolderPath("Side Note Inbox")
         ShortcutPreference.set("n", modifiers: [.command, .option, .control], for: .newNote)
 
         AppConfigStore.synchronizeCurrentSettings()
@@ -1384,6 +1475,8 @@ struct ObsidianSideNoteTests {
         #expect(config.vaultPath == vaultURL.path)
         #expect(config.vaultName == "Vault")
         #expect(config.newNoteResumeIntervalMinutes == 15)
+        #expect(config.useObsidianNewNoteFolder == false)
+        #expect(config.newNoteFolderPath == "Side Note Inbox")
         #expect(config.startAtLogin == true)
         #expect(config.shortcuts[ShortcutAction.newNote.rawValue]?.key == "n")
         #expect(FileManager.default.fileExists(atPath: configURL.path))

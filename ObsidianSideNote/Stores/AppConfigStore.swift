@@ -84,6 +84,8 @@ enum AppConfigStore {
             NewNotePreferences.draftFilePathKey,
             NewNotePreferences.sessionStartedAtKey,
             NewNotePreferences.resumeIntervalMinutesKey,
+            NewNotePreferences.useObsidianNewNoteFolderKey,
+            NewNotePreferences.folderPathKey,
             NoteMode.editVaultFile.draftTextKey,
             NoteMode.editVaultFile.draftTitleKey,
             "draft.editVaultFile.search"
@@ -126,6 +128,14 @@ enum AppConfigStore {
         if let resumeInterval = config.newNoteResumeIntervalMinutes,
            NewNotePreferences.allowedResumeIntervals.contains(resumeInterval) {
             Defaults[.newNoteResumeIntervalMinutes] = resumeInterval
+        }
+
+        if let useObsidianFolder = config.useObsidianNewNoteFolder {
+            UserDefaults.standard.set(useObsidianFolder, forKey: NewNotePreferences.useObsidianNewNoteFolderKey)
+        }
+
+        if let folderPath = config.newNoteFolderPath {
+            UserDefaults.standard.set(folderPath, forKey: NewNotePreferences.folderPathKey)
         }
 
         if let startAtLogin = config.startAtLogin {
@@ -179,6 +189,8 @@ enum AppConfigStore {
             }
 
             config.newNoteResumeIntervalMinutes = NewNotePreferences.resumeIntervalMinutes
+            config.useObsidianNewNoteFolder = NewNotePreferences.useObsidianNewNoteFolder
+            config.newNoteFolderPath = NewNotePreferences.folderPath
             config.startAtLogin = UserDefaults.standard.bool(forKey: "startAtLogin")
 
             for action in ShortcutAction.allCases {
@@ -210,6 +222,13 @@ enum AppConfigStore {
     static func saveNewNoteResumeInterval(_ minutes: Int) {
         update { config in
             config.newNoteResumeIntervalMinutes = minutes
+        }
+    }
+
+    static func saveNewNoteFolderPreferences(useObsidianFolder: Bool, folderPath: String) {
+        update { config in
+            config.useObsidianNewNoteFolder = useObsidianFolder
+            config.newNoteFolderPath = folderPath
         }
     }
 
@@ -300,6 +319,8 @@ struct PersistentAppConfig: Codable, Equatable {
     var vaultBookmarkBase64: String?
     var shortcuts: [String: PersistentShortcut] = [:]
     var newNoteResumeIntervalMinutes: Int?
+    var useObsidianNewNoteFolder: Bool?
+    var newNoteFolderPath: String?
     var startAtLogin: Bool?
 }
 
