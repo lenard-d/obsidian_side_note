@@ -18,7 +18,12 @@ struct ObsidianSideNoteApp: App {
             EmptyView()
         }
         .commands {
-            CommandGroup(replacing: .appSettings) {}
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings") {
+                    (NSApp.delegate as? AppDelegate)?.openSettings()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
     }
 }

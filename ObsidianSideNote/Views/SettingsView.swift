@@ -104,6 +104,8 @@ struct SettingsView: View {
                     .textFieldStyle(.roundedBorder)
                     .onChange(of: newNoteFolderPath) { oldValue, newValue in
                         NewNotePreferences.setFolderPath(newValue)
+                    }
+                    .onSubmit {
                         newNoteFolderPath = NewNotePreferences.folderPath
                     }
 

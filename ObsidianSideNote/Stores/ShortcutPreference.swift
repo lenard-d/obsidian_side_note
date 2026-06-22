@@ -15,24 +15,17 @@ struct ShortcutPreference {
     }
 
     static func definition(for action: ShortcutAction) -> ShortcutDefinition {
-        if !action.isGlobal {
-            return localDefinition(for: action)
-        }
-
-        guard let shortcutName = action.globalShortcutName else {
-            return ShortcutDefinition(key: action.defaultKey, modifiers: action.defaultModifiers)
-        }
-
+        let shortcutName = action.recorderShortcutName
         migrateLegacyShortcutIfNeeded(for: action, shortcutName: shortcutName)
 
         guard let shortcut = KeyboardShortcuts.getShortcut(for: shortcutName) else {
+            if !action.isGlobal {
+                return localDefinition(for: action)
+            }
             return ShortcutDefinition(key: action.defaultKey, modifiers: action.defaultModifiers)
         }
 
-        return ShortcutDefinition(
-            key: GlobalHotKeyManager.key(forKeyCode: shortcut.carbonKeyCode) ?? action.defaultKey,
-            modifiers: menuModifierFlags(from: shortcut.modifiers)
-        )
+        return definition(from: shortcut, fallback: action)
     }
 
     static func displayValue(for action: ShortcutAction) -> String {
@@ -137,22 +130,32 @@ struct ShortcutPreference {
         UserDefaults.standard.set(legacyRawValue(from: modifiers), forKey: action.modifierPreferenceKey)
     }
 
+    private static func definition(from shortcut: KeyboardShortcuts.Shortcut, fallback action: ShortcutAction) -> ShortcutDefinition {
+        ShortcutDefinition(
+            key: GlobalHotKeyManager.key(forKeyCode: shortcut.carbonKeyCode) ?? action.defaultKey,
+            modifiers: menuModifierFlags(from: shortcut.modifiers)
+        )
+    }
+
     private static func migrateLegacyShortcutIfNeeded(for action: ShortcutAction, shortcutName: KeyboardShortcuts.Name) {
-        guard KeyboardShortcuts.getShortcut(for: shortcutName) == nil,
-              UserDefaults.standard.object(forKey: action.preferenceKey) != nil else {
+        guard UserDefaults.standard.object(forKey: action.preferenceKey) != nil else {
             return
         }
 
         let storedKey = UserDefaults.standard.string(forKey: action.preferenceKey) ?? action.defaultKey
         let rawModifiers = UserDefaults.standard.integer(forKey: action.modifierPreferenceKey)
         let modifiers = rawModifiers == 0 ? action.defaultModifiers : legacyModifierFlags(from: rawModifiers)
+        let storedShortcut = keyboardShortcut(key: storedKey, modifiers: modifiers)
 
-        KeyboardShortcuts.setShortcut(
-            keyboardShortcut(key: storedKey, modifiers: modifiers),
-            for: shortcutName
-        )
-        UserDefaults.standard.removeObject(forKey: action.preferenceKey)
-        UserDefaults.standard.removeObject(forKey: action.modifierPreferenceKey)
+        if KeyboardShortcuts.getShortcut(for: shortcutName) == nil
+            || KeyboardShortcuts.getShortcut(for: shortcutName) == shortcutName.defaultShortcut {
+            KeyboardShortcuts.setShortcut(storedShortcut, for: shortcutName)
+        }
+
+        if action.isGlobal {
+            UserDefaults.standard.removeObject(forKey: action.preferenceKey)
+            UserDefaults.standard.removeObject(forKey: action.modifierPreferenceKey)
+        }
     }
 
     private static func legacyRawValue(from modifiers: NSEvent.ModifierFlags) -> Int {

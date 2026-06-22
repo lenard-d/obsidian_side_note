@@ -1797,6 +1797,29 @@ struct ObsidianSideNoteTests {
         #expect(ShortcutAction.settings.globalShortcutName == nil)
     }
 
+    @MainActor
+    @Test func localSettingsShortcutMigratesToRecorderBeforeUsingDefault() {
+        UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.preferenceKey)
+        UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.modifierPreferenceKey)
+        KeyboardShortcuts.reset(.settings)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.preferenceKey)
+            UserDefaults.standard.removeObject(forKey: ShortcutAction.settings.modifierPreferenceKey)
+            KeyboardShortcuts.reset(.settings)
+        }
+
+        UserDefaults.standard.set("s", forKey: ShortcutAction.settings.preferenceKey)
+        UserDefaults.standard.set(1 << 0 | 1 << 3, forKey: ShortcutAction.settings.modifierPreferenceKey)
+
+        let shortcut = ShortcutPreference.definition(for: .settings)
+        let recorderShortcut = KeyboardShortcuts.getShortcut(for: .settings)
+
+        #expect(shortcut.key == "s")
+        #expect(shortcut.modifiers == [.command, .shift])
+        #expect(recorderShortcut?.carbonKeyCode == GlobalHotKeyManager.keyCode(for: "s"))
+        #expect(ShortcutPreference.menuModifierFlags(from: recorderShortcut?.modifiers ?? []) == [.command, .shift])
+    }
+
     @Test func globalShortcutsUseRequestedDefaultKeys() {
         #expect(ShortcutAction.newNote.defaultKey == "n")
         #expect(ShortcutAction.appendDaily.defaultKey == "d")
@@ -2291,6 +2314,25 @@ struct ObsidianSideNoteTests {
 
         #expect(commandEvent != nil)
         #expect(KeyboardEventRouting.shouldHandleLocalShortcut(commandEvent!) == true)
+    }
+
+    @Test @MainActor func keyboardRoutingHandlesCommandCommaForSettings() {
+        let commandCommaEvent = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: .command,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: ",",
+            charactersIgnoringModifiers: ",",
+            isARepeat: false,
+            keyCode: 43
+        )
+
+        #expect(commandCommaEvent != nil)
+        #expect(KeyboardEventRouting.shouldHandleLocalShortcut(commandCommaEvent!) == true)
+        #expect(ShortcutPreference.normalized(commandCommaEvent?.charactersIgnoringModifiers ?? "") == ShortcutAction.settings.defaultKey)
     }
 
 }
