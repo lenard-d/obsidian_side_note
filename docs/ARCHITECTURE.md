@@ -55,7 +55,8 @@ These types should stay small and dependency-light.
 
 `Stores/` contains persistence and local file-system access:
 
-- `VaultStore`: selected vault bookmark, vault search, file read/write, note creation, attachment copy, and Markdown media URL resolution.
+- `VaultStore`: selected vault bookmark, vault file indexing, file read/write, note creation, attachment copy, and Markdown media URL resolution.
+- `VaultNoteSearch`: directory-scope parsing, fuzzy scoring, ranking, and result limiting for Edit Vault File suggestions.
 - `ShortcutPreference`: UserDefaults-backed shortcut storage and normalization.
 - `NewNotePreferences`: UserDefaults-backed New Note resume interval and draft metadata.
 - `AppConfigStore`: JSON-backed persistence mirror for vault selection, shortcuts, resume interval, and login-item intent so rebuilds can restore setup state.
@@ -63,7 +64,7 @@ These types should stay small and dependency-light.
 - `SetupDiagnostics`: setup/status labels derived from vault access, Obsidian detection, shortcuts, and login-item state.
 - `LoginItemStore`: launch-at-login status and mutation.
 
-Store types are static because the app currently has a single active vault and a single editor window.
+Store types are static because the app has a single active vault. AppKit owns a registry of independent floating windows, while each window owns its own `ContentViewModel`, editor state, autosave work, and file monitor.
 
 ## Services
 
@@ -139,7 +140,8 @@ Read-only preview rendering lives in `RichMarkdownView`; the main editor surface
 - The editable editor intentionally keeps the raw Markdown string as the CodeMirror document.
 - Task checkboxes are rendered as CodeMirror replacement widgets over the `[ ]` / `[x]` marker. The marker remains in the document source, and CodeMirror maps cursor/selection through the widget range.
 - When the cursor is adjacent to the checkbox marker, the raw marker is revealed so source editing remains predictable without turning the whole task line back into text.
-- Rendered image/video embeds belong to the read-only preview path. The editable surface keeps embed Markdown as normal text to avoid cursor and source-offset drift.
+- Image embeds on their own line are rendered as CodeMirror block widgets when the cursor is outside that line. Swift resolves local vault images into bounded data URLs for the web editor, while the Markdown embed line remains the document source and is revealed for editing when selected.
+- Video embeds belong to the read-only preview path.
 - Markdown text is rendered through `swift-markdown-ui`.
 - Embed lines such as `![Title](path-or-url)` are rendered as images or videos when their extension is supported.
 - Local relative paths are resolved through `VaultStore.url(forMarkdownLink:)` and `VaultStore.url(forWikiLink:)`, with vault-bound path validation.
@@ -150,7 +152,7 @@ Read-only preview rendering lives in `RichMarkdownView`; the main editor surface
 
 - Empty New Note protection.
 - Markdown file creation.
-- Vault search filtering.
+- Vault search indexing, directory-scoped fuzzy ranking, and lazy suggestion limiting.
 - Vault file writes.
 - Obsidian Daily Note URI construction.
 - Shortcut storage and hotkey mapping.
@@ -162,6 +164,7 @@ Read-only preview rendering lives in `RichMarkdownView`; the main editor surface
 - Remote media byte-limit and content-type checks.
 - Two-way active-note sync, including New Note, Edit Vault File, atomic external writes, and cancellation of stale pending autosaves.
 - Rich Markdown editor rendering, command application, heading hierarchy, task-list toggling, bullet-marker presentation, smart list editing, and media preload behavior.
+- Inline image embed rendering in the bundled CodeMirror editor.
 
 Run:
 

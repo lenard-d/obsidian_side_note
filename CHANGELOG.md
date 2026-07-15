@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.1 - 2026-07-15
+
+Obsidian Side Note 2.1 improves vault search, pasted image handling, and New Note resume behavior.
+
+### Changed
+
+- Added concurrent floating editor windows: each New Note or Edit Vault File action now opens a separate, cascaded window.
+- Fixed Markdown toolbar commands, macOS text replacements, hanging list indentation, centered bullets, and deterministic list continuation/exit behavior.
+- Expanded the draggable title area through the complete top edge of note windows.
+- Added fuzzy ranked vault search for abbreviations and partial title/path matches.
+- Scoped slash-prefixed Edit Vault File searches to the typed directory subtree while keeping root searches global across subfolders.
+- Limited Edit Vault File suggestions to the top ranked results so large vaults render the popup lazily.
+- Displayed pasted image embeds inline inside the CodeMirror editor while preserving the underlying Markdown source.
+- Made the New Note shortcut resume the recent draft or created note within the configured interval, matching the menu action.
+- Refreshed the New Note resume interval on draft activity and close, so a recently closed note reopens instead of being replaced by a new draft.
+
+### Developer
+
+- Added focused regression coverage for fuzzy search, directory-scoped search, limited suggestions, media embed rendering, and New Note session refresh.
+- Split vault search ranking into a dedicated `VaultNoteSearch` helper.
+
 ## 2.0 - 2026-06-14
 
 Obsidian Side Note 2.0 is the editor and vault-workflow release.

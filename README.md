@@ -16,9 +16,10 @@ Obsidian Side Note opens a compact floating editor from the menu bar or a global
 - Opens from the macOS menu bar and stays out of the Dock.
 - Provides global shortcuts for Daily Note, Create New Note, and Edit Vault File.
 - Creates Markdown notes directly inside your selected Obsidian vault.
+- Opens New Note and Edit Vault File actions in independent floating windows so several notes can remain open concurrently.
 - Autosaves new notes and edits to existing vault files.
 - Avoids empty files: a title-only draft stays local until the note has body text.
-- Searches Markdown files by title or vault-relative path.
+- Searches Markdown files by fuzzy title or vault-relative path matches, with slash paths scoped to that directory subtree.
 - Shows Edit Vault File results in a scrollable overlay without shrinking the editor.
 - Watches the open note file and reloads external Obsidian edits before the next autosave.
 - Renders Markdown preview, Obsidian wikilinks, images, videos, and embeds.
@@ -99,11 +100,11 @@ Global shortcuts must include Control or Option. Command-only app-management sho
 
 New notes autosave into the selected vault once the body has content. If you close a title-only note, it remains a local draft and no empty Markdown file is created.
 
-Reopening New Note from the menu can resume the current draft within the configured interval. Using the New Note shortcut starts a fresh draft.
+Reopening New Note from the menu or shortcut resumes the current draft or created note within the configured interval. After the interval expires, New Note starts a fresh draft.
 
 ### Existing Notes
 
-Choose `Edit Vault File`, type part of a note title or path, and select a result with the mouse, arrow keys, Tab, or Return. The result list is scrollable and overlays the editor instead of moving the layout. Edits save back to the Markdown file immediately.
+Choose `Edit Vault File`, type part of a note title or path, and select a result with the mouse, arrow keys, Tab, or Return. Search accepts fuzzy abbreviations such as initial letters, ranks matches, and shows the top suggestions in a scrollable overlay instead of moving the layout. Typing a slash path such as `Projects/Active/Budapest` searches only below `Projects/Active`; typing `Budapest` from the empty/root field searches the whole vault, including subfolders. Edits save back to the Markdown file immediately.
 
 If the same file changes in Obsidian while it is open in Side Note, the editor reloads the disk version and cancels stale pending autosaves.
 
@@ -118,7 +119,7 @@ Preview mode supports regular Markdown links, Obsidian wikilinks, local media, r
 ![Demo video](Attachments/demo.mp4)
 ```
 
-Pasted images and supported dropped media files are copied into Obsidian's configured attachment folder. If no fixed attachment folder is configured, the app stores the media at the vault root.
+Pasted images and supported dropped media files are copied into Obsidian's configured attachment folder. If no fixed attachment folder is configured, the app stores the media at the vault root. Pasted image embeds display inline in the editor while preserving normal Markdown source.
 
 Supported preview formats:
 
@@ -193,7 +194,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the internal design notes.
 
 ## Status
 
-Obsidian Side Note 2.0 is usable, but still evolving. Known next steps:
+Obsidian Side Note 2.1 is usable, but still evolving. Known next steps:
 
 - Developer ID signing and notarization.
 - Window size and position preferences.
