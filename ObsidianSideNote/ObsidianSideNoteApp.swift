@@ -25,14 +25,14 @@ struct ObsidianSideNoteApp: App {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
-    var window: NSWindow?
+    private(set) var window: NSWindow?
     var menu: NSMenu?
     private var appendMenuItem: NSMenuItem?
     private var newNoteMenuItem: NSMenuItem?
     private var editFileMenuItem: NSMenuItem?
     private var settingsMenuItem: NSMenuItem?
     private var hotKeyManager: GlobalHotKeyManager?
-    private var currentMode: NoteMode?
+    private var managedWindows: [ObjectIdentifier: (window: NSWindow, mode: NoteMode)] = [:]
     private var localShortcutMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -128,44 +128,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func openAppendToDaily() {
         AppLogger.app.info("Opening daily note editor")
-        _ = getOrBuildWindow(mode: .appendDaily)
-        showWindow()
+        let window = getOrBuildWindow(mode: .appendDaily)
+        showWindow(window)
     }
 
     @objc func openNewNote() {
         AppLogger.app.info("Opening new note editor")
-        openNewNoteWindow(forceNew: false)
-        showWindow()
+        let window = openNewNoteWindow(forceNew: hasVisibleWindow(mode: .newNote))
+        showWindow(window)
     }
 
-    private func openNewNoteWindow(forceNew: Bool) {
+    private func openNewNoteWindow(forceNew: Bool) -> NSWindow {
         let shouldResumeDraft = !forceNew && NewNotePreferences.shouldResumeVisibleSession()
 
         if forceNew || !shouldResumeDraft {
             NewNotePreferences.clearDraft()
         }
 
-        if shouldResumeDraft,
-           currentMode == .newNote,
-           window?.isVisible == true {
-            showWindow()
-            return
-        }
-
         NewNotePreferences.startSession()
-        _ = getOrBuildWindow(mode: .newNote)
+        return buildWindow(mode: .newNote)
     }
 
     @objc func openEditVaultFile() {
         AppLogger.app.info("Opening vault file editor")
-        _ = getOrBuildWindow(mode: .editVaultFile)
-        showWindow()
+        let window = buildWindow(mode: .editVaultFile)
+        showWindow(window)
     }
 
     @objc func openSettings() {
         AppLogger.app.info("Opening settings")
-        _ = getOrBuildWindow(mode: .settings)
-        showWindow()
+        let window = getOrBuildWindow(mode: .settings)
+        showWindow(window)
     }
 
     private func openSetupOnFirstLaunchIfNeeded() {
@@ -174,22 +167,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { [weak self] in
             guard !VaultStore.isVaultConfigured else { return }
             AppLogger.app.info("Opening first-run setup")
-            _ = self?.getOrBuildWindow(mode: .setup)
-            self?.showWindow()
+            guard let window = self?.getOrBuildWindow(mode: .setup) else { return }
+            self?.showWindow(window)
         }
     }
 
     func getOrBuildWindow(mode: NoteMode) -> NSWindow {
-        currentMode = mode
-
-        // If window exists, just update the content view with new mode
-        if let existingWindow = window {
-            configureLocalKeyEquivalents(for: existingWindow)
-            existingWindow.contentView = NSHostingView(rootView: ContentView(mode: mode, closeWindow: { [weak self] in
-                self?.closeWindow()
-            }))
+        if mode != .newNote,
+           mode != .editVaultFile,
+           let existingWindow = managedWindows.values.first(where: { $0.mode == mode && $0.window.isVisible })?.window {
+            window = existingWindow
             return existingWindow
         }
+
+        return buildWindow(mode: mode)
+    }
+
+    private func buildWindow(mode: NoteMode) -> NSWindow {
 
         // Get the screen dimensions
         guard let screen = NSScreen.main else {
@@ -204,13 +198,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Calculate position for top right (with some padding from edge)
         let padding: CGFloat = 10
-        let xPosition = screenFrame.maxX - windowWidth - padding
-        let yPosition = screenFrame.maxY - windowHeight - padding
-
-        // Create the SwiftUI view with the specified mode
-        let contentView = ContentView(mode: mode, closeWindow: { [weak self] in
-            self?.closeWindow()
-        })
+        let cascadeOffset = CGFloat(managedWindows.count % 8) * 22
+        let xPosition = screenFrame.maxX - windowWidth - padding - cascadeOffset
+        let yPosition = screenFrame.maxY - windowHeight - padding - cascadeOffset
 
         // Create a custom floating window - this allows it to become key and accept input
         let window = FloatingWindow(
@@ -220,6 +210,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         configureLocalKeyEquivalents(for: window)
+        window.delegate = self
 
         // Set window properties for floating behavior
         window.level = .floating
@@ -236,6 +227,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
 
+        let contentView = ContentView(mode: mode, closeWindow: { [weak self, weak window] in
+            self?.closeWindow(window)
+        })
+
         // Create a container view with rounded corners
         let hostingView = NSHostingView(rootView: contentView)
         hostingView.wantsLayer = true
@@ -251,26 +246,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         window.contentView = hostingView
 
-        // Store reference
+        managedWindows[ObjectIdentifier(window)] = (window, mode)
         self.window = window
 
         return window
     }
 
-    func showWindow() {
-        guard let window = window else { return }
+    func showWindow(_ targetWindow: NSWindow? = nil) {
+        guard let window = targetWindow ?? window else { return }
+        self.window = window
         if !ProcessInfo.processInfo.arguments.contains("--uitesting") {
             NSApp.setActivationPolicy(.accessory)
         }
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
-        focusContentAfterWindowActivation()
+        focusContentAfterWindowActivation(window)
     }
 
     private func performShortcutAction(_ action: ShortcutAction) {
-        if shouldCloseVisibleWindow(for: action) {
-            closeWindow()
+        if action == .appendDaily, shouldCloseVisibleWindow(for: action) {
+            closeWindow(window)
             return
         }
 
@@ -278,8 +274,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .appendDaily:
             openAppendToDaily()
         case .newNote:
-            openNewNoteWindow(forceNew: true)
-            showWindow()
+            let newWindow = openNewNoteWindow(forceNew: hasVisibleWindow(mode: .newNote))
+            showWindow(newWindow)
         case .editVaultFile:
             openEditVaultFile()
         case .settings:
@@ -289,33 +285,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func shouldCloseVisibleWindow(for action: ShortcutAction) -> Bool {
         guard let actionMode = action.noteMode else { return false }
-        return window?.isVisible == true && currentMode == actionMode
+        guard let window else { return false }
+        return window.isVisible && mode(for: window) == actionMode
     }
 
-    private func closeWindow() {
-        window?.orderOut(nil)
+    private func closeWindow(_ targetWindow: NSWindow? = nil) {
+        guard let targetWindow = targetWindow ?? NSApp.keyWindow ?? window else { return }
+        targetWindow.close()
         restoreAccessoryActivationPolicyIfNeeded()
     }
 
     private func restoreAccessoryActivationPolicyIfNeeded() {
         guard !ProcessInfo.processInfo.arguments.contains("--uitesting") else { return }
         DispatchQueue.main.async {
-            guard self.window?.isVisible != true else { return }
+            guard !self.managedWindows.values.contains(where: { $0.window.isVisible }) else { return }
             NSApp.setActivationPolicy(.accessory)
         }
     }
 
-    private func focusContentAfterWindowActivation() {
+    private func focusContentAfterWindowActivation(_ window: NSWindow) {
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.currentMode?.startsWithEditorFocus == true else { return }
-            NotificationCenter.default.post(name: .editorShouldFocus, object: self.window)
+            guard let self, self.mode(for: window)?.startsWithEditorFocus == true else { return }
+            NotificationCenter.default.post(name: .editorShouldFocus, object: window)
         }
     }
 
+    private func mode(for window: NSWindow) -> NoteMode? {
+        managedWindows[ObjectIdentifier(window)]?.mode
+    }
+
+    private func hasVisibleWindow(mode: NoteMode) -> Bool {
+        managedWindows.values.contains { $0.mode == mode && $0.window.isVisible }
+    }
+
     @objc func activeSpaceDidChange(_ notification: Notification) {
-        // Ensure window stays visible when switching spaces (only if it's currently shown)
-        if let window = window, window.isVisible {
-            window.orderFrontRegardless()
+        for managedWindow in managedWindows.values where managedWindow.window.isVisible {
+            managedWindow.window.orderFrontRegardless()
         }
     }
 
@@ -354,7 +359,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             if event.charactersIgnoringModifiers?.lowercased() == "w",
                ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == .command {
-                self?.closeWindow()
+                self?.closeWindow(self?.window)
                 return nil
             }
 
@@ -370,10 +375,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureLocalKeyEquivalents(for window: NSWindow) {
         guard let floatingWindow = window as? FloatingWindow else { return }
-        floatingWindow.escapeHandler = { [weak self] in
-            self?.closeWindow()
+        floatingWindow.escapeHandler = { [weak self, weak window] in
+            self?.closeWindow(window)
         }
-        floatingWindow.keyEquivalentHandler = { [weak self] event in
+        floatingWindow.keyEquivalentHandler = { [weak self, weak window] event in
             guard let self else { return false }
             guard KeyboardEventRouting.shouldHandleLocalShortcut(event) else { return false }
 
@@ -393,7 +398,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "w":
-                self.closeWindow()
+                self.closeWindow(window)
                 return true
             case "q":
                 NSApp.terminate(nil)
@@ -402,5 +407,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return false
             }
         }
+    }
+}
+
+extension AppDelegate: NSWindowDelegate {
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        self.window = window
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closedWindow = notification.object as? NSWindow else { return }
+        managedWindows.removeValue(forKey: ObjectIdentifier(closedWindow))
+        if window === closedWindow {
+            window = managedWindows.values.first(where: { $0.window.isVisible })?.window
+        }
+        restoreAccessoryActivationPolicyIfNeeded()
     }
 }

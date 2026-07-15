@@ -54,6 +54,11 @@ struct ContentView: View {
         }
         .frame(minWidth: 175, minHeight: 263)
         .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
+        .background(
+            ContentWindowReader { windowNumber in
+                viewModel.setEventWindowNumber(windowNumber)
+            }
+        )
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .onAppear {
             if mode != .settings && mode != .setup {
@@ -160,6 +165,26 @@ struct ContentView: View {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
             NotificationCenter.default.post(name: .editorShouldFocus, object: window)
+        }
+    }
+}
+
+private struct ContentWindowReader: NSViewRepresentable {
+    let didResolveWindowNumber: (Int) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async { [weak view] in
+            guard let windowNumber = view?.window?.windowNumber else { return }
+            didResolveWindowNumber(windowNumber)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { [weak nsView] in
+            guard let windowNumber = nsView?.window?.windowNumber else { return }
+            didResolveWindowNumber(windowNumber)
         }
     }
 }

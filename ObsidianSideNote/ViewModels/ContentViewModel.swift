@@ -29,6 +29,7 @@ final class ContentViewModel: ObservableObject {
     private let activeNoteFileMonitor = VaultNoteFileMonitor()
     private var lastSyncedActiveNoteText: String?
     private var textAutosaveSuppressionValue: String?
+    private var eventWindowNumber: Int?
 
     init(mode: NoteMode) {
         self.mode = mode
@@ -59,6 +60,10 @@ final class ContentViewModel: ObservableObject {
         DispatchQueue.main.async(execute: focusEditor)
         installSearchKeyMonitor()
         installOpenNoteKeyMonitor()
+    }
+
+    func setEventWindowNumber(_ windowNumber: Int) {
+        eventWindowNumber = windowNumber
     }
 
     func stop() {
@@ -263,6 +268,7 @@ final class ContentViewModel: ObservableObject {
         guard mode == .editVaultFile, searchKeyMonitor == nil else { return }
         searchKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
+            guard eventBelongsToWindow(event) else { return event }
             guard shouldShowSearchSuggestions else {
                 return event
             }
@@ -292,6 +298,7 @@ final class ContentViewModel: ObservableObject {
         openNoteKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self,
                   NSApp.isActive,
+                  eventBelongsToWindow(event),
                   ShortcutPreference.normalized(event.charactersIgnoringModifiers ?? "") == "o",
                   ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == .command else {
                 return event
@@ -300,6 +307,14 @@ final class ContentViewModel: ObservableObject {
             openCurrentNoteInObsidian()
             return nil
         }
+    }
+
+    func eventBelongsToWindow(_ event: NSEvent) -> Bool {
+        guard let eventWindowNumber else { return false }
+        if event.windowNumber != 0 {
+            return event.windowNumber == eventWindowNumber
+        }
+        return NSApp.keyWindow?.windowNumber == eventWindowNumber
     }
 
     private func removeSearchKeyMonitor() {
