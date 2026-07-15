@@ -64,6 +64,9 @@ final class ContentViewModel: ObservableObject {
     func stop() {
         flushSelectedNoteAutosave()
         flushNewNoteAutosave()
+        if mode == .newNote {
+            NewNotePreferences.touchSession()
+        }
         activeNoteFileMonitor.stop()
         removeSearchKeyMonitor()
         removeOpenNoteKeyMonitor()
@@ -225,6 +228,9 @@ final class ContentViewModel: ObservableObject {
         UserDefaults.standard.set(noteText, forKey: mode.draftTextKey)
         if !mode.draftTitleKey.isEmpty {
             UserDefaults.standard.set(noteTitle, forKey: mode.draftTitleKey)
+        }
+        if mode == .newNote {
+            NewNotePreferences.touchSession()
         }
     }
 
@@ -418,6 +424,7 @@ final class ContentViewModel: ObservableObject {
         }
 
         if let createdNewNote {
+            UserDefaults.standard.set(createdNewNote.relativePath, forKey: NewNotePreferences.draftFilePathKey)
             if noteTitle.trimmingCharacters(in: .whitespacesAndNewlines) != createdNewNote.title,
                let renamedNote = VaultStore.rename(createdNewNote, toTitle: noteTitle) {
                 self.createdNewNote = renamedNote

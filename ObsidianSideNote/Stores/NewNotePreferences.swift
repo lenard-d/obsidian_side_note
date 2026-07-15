@@ -52,6 +52,10 @@ struct NewNotePreferences {
     }
 
     static func startSession(now: Date = Date()) {
+        touchSession(now: now)
+    }
+
+    static func touchSession(now: Date = Date()) {
         UserDefaults.standard.set(now, forKey: sessionStartedAtKey)
     }
 
