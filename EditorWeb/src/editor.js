@@ -1,8 +1,9 @@
-import {EditorState, RangeSetBuilder, StateField} from "@codemirror/state";
+import {EditorState, RangeSetBuilder, StateEffect, StateField} from "@codemirror/state";
 import {defaultKeymap, history, historyKeymap, indentLess, indentMore} from "@codemirror/commands";
 import {markdown, markdownKeymap} from "@codemirror/lang-markdown";
-import {syntaxHighlighting, defaultHighlightStyle, indentUnit} from "@codemirror/language";
+import {HighlightStyle, syntaxHighlighting, indentUnit} from "@codemirror/language";
 import {Decoration, EditorView, keymap, WidgetType} from "@codemirror/view";
+import {tags} from "@lezer/highlight";
 
 const bridge = window.webkit?.messageHandlers?.editor;
 
@@ -65,6 +66,17 @@ function bulletMarker(line) {
 }
 
 const listIndent = "  ";
+const imageExtensions = new Set(["apng", "avif", "gif", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp"]);
+const refreshMediaEmbedsEffect = StateEffect.define();
+let mediaEmbedSources = new Map();
+let textReplacements = new Map();
+
+const markdownHighlightStyle = HighlightStyle.define([
+  {tag: tags.strong, fontWeight: "700"},
+  {tag: tags.emphasis, fontStyle: "italic"},
+  {tag: tags.monospace, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace"},
+  {tag: tags.heading, fontWeight: "inherit", fontSize: "inherit"}
+]);
 
 function listItemMarker(line) {
   const task = /^(\s*)([-*+]\s+\[[ xX]\]\s*)/.exec(line);
@@ -250,8 +262,53 @@ class BulletMarkerWidget extends WidgetType {
     const marker = document.createElement("span");
     marker.className = "list-bullet-marker";
     marker.setAttribute("aria-hidden", "true");
-    marker.textContent = "•";
+    const dot = document.createElement("span");
+    dot.className = "list-bullet-dot";
+    marker.appendChild(dot);
     return marker;
+  }
+}
+
+class ImageEmbedWidget extends WidgetType {
+  constructor(embed, source, position) {
+    super();
+    this.embed = embed;
+    this.source = source;
+    this.position = position;
+  }
+
+  eq(other) {
+    return other.source === this.source &&
+      other.embed.link === this.embed.link &&
+      other.embed.title === this.embed.title &&
+      other.position === this.position;
+  }
+
+  toDOM(view) {
+    const figure = document.createElement("figure");
+    figure.className = "image-embed";
+    figure.title = this.embed.link;
+
+    const image = document.createElement("img");
+    image.src = this.source;
+    image.alt = this.embed.title || this.embed.link;
+    image.draggable = false;
+    figure.appendChild(image);
+
+    figure.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      view.dispatch({
+        selection: {anchor: this.position},
+        scrollIntoView: true
+      });
+      view.focus();
+    });
+
+    return figure;
+  }
+
+  ignoreEvent(event) {
+    return event.type === "mousedown";
   }
 }
 
@@ -266,11 +323,77 @@ function toggleTaskCheckbox(view, position, checked) {
   if (hadFocus) view.focus();
 }
 
+function imageEmbed(line) {
+  const trimmed = line.trim();
+  const wikiEmbed = /^!\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]$/.exec(trimmed);
+  if (wikiEmbed) {
+    const link = wikiEmbed[1].trim();
+    if (!isImageLink(link)) return null;
+    return {
+      link,
+      title: (wikiEmbed[2] || displayNameForLink(link)).trim()
+    };
+  }
+
+  const markdownImage = /^!\[([^\]]*)\]\(([^)]+)\)$/.exec(trimmed);
+  if (!markdownImage) return null;
+
+  const link = markdownImage[2].trim();
+  if (!isImageLink(link)) return null;
+  return {
+    link,
+    title: (markdownImage[1] || displayNameForLink(link)).trim()
+  };
+}
+
+function isImageLink(link) {
+  const extension = extensionForLink(link);
+  return imageExtensions.has(extension);
+}
+
+function extensionForLink(link) {
+  const cleanLink = link.split(/[?#]/)[0];
+  const lastPathComponent = cleanLink.split("/").pop() || cleanLink;
+  const dotIndex = lastPathComponent.lastIndexOf(".");
+  return dotIndex >= 0 ? lastPathComponent.slice(dotIndex + 1).toLowerCase() : "";
+}
+
+function displayNameForLink(link) {
+  const cleanLink = link.split(/[?#]/)[0].split("|")[0];
+  const lastPathComponent = cleanLink.split("/").pop() || cleanLink;
+  const dotIndex = lastPathComponent.lastIndexOf(".");
+  return dotIndex > 0 ? lastPathComponent.slice(0, dotIndex) : lastPathComponent;
+}
+
+function mediaSourceForLink(link) {
+  if (mediaEmbedSources.has(link)) return mediaEmbedSources.get(link);
+  try {
+    const decodedLink = decodeURIComponent(link);
+    return mediaEmbedSources.get(decodedLink) || null;
+  } catch {
+    return null;
+  }
+}
+
 function buildMarkdownDecorations(state) {
   const builder = new RangeSetBuilder();
 
   for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
     const line = state.doc.line(lineNumber);
+    const media = imageEmbed(line.text);
+    const mediaSource = media ? mediaSourceForLink(media.link) : null;
+    if (media && mediaSource && !selectionTouchesLine(state, line)) {
+      builder.add(
+        line.from,
+        line.to,
+        Decoration.replace({
+          widget: new ImageEmbedWidget(media, mediaSource, line.from),
+          block: true
+        })
+      );
+      continue;
+    }
+
     const heading = atxHeadingMarker(line.text);
     if (heading) {
       builder.add(line.from, line.from, Decoration.line({class: `osn-heading-line osn-heading-line-${heading.level}`}));
@@ -285,6 +408,7 @@ function buildMarkdownDecorations(state) {
 
     const task = taskMarker(line.text);
     if (task) {
+      builder.add(line.from, line.from, Decoration.line({class: "osn-list-line"}));
       builder.add(
         line.from + task.listMarkerFrom,
         line.from + task.listMarkerTo,
@@ -306,6 +430,7 @@ function buildMarkdownDecorations(state) {
     } else {
       const bullet = bulletMarker(line.text);
       if (bullet) {
+        builder.add(line.from, line.from, Decoration.line({class: "osn-list-line"}));
         const markerFrom = line.from + bullet.from;
         const markerTo = line.from + bullet.to;
         const tokenFrom = line.from + bullet.tokenFrom;
@@ -327,12 +452,74 @@ function buildMarkdownDecorations(state) {
   return builder.finish();
 }
 
+function insertListNewline(view) {
+  const selection = view.state.selection.main;
+  if (!selection.empty) return false;
+
+  const line = view.state.doc.lineAt(selection.head);
+  const marker = listItemMarker(line.text);
+  if (!marker || selection.head < line.from + marker.markerTo) return false;
+
+  const content = line.text.slice(marker.markerTo);
+  if (content.trim().length === 0) {
+    view.dispatch({
+      changes: {
+        from: line.from + marker.indentationLength,
+        to: line.from + marker.markerTo,
+        insert: ""
+      },
+      selection: {anchor: line.from + marker.indentationLength},
+      scrollIntoView: true
+    });
+    view.focus();
+    return true;
+  }
+
+  const insertion = `\n${marker.continuation}`;
+  view.dispatch({
+    changes: {from: selection.head, insert: insertion},
+    selection: {anchor: selection.head + insertion.length},
+    scrollIntoView: true
+  });
+  view.focus();
+  return true;
+}
+
+function applyTextReplacement(view, from, to, text) {
+  if (from !== to || textReplacements.size === 0 || !/^[\s.,!?;:]$/.test(text)) return false;
+
+  const line = view.state.doc.lineAt(from);
+  const prefix = view.state.sliceDoc(line.from, from);
+  let matchedShortcut = null;
+  for (const shortcut of textReplacements.keys()) {
+    if (prefix.endsWith(shortcut) && (!matchedShortcut || shortcut.length > matchedShortcut.length)) {
+      matchedShortcut = shortcut;
+    }
+  }
+  if (!matchedShortcut) return false;
+
+  const replacement = textReplacements.get(matchedShortcut);
+  const replacementFrom = from - matchedShortcut.length;
+  const insertion = `${replacement}${text}`;
+  view.dispatch({
+    changes: {from: replacementFrom, to: from, insert: insertion},
+    selection: {anchor: replacementFrom + insertion.length},
+    scrollIntoView: true,
+    userEvent: "input.type"
+  });
+  return true;
+}
+
 const markdownDecorationField = StateField.define({
   create(state) {
     return buildMarkdownDecorations(state);
   },
   update(decorations, transaction) {
-    if (transaction.docChanged || transaction.selection) {
+    if (
+      transaction.docChanged ||
+      transaction.selection ||
+      transaction.effects.some((effect) => effect.is(refreshMediaEmbedsEffect))
+    ) {
       return buildMarkdownDecorations(transaction.state);
     }
     return decorations.map(transaction.changes);
@@ -361,6 +548,12 @@ function hasMediaPaste(event) {
 
 function markdownKeyBindings() {
   return [
+    {
+      key: "Enter",
+      run(view) {
+        return insertListNewline(view);
+      }
+    },
     {
       key: "Tab",
       run(view) {
@@ -428,6 +621,7 @@ function applyCommand(view, command) {
     default:
       break;
   }
+  return view.state.doc.toString();
 }
 
 function wrapSelection(view, wrapper) {
@@ -470,6 +664,33 @@ function insertText(view, text) {
     scrollIntoView: true
   });
   view.focus();
+}
+
+function insertMediaEmbedBlock(view, markdown) {
+  const selection = view.state.selection.main;
+  const documentText = view.state.doc.toString();
+  const characterBefore = selection.from > 0 ? documentText[selection.from - 1] : "\n";
+  const characterAfter = selection.to < documentText.length ? documentText[selection.to] : "\n";
+  let insertion = markdown.trim();
+
+  if (!insertion) return documentText;
+  if (selection.from > 0 && characterBefore !== "\n") {
+    insertion = `\n${insertion}`;
+  }
+  if (!insertion.endsWith("\n")) {
+    insertion += "\n";
+  }
+  if (selection.to < documentText.length && characterAfter !== "\n") {
+    insertion += "\n";
+  }
+
+  view.dispatch({
+    changes: {from: selection.from, to: selection.to, insert: insertion},
+    selection: {anchor: selection.from + insertion.length},
+    scrollIntoView: true
+  });
+  view.focus();
+  return view.state.doc.toString();
 }
 
 function insertLinePrefix(view, prefix) {
@@ -523,8 +744,9 @@ function installEditor() {
       history(),
       markdown({addKeymap: false}),
       indentUnit.of(listIndent),
-      syntaxHighlighting(defaultHighlightStyle, {fallback: true}),
+      syntaxHighlighting(markdownHighlightStyle),
       markdownDecorationField,
+      EditorView.inputHandler.of((view, from, to, text) => applyTextReplacement(view, from, to, text)),
       keymap.of(markdownKeyBindings()),
       EditorView.lineWrapping,
       EditorView.updateListener.of((update) => {
@@ -594,6 +816,10 @@ function installEditor() {
         },
         ".cm-line": {
           padding: "0"
+        },
+        ".cm-line.osn-list-line": {
+          paddingLeft: "20px",
+          textIndent: "-20px"
         },
         ".cm-line.osn-heading-line": {
           lineHeight: "1.28",
@@ -671,16 +897,39 @@ function installEditor() {
           boxSizing: "border-box",
           display: "inline-flex",
           width: "15px",
-          height: "15px",
+          height: "1cap",
           minWidth: "15px",
           alignItems: "center",
           justifyContent: "center",
           margin: "0 5px 0 0",
           color: "rgb(255, 255, 255)",
-          fontSize: "18px",
-          fontWeight: "700",
-          lineHeight: "14px",
-          verticalAlign: "-0.13em"
+          lineHeight: "1cap",
+          verticalAlign: "baseline"
+        },
+        ".list-bullet-dot": {
+          display: "block",
+          width: "5px",
+          height: "5px",
+          borderRadius: "50%",
+          backgroundColor: "currentColor"
+        },
+        ".image-embed": {
+          boxSizing: "border-box",
+          display: "block",
+          maxWidth: "100%",
+          margin: "6px 0",
+          padding: "0",
+          lineHeight: "0"
+        },
+        ".image-embed img": {
+          display: "block",
+          maxWidth: "100%",
+          maxHeight: "260px",
+          width: "auto",
+          height: "auto",
+          borderRadius: "7px",
+          objectFit: "contain",
+          backgroundColor: "rgba(255, 255, 255, 0.08)"
         }
       })
     ]
@@ -742,6 +991,12 @@ function installEditor() {
     bulletMarkerCountForTests() {
       return view.dom.querySelectorAll(".list-bullet-marker").length;
     },
+    imageEmbedCountForTests() {
+      return view.dom.querySelectorAll(".image-embed img").length;
+    },
+    imageEmbedSourcesForTests() {
+      return [...view.dom.querySelectorAll(".image-embed img")].map((image) => image.getAttribute("src"));
+    },
     firstTaskCheckboxMetricsForTests() {
       const checkbox = view.dom.querySelector(".task-checkbox");
       if (!checkbox) return null;
@@ -796,6 +1051,10 @@ function installEditor() {
       view.contentDOM.dispatchEvent(event);
       return event.defaultPrevented;
     },
+    applyTextInputForTests(text) {
+      const selection = view.state.selection.main;
+      return applyTextReplacement(view, selection.from, selection.to, text);
+    },
     indentListItemForTests() {
       return indentSelectedListItems(view);
     },
@@ -830,16 +1089,30 @@ function installEditor() {
           verticalAlign: getComputedStyle(checkbox).verticalAlign
         } : null,
         bullet: bullet ? {
-          text: bullet.textContent,
+          dotCount: bullet.querySelectorAll(".list-bullet-dot").length,
           color: getComputedStyle(bullet).color,
           display: getComputedStyle(bullet).display,
+          height: getComputedStyle(bullet).height,
           alignItems: getComputedStyle(bullet).alignItems,
           justifyContent: getComputedStyle(bullet).justifyContent,
-          verticalAlign: getComputedStyle(bullet).verticalAlign
+          verticalAlign: getComputedStyle(bullet).verticalAlign,
+          usesCapHeight: CSS.supports("height", "1cap")
         } : null,
         scrollerLineHeight: scroller ? getComputedStyle(scroller).lineHeight : null,
         headingLines
       };
+    },
+    lineLayoutForTests() {
+      return [...view.dom.querySelectorAll(".cm-line")].map((line) => {
+        const style = getComputedStyle(line);
+        return {
+          text: line.innerText,
+          isList: line.classList.contains("osn-list-line"),
+          paddingLeft: style.paddingLeft,
+          textIndent: style.textIndent,
+          fontWeight: style.fontWeight
+        };
+      });
     },
     textColorsForTests() {
       return [...view.dom.querySelectorAll(".cm-content, .cm-content *")]
@@ -855,10 +1128,20 @@ function installEditor() {
       view.focus();
     },
     applyCommand(command) {
-      applyCommand(view, command);
+      return applyCommand(view, command);
     },
     insertMarkdown(text) {
       applyCommand(view, {type: "insertText", text});
+    },
+    insertMediaEmbed(markdown) {
+      return insertMediaEmbedBlock(view, markdown);
+    },
+    setMediaEmbeds(sources) {
+      mediaEmbedSources = new Map(Object.entries(sources || {}));
+      view.dispatch({effects: refreshMediaEmbedsEffect.of(null)});
+    },
+    setTextReplacements(replacements) {
+      textReplacements = new Map(Object.entries(replacements || {}));
     },
     setAppearance(scheme) {
       applyAppearance(view, scheme);
