@@ -43,11 +43,6 @@ final class ObsidianSideNoteUITests: XCTestCase {
 
     @MainActor
     func testEditVaultShortcutLoadsContentAndAcceptsTyping() throws {
-        try XCTSkipIf(
-            ProcessInfo.processInfo.environment["OSN_ENABLE_FLOATING_WINDOW_UI_TEST"] != "1",
-            "Floating-window global-shortcut automation is opt-in because XCUI does not reliably expose the accessory window in this test session."
-        )
-
         let bundleIdentifier = "live.lukesmith.ObsidianSideNote"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: bundleIdentifier))
         let originalDefaults = defaults.persistentDomain(forName: bundleIdentifier)
@@ -96,6 +91,18 @@ final class ObsidianSideNoteUITests: XCTestCase {
 
         app.typeText("OSN_UI_TEST")
         XCTAssertTrue((editor.value as? String)?.contains("OSN_UI_TEST") == true)
+
+        let boldButton = app.buttons["markdown-toolbar-bold"]
+        XCTAssertTrue(boldButton.waitForExistence(timeout: 2))
+        XCTAssertGreaterThanOrEqual(boldButton.frame.width, 28)
+        XCTAssertGreaterThanOrEqual(boldButton.frame.height, 28)
+        boldButton.click()
+        let toolbarAppliedBold = NSPredicate { _, _ in
+            (editor.value as? String)?.contains("**text**") == true
+        }
+        expectation(for: toolbarAppliedBold, evaluatedWith: editor)
+        waitForExpectations(timeout: 2)
+
         app.typeKey("z", modifierFlags: .command)
     }
 

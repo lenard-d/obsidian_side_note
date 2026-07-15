@@ -56,6 +56,20 @@ struct ObsidianSideNoteTests {
         #expect(!NewNotePreferences.shouldResumeVisibleSession(now: Date(timeIntervalSince1970: 281)))
     }
 
+    @Test func newNoteResumeIntervalRefreshesOnDraftActivity() {
+        defer {
+            UserDefaults.standard.removeObject(forKey: NewNotePreferences.sessionStartedAtKey)
+            Defaults.reset(.newNoteResumeIntervalMinutes)
+        }
+
+        NewNotePreferences.setResumeIntervalMinutes(3)
+        NewNotePreferences.startSession(now: Date(timeIntervalSince1970: 100))
+        NewNotePreferences.touchSession(now: Date(timeIntervalSince1970: 250))
+
+        #expect(NewNotePreferences.shouldResumeVisibleSession(now: Date(timeIntervalSince1970: 429)))
+        #expect(!NewNotePreferences.shouldResumeVisibleSession(now: Date(timeIntervalSince1970: 431)))
+    }
+
     @Test func newNotePreferencesRejectUnsupportedIntervals() {
         defer {
             UserDefaults.standard.removeObject(forKey: NewNotePreferences.resumeIntervalMinutesKey)
@@ -294,6 +308,152 @@ struct ObsidianSideNoteTests {
 
         #expect(note.relativePath == "Indexed Later.md")
         #expect(VaultStore.markdownNotes(matching: "later").map(\.relativePath) == ["Indexed Later.md"])
+    }
+
+    @Test func vaultSearchFindsFuzzyAbbreviationMatches() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: temporaryVaultURL.appendingPathComponent("Projects", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        try "Body".write(
+            to: temporaryVaultURL.appendingPathComponent("Projects/Image Paste Regression.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "Body".write(
+            to: temporaryVaultURL.appendingPathComponent("Projects/Keyboard Shortcut Bugs.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "Body".write(
+            to: temporaryVaultURL.appendingPathComponent("Daily Note.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+
+        #expect(VaultStore.markdownNotes(matching: "ipr").map(\.relativePath).first == "Projects/Image Paste Regression.md")
+        #expect(VaultStore.markdownNotes(matching: "ksb").map(\.relativePath).first == "Projects/Keyboard Shortcut Bugs.md")
+    }
+
+    @Test func vaultSearchScopesSlashQueriesToDirectorySubtree() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let scopedDirectory = temporaryVaultURL.appendingPathComponent("0009 Persönliches/00 Inbox", isDirectory: true)
+        let siblingDirectory = temporaryVaultURL.appendingPathComponent("0009 Persönliches/01 Archive", isDirectory: true)
+        try FileManager.default.createDirectory(at: scopedDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: siblingDirectory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        try "Body".write(
+            to: scopedDirectory.appendingPathComponent("Budapest Ideas.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "Body".write(
+            to: scopedDirectory.appendingPathComponent("Plain Inbox.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "Body".write(
+            to: siblingDirectory.appendingPathComponent("Budapest Archive.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "Body".write(
+            to: temporaryVaultURL.appendingPathComponent("Budapest Root.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+
+        #expect(VaultStore.markdownNotes(matching: "Budapest").map(\.relativePath).contains("0009 Persönliches/01 Archive/Budapest Archive.md"))
+        #expect(VaultStore.markdownNotes(matching: "0009 Persönliches/00 Inbox/Budapest").map(\.relativePath) == [
+            "0009 Persönliches/00 Inbox/Budapest Ideas.md"
+        ])
+    }
+
+    @Test func vaultSearchTrailingSlashListsOnlyDirectorySubtree() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let scopedDirectory = temporaryVaultURL.appendingPathComponent("Projects/Active", isDirectory: true)
+        let nestedDirectory = scopedDirectory.appendingPathComponent("Nested", isDirectory: true)
+        let siblingDirectory = temporaryVaultURL.appendingPathComponent("Projects/Archive", isDirectory: true)
+        try FileManager.default.createDirectory(at: nestedDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: siblingDirectory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        try "Body".write(
+            to: scopedDirectory.appendingPathComponent("Alpha.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "Body".write(
+            to: nestedDirectory.appendingPathComponent("Beta.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "Body".write(
+            to: siblingDirectory.appendingPathComponent("Gamma.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+
+        #expect(VaultStore.markdownNotes(matching: "Projects/Active/").map(\.relativePath) == [
+            "Projects/Active/Alpha.md",
+            "Projects/Active/Nested/Beta.md"
+        ])
+    }
+
+    @Test func vaultSearchCanLimitRankedResultsForLazySuggestionRendering() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        for index in 0..<8 {
+            try "Body".write(
+                to: temporaryVaultURL.appendingPathComponent(String(format: "Note %02d.md", index)),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+
+        #expect(VaultStore.markdownNotes(matching: "note", limit: 3).map(\.relativePath) == [
+            "Note 00.md",
+            "Note 01.md",
+            "Note 02.md"
+        ])
     }
 
     @MainActor
@@ -851,6 +1011,27 @@ struct ObsidianSideNoteTests {
 
         #expect(textView.string == "make **bold**")
         #expect(textView.selectedRange() == NSRange(location: 5, length: 8))
+    }
+
+    @MainActor
+    @Test func markdownEditorCommandDispatcherKeepsTheCurrentCoordinatorConnected() {
+        final class Owner {}
+
+        let dispatcher = MarkdownEditorCommandDispatcher()
+        let staleOwner = Owner()
+        let currentOwner = Owner()
+        var receivedCommands: [MarkdownEditorCommand] = []
+
+        dispatcher.connect(owner: staleOwner) { _ in }
+        dispatcher.connect(owner: currentOwner) { receivedCommands.append($0) }
+        dispatcher.disconnect(owner: staleOwner)
+        dispatcher.send(.wrap("**"))
+
+        #expect(receivedCommands == [.wrap("**")])
+
+        dispatcher.disconnect(owner: currentOwner)
+        dispatcher.send(.insertLink)
+        #expect(receivedCommands == [.wrap("**")])
     }
 
     @MainActor
@@ -1982,6 +2163,17 @@ struct ObsidianSideNoteTests {
               window.editor.setSelection(source.length);
               const checkboxAlignment = window.editor.taskCheckboxAlignmentForTests();
               const checkboxToggle = window.editor.firstTaskCheckboxMetricsForTests();
+              window.editor.setMarkdown("Paragraph\\n- ");
+              window.editor.setSelection("Paragraph\\n- ".length);
+              const transientHeadingLayout = window.editor.lineLayoutForTests();
+              window.editor.setMarkdown("abbr");
+              window.editor.setSelection(4);
+              window.editor.setTextReplacements({abbr: "expanded text"});
+              const replacementHandled = window.editor.applyTextInputForTests(" ");
+              const replacementMarkdown = window.editor.getMarkdown();
+              window.editor.setMarkdown("hello");
+              window.editor.setSelection(5);
+              const toolbarMarkdown = window.editor.applyCommand({type: "wrap", wrapper: "**"});
               return JSON.stringify({
                 inactiveText,
                 activeCheckboxText,
@@ -1997,7 +2189,11 @@ struct ObsidianSideNoteTests {
                 colors,
                 styles,
                 checkboxAlignment,
-                checkboxToggle
+                checkboxToggle,
+                transientHeadingLayout,
+                replacementHandled,
+                replacementMarkdown,
+                toolbarMarkdown
               });
             })();
             """
@@ -2020,13 +2216,14 @@ struct ObsidianSideNoteTests {
         let colors = try #require(editorPresentation["colors"] as? [String])
         let styles = try #require(editorPresentation["styles"] as? [String: Any])
         let checkboxStyles = try #require(styles["checkbox"] as? [String: String])
-        let bulletStyles = try #require(styles["bullet"] as? [String: String])
+        let bulletStyles = try #require(styles["bullet"] as? [String: Any])
         let headingLines = try #require(styles["headingLines"] as? [[String: Any]])
         let checkboxAlignment = try #require(editorPresentation["checkboxAlignment"] as? [[String: Any]])
         let checkboxToggle = try #require(editorPresentation["checkboxToggle"] as? [String: Any])
         let toggleBefore = try #require(checkboxToggle["before"] as? [String: Int])
         let toggleAfter = try #require(checkboxToggle["after"] as? [String: Int])
         let toggledMarkdown = try #require(checkboxToggle["markdown"] as? String)
+        let transientHeadingLayout = try #require(editorPresentation["transientHeadingLayout"] as? [[String: Any]])
         let scrollerLineHeight = try #require(styles["scrollerLineHeight"] as? String)
         let headingFontSizes = headingLines.compactMap { line -> Double? in
             guard let fontSize = line["fontSize"] as? String else { return nil }
@@ -2057,9 +2254,13 @@ struct ObsidianSideNoteTests {
         #expect(checkboxStyles["display"] == "inline-flex")
         #expect(checkboxStyles["alignItems"] == "center")
         #expect(checkboxStyles["justifyContent"] == "center")
-        #expect(bulletStyles["text"] == "\u{2022}")
-        #expect(bulletStyles["color"] == "rgb(255, 255, 255)")
-        #expect(bulletStyles["display"] == "inline-flex")
+        #expect(bulletStyles["dotCount"] as? Int == 1)
+        #expect(bulletStyles["color"] as? String == "rgb(255, 255, 255)")
+        #expect(bulletStyles["display"] as? String == "inline-flex")
+        #expect(bulletStyles["usesCapHeight"] as? Bool == true)
+        let bulletHeight = Double((bulletStyles["height"] as? String ?? "").replacingOccurrences(of: "px", with: "")) ?? 0
+        #expect(bulletHeight > 0 && bulletHeight < 15)
+        #expect(bulletStyles["verticalAlign"] as? String == "baseline")
         #expect(Double(scrollerLineHeight.replacingOccurrences(of: "px", with: "")) ?? 0 > 24)
         #expect(headingFontSizes.count == 3)
         #expect(headingFontSizes[0] > headingFontSizes[1])
@@ -2085,6 +2286,66 @@ struct ObsidianSideNoteTests {
         #expect(abs(uncheckedTopWithinLine - checkedTopWithinLine) < 0.5)
         #expect(toggleBefore == toggleAfter)
         #expect(toggledMarkdown == "# One\n## Two\n### Heading\n\n- [x] Task\n- [x] Done\n- Plain")
+        #expect(transientHeadingLayout.first?["fontWeight"] as? String == "400")
+        #expect(transientHeadingLayout.last?["isList"] as? Bool == true)
+        #expect(transientHeadingLayout.last?["paddingLeft"] as? String == "20px")
+        #expect(transientHeadingLayout.last?["textIndent"] as? String == "-20px")
+        #expect(editorPresentation["replacementHandled"] as? Bool == true)
+        #expect(editorPresentation["replacementMarkdown"] as? String == "expanded text ")
+        #expect(editorPresentation["toolbarMarkdown"] as? String == "hello**text**")
+    }
+
+    @MainActor
+    @Test func markdownEditorDisplaysInsertedImageEmbedWhileKeepingMarkdownSource() async throws {
+        let html = try MarkdownEditorResource.bundledHTML()
+        let messageHandler = MarkdownEditorReadyMessageHandler()
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.userContentController.add(messageHandler, name: "editor")
+        defer {
+            configuration.userContentController.removeScriptMessageHandler(forName: "editor")
+        }
+
+        let webView = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 480),
+            configuration: configuration
+        )
+        webView.loadHTMLString(html, baseURL: nil)
+
+        let deadline = Date().addingTimeInterval(3)
+        while !messageHandler.isReady && messageHandler.errorMessage == nil && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(messageHandler.errorMessage == nil)
+        #expect(messageHandler.isReady)
+
+        let imageDataURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+        let resultJSON = try #require(try await webView.evaluateJavaScript(
+            """
+            (() => {
+              window.editor.setMarkdown("Intro");
+              window.editor.setSelection("Intro".length);
+              window.editor.setMediaEmbeds({"Attachments/pasted.png": "\(imageDataURL)"});
+              window.editor.insertMediaEmbed("![[Attachments/pasted.png]]");
+              const selection = window.editor.getSelection();
+              const markdown = window.editor.getMarkdown();
+              const imageCount = window.editor.imageEmbedCountForTests();
+              const imageSources = window.editor.imageEmbedSourcesForTests();
+              return JSON.stringify({selection, markdown, imageCount, imageSources});
+            })();
+            """
+        ) as? String)
+        let resultData = try #require(resultJSON.data(using: .utf8))
+        let result = try #require(JSONSerialization.jsonObject(with: resultData) as? [String: Any])
+        let selection = try #require(result["selection"] as? [String: Any])
+        let markdown = try #require(result["markdown"] as? String)
+        let imageSources = try #require(result["imageSources"] as? [String])
+
+        #expect(markdown == "Intro\n![[Attachments/pasted.png]]\n")
+        #expect(result["imageCount"] as? Int == 1)
+        #expect(imageSources == [imageDataURL])
+        #expect(selection["head"] as? Int == markdown.utf16.count)
     }
 
     @MainActor
@@ -2137,6 +2398,12 @@ struct ObsidianSideNoteTests {
               const backspaceHandled = window.editor.dispatchKeyForTests("Backspace");
               const afterBackspace = window.editor.getMarkdown();
 
+              window.editor.setMarkdown("- First\\n- Second\\n- ");
+              window.editor.setSelection("- First\\n- Second\\n- ".length);
+              const emptyEnterHandled = window.editor.dispatchKeyForTests("Enter");
+              const afterEmptyEnter = window.editor.getMarkdown();
+              const afterEmptyEnterSelection = window.editor.getSelection();
+
               return JSON.stringify({
                 tabHandled,
                 afterTab,
@@ -2145,7 +2412,10 @@ struct ObsidianSideNoteTests {
                 commandShiftTabHandled,
                 afterCommandShiftTab,
                 backspaceHandled,
-                afterBackspace
+                afterBackspace,
+                emptyEnterHandled,
+                afterEmptyEnter,
+                afterEmptyEnterSelection
               });
             })();
             """
@@ -2163,6 +2433,10 @@ struct ObsidianSideNoteTests {
         #expect(indentation["afterCommandShiftTab"] as? String == "- Item")
         #expect(indentation["backspaceHandled"] as? Bool == true)
         #expect(indentation["afterBackspace"] as? String == "  - ")
+        #expect(indentation["emptyEnterHandled"] as? Bool == true)
+        #expect(indentation["afterEmptyEnter"] as? String == "- First\n- Second\n")
+        let emptyEnterSelection = try #require(indentation["afterEmptyEnterSelection"] as? [String: Any])
+        #expect(emptyEnterSelection["head"] as? Int == ("- First\n- Second\n" as NSString).length)
     }
 
     @MainActor
@@ -2192,6 +2466,57 @@ struct ObsidianSideNoteTests {
         #expect(textField.stringValue == "New Title")
         try await Task.sleep(nanoseconds: 1_000_000)
         #expect(didCommit)
+    }
+
+    @MainActor
+    @Test func appDelegateBuildsDistinctCascadedEditorWindows() {
+        let delegate = AppDelegate()
+        let first = delegate.getOrBuildWindow(mode: .newNote)
+        let second = delegate.getOrBuildWindow(mode: .newNote)
+        defer {
+            first.close()
+            second.close()
+        }
+
+        #expect(first !== second)
+        #expect(first.frame.origin.x - second.frame.origin.x == 22)
+        #expect(first.frame.origin.y - second.frame.origin.y == 22)
+    }
+
+    @MainActor
+    @Test func contentViewModelRoutesLocalKeyEventsOnlyToItsOwnWindow() throws {
+        let ownWindow = NSWindow()
+        let otherWindow = NSWindow()
+        let viewModel = ContentViewModel(mode: .editVaultFile)
+        viewModel.setEventWindowNumber(ownWindow.windowNumber)
+
+        let ownEvent = try #require(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: ownWindow.windowNumber,
+            context: nil,
+            characters: "a",
+            charactersIgnoringModifiers: "a",
+            isARepeat: false,
+            keyCode: 0
+        ))
+        let otherEvent = try #require(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: otherWindow.windowNumber,
+            context: nil,
+            characters: "a",
+            charactersIgnoringModifiers: "a",
+            isARepeat: false,
+            keyCode: 0
+        ))
+
+        #expect(viewModel.eventBelongsToWindow(ownEvent))
+        #expect(!viewModel.eventBelongsToWindow(otherEvent))
     }
 
     @MainActor
