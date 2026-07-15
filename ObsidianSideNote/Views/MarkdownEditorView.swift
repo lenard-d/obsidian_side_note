@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 struct MarkdownEditorView: View {
     @Binding var text: String
@@ -8,8 +9,7 @@ struct MarkdownEditorView: View {
     @Binding var cursorEndRequestID: Int
     let insertMedia: (String) -> Void
     @State private var isDropTargeted = false
-    @State private var commandRequest: MarkdownEditorCommandRequest?
-    @State private var commandRequestID = 0
+    @StateObject private var commandDispatcher = MarkdownEditorCommandDispatcher()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,7 +62,7 @@ struct MarkdownEditorView: View {
             isFocused: $isFocused,
             focusRequestID: $focusRequestID,
             cursorEndRequestID: $cursorEndRequestID,
-            commandRequest: $commandRequest,
+            commandDispatcher: commandDispatcher,
             insertMedia: insertMedia,
             didInsertMedia: {}
         )
@@ -78,8 +78,7 @@ struct MarkdownEditorView: View {
     }
 
     private func sendCommand(_ command: MarkdownEditorCommand) {
-        commandRequestID += 1
-        commandRequest = MarkdownEditorCommandRequest(id: commandRequestID, command: command)
+        commandDispatcher.send(command)
     }
 
     private func handlePaste(_ providers: [NSItemProvider]) {
@@ -97,15 +96,31 @@ struct MarkdownEditorView: View {
     }
 }
 
-struct MarkdownEditorCommandRequest: Equatable {
-    let id: Int
-    let command: MarkdownEditorCommand
-}
-
 enum MarkdownEditorCommand: Equatable {
     case wrap(String)
     case insertLink
     case insertPrefix(String)
+}
+
+@MainActor
+final class MarkdownEditorCommandDispatcher: ObservableObject {
+    private weak var owner: AnyObject?
+    private var handler: ((MarkdownEditorCommand) -> Void)?
+
+    func connect(owner: AnyObject, _ handler: @escaping (MarkdownEditorCommand) -> Void) {
+        self.owner = owner
+        self.handler = handler
+    }
+
+    func disconnect(owner: AnyObject) {
+        guard self.owner === owner else { return }
+        self.owner = nil
+        handler = nil
+    }
+
+    func send(_ command: MarkdownEditorCommand) {
+        handler?(command)
+    }
 }
 
 private struct MarkdownButton: View {
@@ -117,9 +132,12 @@ private struct MarkdownButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .foregroundColor(.secondary)
-                .frame(width: 24, height: 24)
         }
         .buttonStyle(.plain)
+        .frame(width: 28, height: 28)
+        .contentShape(Rectangle())
+        .accessibilityLabel(tooltip)
+        .accessibilityIdentifier("markdown-toolbar-\(symbol)")
         .help(tooltip)
     }
 }

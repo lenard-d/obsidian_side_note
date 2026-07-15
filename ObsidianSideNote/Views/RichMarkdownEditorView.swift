@@ -58,7 +58,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     @FocusState.Binding var isFocused: Bool
     @Binding var focusRequestID: Int
     @Binding var cursorEndRequestID: Int
-    @Binding var commandRequest: MarkdownEditorCommandRequest?
+    let commandDispatcher: MarkdownEditorCommandDispatcher
     let insertMedia: (String) -> Void
     let didInsertMedia: () -> Void
 
@@ -68,7 +68,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             isFocused: $isFocused,
             focusRequestID: $focusRequestID,
             cursorEndRequestID: $cursorEndRequestID,
-            commandRequest: $commandRequest,
+            commandDispatcher: commandDispatcher,
             insertMedia: insertMedia,
             didInsertMedia: didInsertMedia
         )
@@ -94,16 +94,17 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
     func updateNSView(_ webView: MarkdownEditorWebView, context: Context) {
         context.coordinator.webView = webView
+        context.coordinator.syncMediaEmbedsToWebViewIfNeeded(text)
         context.coordinator.syncMarkdownToWebViewIfNeeded(text)
         context.coordinator.syncAppearanceToWebViewIfNeeded()
         context.coordinator.applyFocusIfNeeded()
         context.coordinator.applyFocusRequestIfNeeded()
         context.coordinator.applyCursorEndRequestIfNeeded()
-        context.coordinator.applyCommandRequestIfNeeded()
     }
 
     static func dismantleNSView(_ webView: MarkdownEditorWebView, coordinator: Coordinator) {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "editor")
+        coordinator.disconnectCommandDispatcher()
         coordinator.stopObserving()
     }
 
@@ -112,7 +113,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         @FocusState.Binding private var isFocused: Bool
         @Binding private var focusRequestID: Int
         @Binding private var cursorEndRequestID: Int
-        @Binding private var commandRequest: MarkdownEditorCommandRequest?
+        private let commandDispatcher: MarkdownEditorCommandDispatcher
         private let insertMedia: (String) -> Void
         private let didInsertMedia: () -> Void
         fileprivate weak var webView: MarkdownEditorWebView?
@@ -124,15 +125,19 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private var appliedAppearanceScheme: String?
         private var appliedFocusRequestID = 0
         private var appliedCursorEndRequestID = 0
-        private var appliedCommandRequestID = 0
+        private var pendingCommand: MarkdownEditorCommand?
+        private var mediaEmbedsInWebView: [String: String] = [:]
+        private var textReplacementsInWebView: [String: String] = [:]
+        private var imageEmbedDataURLCache: [String: String] = [:]
         private var focusRequestObserver: NSObjectProtocol?
+        private static let maxInlineImageEmbeds = 24
 
         init(
             text: Binding<String>,
             isFocused: FocusState<Bool>.Binding,
             focusRequestID: Binding<Int>,
             cursorEndRequestID: Binding<Int>,
-            commandRequest: Binding<MarkdownEditorCommandRequest?>,
+            commandDispatcher: MarkdownEditorCommandDispatcher,
             insertMedia: @escaping (String) -> Void,
             didInsertMedia: @escaping () -> Void
         ) {
@@ -140,9 +145,13 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             _isFocused = isFocused
             _focusRequestID = focusRequestID
             _cursorEndRequestID = cursorEndRequestID
-            _commandRequest = commandRequest
+            self.commandDispatcher = commandDispatcher
             self.insertMedia = insertMedia
             self.didInsertMedia = didInsertMedia
+            super.init()
+            commandDispatcher.connect(owner: self) { [weak self] command in
+                self?.requestCommand(command)
+            }
         }
 
         deinit {
@@ -190,6 +199,15 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
             appliedAppearanceScheme = scheme
             callEditorFunction("setAppearance", argument: scheme)
+            syncTextReplacementsToWebViewIfNeeded()
+        }
+
+        private func syncTextReplacementsToWebViewIfNeeded() {
+            guard isReady else { return }
+            let replacements = Self.systemTextReplacements()
+            guard replacements != textReplacementsInWebView else { return }
+            textReplacementsInWebView = replacements
+            callEditorFunction("setTextReplacements", argument: replacements)
         }
 
         func applyFocusIfNeeded() {
@@ -209,15 +227,41 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             focusEditorAtEnd()
         }
 
-        func applyCommandRequestIfNeeded() {
-            guard isReady,
-                  let commandRequest,
-                  commandRequest.id != appliedCommandRequestID else {
+        func requestCommand(_ command: MarkdownEditorCommand) {
+            guard isReady else {
+                pendingCommand = command
                 return
             }
+            applyWebCommand(webCommand(for: command))
+        }
 
-            appliedCommandRequestID = commandRequest.id
-            callEditorFunction("applyCommand", argument: webCommand(for: commandRequest.command))
+        func disconnectCommandDispatcher() {
+            commandDispatcher.disconnect(owner: self)
+        }
+
+        private func applyPendingCommandIfNeeded() {
+            guard isReady, let pendingCommand else { return }
+            self.pendingCommand = nil
+            applyWebCommand(webCommand(for: pendingCommand))
+        }
+
+        private func applyWebCommand(_ command: [String: Any]) {
+            guard isReady, let webView else { return }
+            let argumentJSON = Self.javaScriptLiteral(for: command)
+            webView.evaluateJavaScript("window.editor?.applyCommand(\(argumentJSON));") { [weak self] result, error in
+                guard let self else { return }
+                if let error {
+                    AppLogger.app.error("Markdown editor toolbar command failed: \(error.localizedDescription, privacy: .public)")
+                    return
+                }
+
+                guard let markdown = result as? String else { return }
+                self.pendingMarkdownInWebView = nil
+                self.markdownInWebView = markdown
+                if markdown != self.text {
+                    self.text = markdown
+                }
+            }
         }
 
         func observeFocusRequests() {
@@ -267,12 +311,15 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 markdownInWebView = ""
                 pendingMarkdownInWebView = nil
                 appliedAppearanceScheme = nil
+                mediaEmbedsInWebView = [:]
+                textReplacementsInWebView = [:]
+                syncMediaEmbedsToWebViewIfNeeded(text)
                 syncMarkdownToWebViewIfNeeded(text)
                 syncAppearanceToWebViewIfNeeded()
                 applyFocusIfNeeded()
                 applyFocusRequestIfNeeded()
                 applyCursorEndRequestIfNeeded()
-                applyCommandRequestIfNeeded()
+                applyPendingCommandIfNeeded()
                 if pendingFocusAtEnd {
                     focusEditorAtEnd()
                 }
@@ -302,6 +349,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
             isReady = false
             appliedAppearanceScheme = nil
+            mediaEmbedsInWebView = [:]
+            textReplacementsInWebView = [:]
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation?, withError error: Error) {
@@ -344,11 +393,92 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private func insertMediaLink(_ relativePath: String) {
             let insertion = "![[\(relativePath)]]"
             if isReady {
-                callEditorFunction("insertMarkdown", argument: insertion)
+                ensureMediaEmbedSource(for: relativePath)
+                insertMediaEmbedInWebEditor(insertion, fallbackRelativePath: relativePath)
             } else {
                 insertMedia(relativePath)
             }
             didInsertMedia()
+        }
+
+        func syncMediaEmbedsToWebViewIfNeeded(_ markdown: String) {
+            guard isReady else { return }
+            let sources = imageEmbedSources(in: markdown)
+            guard sources != mediaEmbedsInWebView else { return }
+
+            mediaEmbedsInWebView = sources
+            callEditorFunction("setMediaEmbeds", argument: sources)
+        }
+
+        private func ensureMediaEmbedSource(for link: String) {
+            guard isReady, let source = imageEmbedSource(for: link) else { return }
+            guard mediaEmbedsInWebView[link] != source else { return }
+
+            mediaEmbedsInWebView[link] = source
+            callEditorFunction("setMediaEmbeds", argument: mediaEmbedsInWebView)
+        }
+
+        private func imageEmbedSources(in markdown: String) -> [String: String] {
+            var sources: [String: String] = [:]
+
+            for line in markdown.components(separatedBy: .newlines) {
+                guard sources.count < Self.maxInlineImageEmbeds,
+                      let media = EmbeddedMedia(markdownLine: line),
+                      media.type == .image,
+                      sources[media.link] == nil,
+                      let source = imageEmbedSource(for: media.link) else {
+                    continue
+                }
+
+                sources[media.link] = source
+            }
+
+            return sources
+        }
+
+        private func imageEmbedSource(for link: String) -> String? {
+            if let url = URL(string: link),
+               let scheme = url.scheme?.lowercased(),
+               ["http", "https", "data"].contains(scheme) {
+                return url.absoluteString
+            }
+
+            if let cachedDataURL = imageEmbedDataURLCache[link] {
+                return cachedDataURL
+            }
+
+            guard let image = VaultStore.image(forMediaLink: link, maxPixelWidth: 1200),
+                  let data = Self.pngData(from: image) else {
+                return nil
+            }
+
+            let dataURL = "data:image/png;base64,\(data.base64EncodedString())"
+            imageEmbedDataURLCache[link] = dataURL
+            return dataURL
+        }
+
+        private func insertMediaEmbedInWebEditor(_ insertion: String, fallbackRelativePath: String) {
+            guard isReady, let webView else {
+                insertMedia(fallbackRelativePath)
+                return
+            }
+
+            let argumentJSON = Self.javaScriptLiteral(for: insertion)
+            webView.evaluateJavaScript("window.editor?.insertMediaEmbed(\(argumentJSON));") { [weak self] result, error in
+                guard let self else { return }
+                if let error {
+                    AppLogger.app.error("Markdown editor media insert failed: \(error.localizedDescription, privacy: .public)")
+                    self.insertMedia(fallbackRelativePath)
+                    return
+                }
+
+                guard let markdown = result as? String else { return }
+                self.pendingMarkdownInWebView = nil
+                self.markdownInWebView = markdown
+                if markdown != self.text {
+                    self.text = markdown
+                }
+            }
         }
 
         private func focusEditor() {
@@ -430,6 +560,30 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 literal.removeLast()
             }
             return literal
+        }
+
+        private static func pngData(from image: NSImage) -> Data? {
+            var proposedRect = NSRect(origin: .zero, size: image.size)
+            guard let cgImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil) else {
+                return nil
+            }
+
+            let bitmap = NSBitmapImageRep(cgImage: cgImage)
+            bitmap.size = image.size
+            return bitmap.representation(using: .png, properties: [:])
+        }
+
+        private static func systemTextReplacements() -> [String: String] {
+            let items = UserDefaults.standard.array(forKey: "NSUserDictionaryReplacementItems") as? [[String: Any]] ?? []
+            return items.reduce(into: [:]) { replacements, item in
+                guard (item["on"] as? Bool) != false,
+                      let shortcut = item["replace"] as? String,
+                      !shortcut.isEmpty,
+                      let replacement = item["with"] as? String else {
+                    return
+                }
+                replacements[shortcut] = replacement
+            }
         }
     }
 }
