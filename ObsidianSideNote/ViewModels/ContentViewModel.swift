@@ -4,6 +4,8 @@ import OSLog
 import SwiftUI
 
 final class ContentViewModel: ObservableObject {
+    private static let vaultSearchSuggestionLimit = 80
+
     let mode: NoteMode
 
     @Published var noteText: String = ""
@@ -235,7 +237,10 @@ final class ContentViewModel: ObservableObject {
             return
         }
 
-        searchResults = VaultStore.markdownNotes(matching: vaultSearchQuery)
+        searchResults = VaultStore.markdownNotes(
+            matching: vaultSearchQuery,
+            limit: Self.vaultSearchSuggestionLimit
+        )
         highlightedSearchIndex = min(highlightedSearchIndex, max(searchResults.count - 1, 0))
         if let selectedNote, !searchResults.contains(where: { $0.relativePath == selectedNote.relativePath }) {
             self.selectedNote = nil

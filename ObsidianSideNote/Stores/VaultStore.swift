@@ -154,18 +154,19 @@ struct VaultStore {
         return url
     }
 
-    static func markdownNotes(matching query: String = "") -> [VaultNote] {
+    static func markdownNotes(matching query: String = "", limit: Int? = nil) -> [VaultNote] {
         guard let vaultURL = selectedVaultURL else { return [] }
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let notes = indexedMarkdownNotes(in: vaultURL)
 
         guard !normalizedQuery.isEmpty else {
+            if let limit, limit >= 0, notes.count > limit {
+                return Array(notes.prefix(limit))
+            }
             return notes
         }
 
-        return notes.filter { note in
-            "\(note.title) \(note.relativePath)".lowercased().contains(normalizedQuery)
-        }
+        return VaultNoteSearch.rankedNotes(notes, matching: query, limit: limit)
     }
 
     static func rebuildMarkdownIndex() {
