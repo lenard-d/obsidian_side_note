@@ -8,7 +8,11 @@ struct MarkdownEditorView: View {
     @Binding var focusRequestID: Int
     @Binding var cursorEndRequestID: Int
     let insertMedia: (String) -> Void
+    let openWikiLink: (String, Bool) -> Void
+    let openMarkdownLink: (String, Bool) -> Void
+    let linkPreviewHover: (LinkPreviewHoverEvent) -> Void
     @State private var isDropTargeted = false
+    @State private var mediaImportError: MediaAttachmentImportError?
     @StateObject private var commandDispatcher = MarkdownEditorCommandDispatcher()
 
     var body: some View {
@@ -29,6 +33,23 @@ struct MarkdownEditorView: View {
                     .padding(8)
                     .allowsHitTesting(false)
             }
+        }
+        .alert(
+            "Media Import Failed",
+            isPresented: Binding(
+                get: { mediaImportError != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        mediaImportError = nil
+                    }
+                }
+            )
+        ) {
+            Button("OK") {
+                mediaImportError = nil
+            }
+        } message: {
+            Text(mediaImportError?.userMessage ?? "The media could not be imported.")
         }
     }
 
@@ -64,7 +85,14 @@ struct MarkdownEditorView: View {
             cursorEndRequestID: $cursorEndRequestID,
             commandDispatcher: commandDispatcher,
             insertMedia: insertMedia,
-            didInsertMedia: {}
+            didInsertMedia: {},
+            didFailMediaImport: { error in
+                mediaImportError = error
+            },
+            openWikiLink: openWikiLink,
+            openMarkdownLink: openMarkdownLink,
+            isReadOnly: false,
+            linkPreviewHover: linkPreviewHover
         )
             .background(Color(NSColor.textBackgroundColor).opacity(0.3))
             .onDrop(
@@ -82,10 +110,14 @@ struct MarkdownEditorView: View {
     }
 
     private func handlePaste(_ providers: [NSItemProvider]) {
-        MediaAttachmentImporter.importFirst(from: providers) { relativePath in
-            guard let relativePath else { return }
+        MediaAttachmentImporter.importFirst(from: providers) { result in
             DispatchQueue.main.async {
-                insertMedia(relativePath)
+                switch result {
+                case let .success(relativePath):
+                    insertMedia(relativePath)
+                case let .failure(error):
+                    mediaImportError = error
+                }
             }
         }
     }

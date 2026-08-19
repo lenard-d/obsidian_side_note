@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var useObsidianNewNoteFolder = NewNotePreferences.useObsidianNewNoteFolder
     @State private var newNoteFolderPath = NewNotePreferences.folderPath
     @State private var launchAtLogin = LoginItemStore.isEnabled
+    @State private var linkPreviewHoverDelay = LinkPreviewPreferences.hoverDelaySeconds
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,6 +33,8 @@ struct SettingsView: View {
                     newNoteSection
                     Divider()
                     shortcutsSection
+                    Divider()
+                    linkPreviewSection
                     Divider()
                     appSection
                 }
@@ -129,6 +132,36 @@ struct SettingsView: View {
                 }
 
             Text(LoginItemStore.statusDescription)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var linkPreviewSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Link Previews")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            Stepper(
+                value: $linkPreviewHoverDelay,
+                in: LinkPreviewPreferences.allowedHoverDelaySeconds,
+                step: 0.1
+            ) {
+                HStack {
+                    Text("Open after hovering")
+                    Spacer()
+                    Text("\(linkPreviewHoverDelay, specifier: "%.1f") s")
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            .onChange(of: linkPreviewHoverDelay) { _, newValue in
+                LinkPreviewPreferences.setHoverDelaySeconds(newValue)
+                linkPreviewHoverDelay = LinkPreviewPreferences.hoverDelaySeconds
+            }
+
+            Text("Set to 0.0 seconds to show previews immediately.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
         }

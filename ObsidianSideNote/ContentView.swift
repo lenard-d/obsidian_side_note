@@ -11,6 +11,9 @@ import AppKit
 struct ContentView: View {
     let mode: NoteMode
     let closeWindow: () -> Void
+    let openWikiLink: (String, Bool) -> Void
+    let openMarkdownLink: (String, Bool) -> Void
+    let linkPreviewHover: (LinkPreviewHoverEvent) -> Void
 
     @StateObject private var viewModel: ContentViewModel
     @State private var titleFocusRequestID = 0
@@ -18,9 +21,18 @@ struct ContentView: View {
     @FocusState private var isTextEditorFocused: Bool
     @FocusState private var isVaultSearchFocused: Bool
 
-    init(mode: NoteMode, closeWindow: @escaping () -> Void) {
+    init(
+        mode: NoteMode,
+        closeWindow: @escaping () -> Void,
+        openWikiLink: @escaping (String, Bool) -> Void = { _, _ in },
+        openMarkdownLink: @escaping (String, Bool) -> Void = { _, _ in },
+        linkPreviewHover: @escaping (LinkPreviewHoverEvent) -> Void = { _ in }
+    ) {
         self.mode = mode
         self.closeWindow = closeWindow
+        self.openWikiLink = openWikiLink
+        self.openMarkdownLink = openMarkdownLink
+        self.linkPreviewHover = linkPreviewHover
         _viewModel = StateObject(wrappedValue: ContentViewModel(mode: mode))
     }
 
@@ -42,7 +54,10 @@ struct ContentView: View {
                             isFocused: $isTextEditorFocused,
                             focusRequestID: $editorFocusRequestID,
                             cursorEndRequestID: $viewModel.cursorEndRequestID,
-                            insertMedia: viewModel.insertMediaLink
+                            insertMedia: viewModel.insertMediaLink,
+                            openWikiLink: handleWikiLink,
+                            openMarkdownLink: handleMarkdownLink,
+                            linkPreviewHover: linkPreviewHover
                         )
                         .zIndex(0)
                     }
@@ -155,6 +170,20 @@ struct ContentView: View {
         } else if mode.startsWithEditorFocus {
             focusEditor()
         }
+    }
+
+    private func handleWikiLink(_ link: String, inNewWindow: Bool) {
+        if !inNewWindow, viewModel.selectWikiLink(link) {
+            return
+        }
+        openWikiLink(link, inNewWindow)
+    }
+
+    private func handleMarkdownLink(_ link: String, inNewWindow: Bool) {
+        if !inNewWindow, viewModel.selectMarkdownLink(link) {
+            return
+        }
+        openMarkdownLink(link, inNewWindow)
     }
 
     private func focusEditor(in window: NSWindow? = nil) {

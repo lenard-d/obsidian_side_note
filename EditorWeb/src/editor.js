@@ -1,11 +1,13 @@
-import {EditorState, RangeSetBuilder, StateEffect, StateField} from "@codemirror/state";
+import {Compartment, EditorState, StateEffect, StateField} from "@codemirror/state";
 import {defaultKeymap, history, historyKeymap, indentLess, indentMore} from "@codemirror/commands";
 import {markdown, markdownKeymap} from "@codemirror/lang-markdown";
-import {HighlightStyle, syntaxHighlighting, indentUnit} from "@codemirror/language";
+import {syntaxHighlighting, indentUnit, syntaxTree} from "@codemirror/language";
 import {Decoration, EditorView, keymap, WidgetType} from "@codemirror/view";
-import {tags} from "@lezer/highlight";
+import {installEditorTestAdapter} from "./editor-test-adapter.js";
+import {editorTheme, markdownHighlightStyle} from "./editor-theme.js";
 
 const bridge = window.webkit?.messageHandlers?.editor;
+const readOnlyViews = new WeakSet();
 
 function post(message) {
   bridge?.postMessage(message);
@@ -71,11 +73,10 @@ const refreshMediaEmbedsEffect = StateEffect.define();
 let mediaEmbedSources = new Map();
 let textReplacements = new Map();
 
-const markdownHighlightStyle = HighlightStyle.define([
-  {tag: tags.strong, fontWeight: "700"},
-  {tag: tags.emphasis, fontStyle: "italic"},
-  {tag: tags.monospace, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace"},
-  {tag: tags.heading, fontWeight: "inherit", fontSize: "inherit"}
+const inlineSyntaxPresentations = new Map([
+  ["StrongEmphasis", {markerName: "EmphasisMark", className: "osn-inline-strong"}],
+  ["Emphasis", {markerName: "EmphasisMark", className: "osn-inline-emphasis"}],
+  ["InlineCode", {markerName: "CodeMark", className: "osn-inline-code"}]
 ]);
 
 function listItemMarker(line) {
@@ -214,6 +215,89 @@ function selectionTouchesToken(state, from, to) {
     const head = range.head;
     return head >= from && head <= to;
   });
+}
+
+function inlineSyntaxPresentationDecorations(state) {
+  const decorations = [];
+
+  syntaxTree(state).iterate({
+    enter(node) {
+      const presentation = inlineSyntaxPresentations.get(node.name);
+      if (!presentation) return;
+
+      const markers = node.node.getChildren(presentation.markerName);
+      if (markers.length < 2) return;
+
+      const firstMarker = markers[0];
+      const lastMarker = markers[markers.length - 1];
+      addInlinePresentationDecorations(
+        decorations,
+        state,
+        node.from,
+        node.to,
+        firstMarker.to,
+        lastMarker.from,
+        presentation.className,
+        markers.map((marker) => ({from: marker.from, to: marker.to}))
+      );
+    }
+  });
+
+  addHighlightPresentationDecorations(decorations, state);
+
+  return decorations;
+}
+
+function addInlinePresentationDecorations(
+  decorations,
+  state,
+  from,
+  to,
+  contentFrom,
+  contentTo,
+  className,
+  markers
+) {
+  if (contentFrom < contentTo) {
+    decorations.push(
+      Decoration.mark({class: className}).range(contentFrom, contentTo)
+    );
+  }
+
+  if (selectionTouchesToken(state, from, to)) return;
+  for (const marker of markers) {
+    decorations.push(
+      Decoration.replace({inclusive: false}).range(marker.from, marker.to)
+    );
+  }
+}
+
+function addHighlightPresentationDecorations(decorations, state) {
+  for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
+    const line = state.doc.line(lineNumber);
+    const pattern = /==(.+?)==/g;
+    let match;
+
+    while ((match = pattern.exec(line.text)) != null) {
+      const from = line.from + match.index;
+      const to = from + match[0].length;
+      const contentFrom = from + 2;
+      const contentTo = to - 2;
+      addInlinePresentationDecorations(
+        decorations,
+        state,
+        from,
+        to,
+        contentFrom,
+        contentTo,
+        "osn-inline-highlight",
+        [
+          {from, to: contentFrom},
+          {from: contentTo, to}
+        ]
+      );
+    }
+  }
 }
 
 class TaskCheckboxWidget extends WidgetType {
@@ -365,6 +449,204 @@ function displayNameForLink(link) {
   return dotIndex > 0 ? lastPathComponent.slice(0, dotIndex) : lastPathComponent;
 }
 
+function wikiLinksInLine(line) {
+  const links = [];
+  const pattern = /\[\[([^\]\n]+)\]\]/g;
+  let match;
+
+  while ((match = pattern.exec(line)) != null) {
+    if (match.index > 0 && line[match.index - 1] === "!") continue;
+
+    const separator = match[1].indexOf("|");
+    const destination = (separator >= 0 ? match[1].slice(0, separator) : match[1]).trim();
+    const alias = separator >= 0 ? match[1].slice(separator + 1).trim() : "";
+    if (!destination) continue;
+
+    links.push({
+      from: match.index,
+      to: match.index + match[0].length,
+      target: destination,
+      displayText: alias || wikiLinkDisplayText(destination)
+    });
+  }
+
+  return links;
+}
+
+function wikiLinkDisplayText(destination) {
+  const hashIndex = destination.indexOf("#");
+  const file = hashIndex >= 0 ? destination.slice(0, hashIndex) : destination;
+  const heading = hashIndex >= 0 ? destination.slice(hashIndex + 1) : "";
+  const pieces = [];
+  const fileName = displayNameForLink(file);
+  if (fileName) pieces.push(fileName);
+  if (heading) {
+    pieces.push(...heading.split("#").filter(Boolean));
+  }
+  return pieces.join(" › ") || destination;
+}
+
+function markdownLinksInLine(line) {
+  const links = [];
+  let cursor = 0;
+
+  while (cursor < line.length) {
+    const from = line.indexOf("[", cursor);
+    if (from < 0) break;
+    cursor = from + 1;
+
+    if ((from > 0 && line[from - 1] === "!") || line[from + 1] === "[") {
+      continue;
+    }
+
+    const asciiLabelTo = line.indexOf("](", from + 1);
+    if (asciiLabelTo < 0) continue;
+
+    const destinationFrom = asciiLabelTo + 2;
+    let parenthesisDepth = 0;
+    let to = -1;
+    for (let index = destinationFrom; index < line.length; index += 1) {
+      const character = line[index];
+      if (character === "\\") {
+        index += 1;
+      } else if (character === "(") {
+        parenthesisDepth += 1;
+      } else if (character === ")") {
+        if (parenthesisDepth === 0) {
+          to = index + 1;
+          break;
+        }
+        parenthesisDepth -= 1;
+      }
+    }
+    if (to < 0) continue;
+
+    const label = line.slice(from + 1, asciiLabelTo);
+    const target = normalizedMarkdownLinkTarget(line.slice(destinationFrom, to - 1));
+    if (!label || !target) {
+      cursor = to;
+      continue;
+    }
+
+    links.push({from, to, target, displayText: label});
+    cursor = to;
+  }
+
+  return links;
+}
+
+function normalizedMarkdownLinkTarget(rawTarget) {
+  let target = rawTarget.trim();
+  if (target.startsWith("<")) {
+    const closingBracket = target.indexOf(">");
+    if (closingBracket > 0) {
+      return target.slice(1, closingBracket).trim();
+    }
+  }
+
+  const title = /\s+(?:"[^"]*"|'[^']*'|\([^)]*\))\s*$/.exec(target);
+  if (title) {
+    target = target.slice(0, title.index).trim();
+  }
+  return target;
+}
+
+let linkPreviewSessionSequence = 0;
+
+function installLinkPreviewHover(element, kind, target) {
+  const sessionID = `link-preview-${++linkPreviewSessionSequence}`;
+  const report = (phase) => {
+    const rect = element.getBoundingClientRect();
+    post({
+      type: "linkPreviewHover",
+      phase,
+      sessionID,
+      kind,
+      target,
+      anchor: {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height
+      }
+    });
+  };
+  element.addEventListener("mouseenter", () => report("entered"));
+  element.addEventListener("mouseleave", () => report("exited"));
+}
+
+class WikiLinkWidget extends WidgetType {
+  constructor(target, displayText) {
+    super();
+    this.target = target;
+    this.displayText = displayText;
+  }
+
+  eq(other) {
+    return other.target === this.target && other.displayText === this.displayText;
+  }
+
+  toDOM() {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "osn-wiki-link";
+    button.textContent = this.displayText;
+    button.setAttribute("aria-label", `Open note ${this.displayText}`);
+    installLinkPreviewHover(button, "wiki", this.target);
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      post({
+        type: "wikiLink",
+        target: this.target,
+        newWindow: event.metaKey
+      });
+    });
+    return button;
+  }
+
+  ignoreEvent() {
+    return true;
+  }
+}
+
+class MarkdownLinkWidget extends WidgetType {
+  constructor(target, displayText) {
+    super();
+    this.target = target;
+    this.displayText = displayText;
+  }
+
+  eq(other) {
+    return other.target === this.target && other.displayText === this.displayText;
+  }
+
+  toDOM() {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "osn-markdown-link";
+    button.textContent = this.displayText;
+    button.setAttribute("aria-label", `Open link ${this.displayText}`);
+    installLinkPreviewHover(button, "markdown", this.target);
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      post({
+        type: "markdownLink",
+        target: this.target,
+        newWindow: event.metaKey
+      });
+    });
+    return button;
+  }
+
+  ignoreEvent() {
+    return true;
+  }
+}
+
 function mediaSourceForLink(link) {
   if (mediaEmbedSources.has(link)) return mediaEmbedSources.get(link);
   try {
@@ -376,80 +658,116 @@ function mediaSourceForLink(link) {
 }
 
 function buildMarkdownDecorations(state) {
-  const builder = new RangeSetBuilder();
+  const decorations = inlineSyntaxPresentationDecorations(state);
 
   for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
     const line = state.doc.line(lineNumber);
     const media = imageEmbed(line.text);
     const mediaSource = media ? mediaSourceForLink(media.link) : null;
     if (media && mediaSource && !selectionTouchesLine(state, line)) {
-      builder.add(
-        line.from,
-        line.to,
+      decorations.push(
         Decoration.replace({
           widget: new ImageEmbedWidget(media, mediaSource, line.from),
           block: true
-        })
+        }).range(line.from, line.to)
       );
       continue;
     }
 
+    for (const wikiLink of wikiLinksInLine(line.text)) {
+      const from = line.from + wikiLink.from;
+      const to = line.from + wikiLink.to;
+      if (selectionTouchesToken(state, from, to)) {
+        decorations.push(
+          Decoration.mark({class: "osn-wiki-link-source"}).range(from, to)
+        );
+      } else {
+        decorations.push(
+          Decoration.replace({
+            widget: new WikiLinkWidget(wikiLink.target, wikiLink.displayText),
+            inclusive: false
+          }).range(from, to)
+        );
+      }
+    }
+
+    for (const markdownLink of markdownLinksInLine(line.text)) {
+      const from = line.from + markdownLink.from;
+      const to = line.from + markdownLink.to;
+      if (selectionTouchesToken(state, from, to)) {
+        decorations.push(
+          Decoration.mark({class: "osn-markdown-link-source"}).range(from, to)
+        );
+      } else {
+        decorations.push(
+          Decoration.replace({
+            widget: new MarkdownLinkWidget(markdownLink.target, markdownLink.displayText),
+            inclusive: false
+          }).range(from, to)
+        );
+      }
+    }
+
     const heading = atxHeadingMarker(line.text);
     if (heading) {
-      builder.add(line.from, line.from, Decoration.line({class: `osn-heading-line osn-heading-line-${heading.level}`}));
+      decorations.push(
+        Decoration.line({class: `osn-heading-line osn-heading-line-${heading.level}`}).range(line.from)
+      );
       if (!selectionTouchesLine(state, line)) {
-        builder.add(
-          line.from + heading.from,
-          line.from + heading.to,
-          Decoration.replace({inclusive: false})
+        decorations.push(
+          Decoration.replace({inclusive: false}).range(
+            line.from + heading.from,
+            line.from + heading.to
+          )
         );
       }
     }
 
     const task = taskMarker(line.text);
     if (task) {
-      builder.add(line.from, line.from, Decoration.line({class: "osn-list-line"}));
-      builder.add(
-        line.from + task.listMarkerFrom,
-        line.from + task.listMarkerTo,
-        Decoration.replace({inclusive: false})
+      decorations.push(Decoration.line({class: "osn-list-line"}).range(line.from));
+      decorations.push(
+        Decoration.replace({inclusive: false}).range(
+          line.from + task.listMarkerFrom,
+          line.from + task.listMarkerTo
+        )
       );
 
       const checkboxFrom = line.from + task.checkboxFrom;
       const checkboxTo = line.from + task.checkboxTo;
       if (!selectionTouchesToken(state, checkboxFrom, checkboxTo)) {
-        builder.add(
-          checkboxFrom,
-          checkboxTo,
+        decorations.push(
           Decoration.replace({
             widget: new TaskCheckboxWidget(task.checked, checkboxFrom),
             inclusive: false
-          })
+          }).range(checkboxFrom, checkboxTo)
         );
       }
     } else {
       const bullet = bulletMarker(line.text);
       if (bullet) {
-        builder.add(line.from, line.from, Decoration.line({class: "osn-list-line"}));
+        decorations.push(Decoration.line({class: "osn-list-line"}).range(line.from));
         const markerFrom = line.from + bullet.from;
         const markerTo = line.from + bullet.to;
         const tokenFrom = line.from + bullet.tokenFrom;
         const tokenTo = line.from + bullet.tokenTo;
         if (!selectionTouchesToken(state, tokenFrom, tokenTo)) {
-          builder.add(
-            markerFrom,
-            markerTo,
+          decorations.push(
             Decoration.replace({
               widget: new BulletMarkerWidget(),
               inclusive: false
-            })
+            }).range(markerFrom, markerTo)
+          );
+        } else {
+          decorations.push(
+            Decoration.mark({class: "list-bullet-source"}).range(markerFrom, markerTo)
           );
         }
       }
     }
   }
 
-  return builder.finish();
+  return Decoration.set(decorations, true);
 }
 
 function insertListNewline(view) {
@@ -605,6 +923,7 @@ function markdownKeyBindings() {
 }
 
 function applyCommand(view, command) {
+  if (readOnlyViews.has(view)) return view.state.doc.toString();
   switch (command.type) {
     case "wrap":
       wrapSelection(view, command.wrapper);
@@ -626,13 +945,86 @@ function applyCommand(view, command) {
 
 function wrapSelection(view, wrapper) {
   const selection = view.state.selection.main;
-  const selected = selection.empty ? "text" : view.state.sliceDoc(selection.from, selection.to);
+  const documentText = view.state.doc.toString();
+
+  if (selection.empty) {
+    const markerBeforeCursor = documentText.slice(
+      selection.from - wrapper.length,
+      selection.from
+    );
+    const markerAfterCursor = documentText.slice(
+      selection.from,
+      selection.from + wrapper.length
+    );
+
+    if (markerBeforeCursor === wrapper && markerAfterCursor === wrapper) {
+      const cursor = selection.from - wrapper.length;
+      view.dispatch({
+        changes: [
+          {from: cursor, to: selection.from},
+          {from: selection.from, to: selection.from + wrapper.length}
+        ],
+        selection: {anchor: cursor},
+        scrollIntoView: true
+      });
+      view.focus();
+      return;
+    }
+
+    const insertion = `${wrapper}${wrapper}`;
+    const cursor = selection.from + wrapper.length;
+    view.dispatch({
+      changes: {from: selection.from, insert: insertion},
+      selection: {anchor: cursor},
+      scrollIntoView: true
+    });
+    view.focus();
+    return;
+  }
+
+  const selected = documentText.slice(selection.from, selection.to);
+  const selectedIncludesMarkers = selected.length >= wrapper.length * 2 &&
+    selected.startsWith(wrapper) &&
+    selected.endsWith(wrapper);
+
+  if (selectedIncludesMarkers) {
+    const unwrapped = selected.slice(wrapper.length, selected.length - wrapper.length);
+    view.dispatch({
+      changes: {from: selection.from, to: selection.to, insert: unwrapped},
+      selection: {anchor: selection.from, head: selection.from + unwrapped.length},
+      scrollIntoView: true
+    });
+    view.focus();
+    return;
+  }
+
+  const markersImmediatelySurroundSelection =
+    documentText.slice(selection.from - wrapper.length, selection.from) === wrapper &&
+    documentText.slice(selection.to, selection.to + wrapper.length) === wrapper;
+
+  if (markersImmediatelySurroundSelection) {
+    view.dispatch({
+      changes: [
+        {from: selection.from - wrapper.length, to: selection.from},
+        {from: selection.to, to: selection.to + wrapper.length}
+      ],
+      selection: {
+        anchor: selection.from - wrapper.length,
+        head: selection.to - wrapper.length
+      },
+      scrollIntoView: true
+    });
+    view.focus();
+    return;
+  }
+
   const replacement = `${wrapper}${selected}${wrapper}`;
-  const anchor = selection.empty ? selection.from + wrapper.length : selection.from;
-  const head = selection.empty ? anchor + selected.length : selection.from + replacement.length;
   view.dispatch({
     changes: {from: selection.from, to: selection.to, insert: replacement},
-    selection: {anchor, head},
+    selection: {
+      anchor: selection.from + wrapper.length,
+      head: selection.from + wrapper.length + selected.length
+    },
     scrollIntoView: true
   });
   view.focus();
@@ -667,6 +1059,7 @@ function insertText(view, text) {
 }
 
 function insertMediaEmbedBlock(view, markdown) {
+  if (readOnlyViews.has(view)) return view.state.doc.toString();
   const selection = view.state.selection.main;
   const documentText = view.state.doc.toString();
   const characterBefore = selection.from > 0 ? documentText[selection.from - 1] : "\n";
@@ -737,12 +1130,17 @@ function focusBlankEditorArea(view, event) {
 
 function installEditor() {
   let applyingExternalChange = false;
+  const editingMode = new Compartment();
   const root = document.getElementById("editor");
   const state = EditorState.create({
     doc: "",
     extensions: [
       history(),
       markdown({addKeymap: false}),
+      editingMode.of([
+        EditorState.readOnly.of(false),
+        EditorView.editable.of(true)
+      ]),
       indentUnit.of(listIndent),
       syntaxHighlighting(markdownHighlightStyle),
       markdownDecorationField,
@@ -762,6 +1160,10 @@ function installEditor() {
           return focusBlankEditorArea(view, event);
         },
         paste(event) {
+          if (readOnlyViews.has(view)) {
+            event.preventDefault();
+            return true;
+          }
           if (hasMediaPaste(event)) {
             event.preventDefault();
             post({type: "pasteMedia"});
@@ -770,6 +1172,10 @@ function installEditor() {
           return false;
         },
         drop(event, view) {
+          if (readOnlyViews.has(view)) {
+            event.preventDefault();
+            return true;
+          }
           if (hasMediaFile(event.dataTransfer)) {
             post({type: "dropMedia"});
           }
@@ -781,157 +1187,7 @@ function installEditor() {
           return false;
         }
       }),
-      EditorView.theme({
-        "&": {
-          height: "100%",
-          backgroundColor: "transparent",
-          color: "#ffffff",
-          font: "16px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif"
-        },
-        "&.osn-light": {
-          color: "#ffffff"
-        },
-        "&.osn-dark": {
-          color: "#ffffff"
-        },
-        ".cm-scroller": {
-          height: "100%",
-          overflow: "auto",
-          fontFamily: "inherit",
-          lineHeight: "1.58"
-        },
-        ".cm-content": {
-          minHeight: "100%",
-          padding: "8px 12px 0",
-          caretColor: "currentColor"
-        },
-        ".cm-content, .cm-content *, .cm-line, .cm-line *": {
-          color: "#ffffff !important",
-          textDecoration: "none !important",
-          textDecorationLine: "none !important"
-        },
-        ".cm-cursor": {
-          borderLeftColor: "currentColor",
-          borderLeftWidth: "1.5px"
-        },
-        ".cm-line": {
-          padding: "0"
-        },
-        ".cm-line.osn-list-line": {
-          paddingLeft: "20px",
-          textIndent: "-20px"
-        },
-        ".cm-line.osn-heading-line": {
-          lineHeight: "1.28",
-          padding: "2px 0 1px"
-        },
-        ".cm-line.osn-heading-line-1": {
-          fontSize: "1.42em",
-          fontWeight: "820"
-        },
-        ".cm-line.osn-heading-line-2": {
-          fontSize: "1.3em",
-          fontWeight: "780"
-        },
-        ".cm-line.osn-heading-line-3": {
-          fontSize: "1.18em",
-          fontWeight: "740"
-        },
-        ".cm-line.osn-heading-line-4": {
-          fontSize: "1.1em",
-          fontWeight: "700"
-        },
-        ".cm-line.osn-heading-line-5, .cm-line.osn-heading-line-6": {
-          fontSize: "1.04em",
-          fontWeight: "680"
-        },
-        ".cm-focused": {
-          outline: "none"
-        },
-        ".cm-selectionBackground, .cm-content ::selection": {
-          backgroundColor: "SelectedTextBackgroundColor"
-        },
-        ".cm-gutters": {
-          display: "none"
-        },
-        ".task-checkbox": {
-          appearance: "none",
-          boxSizing: "border-box",
-          position: "relative",
-          width: "15px",
-          height: "15px",
-          minWidth: "15px",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          margin: "0 5px 0 0",
-          padding: "0",
-          borderRadius: "4px",
-          border: "1px solid rgb(255, 255, 255)",
-          background: "transparent",
-          color: "white",
-          font: "0 -apple-system, BlinkMacSystemFont, sans-serif",
-          lineHeight: "15px",
-          overflow: "hidden",
-          textAlign: "center",
-          verticalAlign: "-0.13em",
-          cursor: "default"
-        },
-        ".task-checkbox.checked": {
-          borderColor: "#0a84ff",
-          background: "#0a84ff"
-        },
-        ".task-checkbox.checked::after": {
-          content: '"✓"',
-          position: "absolute",
-          inset: "0",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "white",
-          font: "11px -apple-system, BlinkMacSystemFont, sans-serif",
-          lineHeight: "15px",
-          pointerEvents: "none"
-        },
-        ".list-bullet-marker": {
-          boxSizing: "border-box",
-          display: "inline-flex",
-          width: "15px",
-          height: "1cap",
-          minWidth: "15px",
-          alignItems: "center",
-          justifyContent: "center",
-          margin: "0 5px 0 0",
-          color: "rgb(255, 255, 255)",
-          lineHeight: "1cap",
-          verticalAlign: "baseline"
-        },
-        ".list-bullet-dot": {
-          display: "block",
-          width: "5px",
-          height: "5px",
-          borderRadius: "50%",
-          backgroundColor: "currentColor"
-        },
-        ".image-embed": {
-          boxSizing: "border-box",
-          display: "block",
-          maxWidth: "100%",
-          margin: "6px 0",
-          padding: "0",
-          lineHeight: "0"
-        },
-        ".image-embed img": {
-          display: "block",
-          maxWidth: "100%",
-          maxHeight: "260px",
-          width: "auto",
-          height: "auto",
-          borderRadius: "7px",
-          objectFit: "contain",
-          backgroundColor: "rgba(255, 255, 255, 0.08)"
-        }
-      })
+      editorTheme
     ]
   });
 
@@ -956,169 +1212,6 @@ function installEditor() {
       });
       applyingExternalChange = false;
     },
-    getMarkdown() {
-      return view.state.doc.toString();
-    },
-    getSelection() {
-      const selection = view.state.selection.main;
-      return {
-        from: selection.from,
-        to: selection.to,
-        anchor: selection.anchor,
-        head: selection.head,
-        docLength: view.state.doc.length,
-        focused: view.hasFocus
-      };
-    },
-    setSelection(position) {
-      const boundedPosition = Math.max(0, Math.min(Number(position) || 0, view.state.doc.length));
-      view.dispatch({selection: {anchor: boundedPosition}, scrollIntoView: true});
-    },
-    simulateBlankAreaMouseDownForTests() {
-      const event = {
-        button: 0,
-        target: view.scrollDOM,
-        preventDefault() {}
-      };
-      return focusBlankEditorArea(view, event);
-    },
-    visibleTextForTests() {
-      return view.contentDOM.innerText;
-    },
-    taskCheckboxCountForTests() {
-      return view.dom.querySelectorAll(".task-checkbox").length;
-    },
-    bulletMarkerCountForTests() {
-      return view.dom.querySelectorAll(".list-bullet-marker").length;
-    },
-    imageEmbedCountForTests() {
-      return view.dom.querySelectorAll(".image-embed img").length;
-    },
-    imageEmbedSourcesForTests() {
-      return [...view.dom.querySelectorAll(".image-embed img")].map((image) => image.getAttribute("src"));
-    },
-    firstTaskCheckboxMetricsForTests() {
-      const checkbox = view.dom.querySelector(".task-checkbox");
-      if (!checkbox) return null;
-      const selection = view.state.selection.main;
-      const before = {anchor: selection.anchor, head: selection.head};
-      checkbox.dispatchEvent(new MouseEvent("mousedown", {bubbles: true, cancelable: true, button: 0}));
-      checkbox.dispatchEvent(new MouseEvent("mouseup", {bubbles: true, cancelable: true, button: 0}));
-      checkbox.dispatchEvent(new MouseEvent("click", {bubbles: true, cancelable: true, button: 0}));
-      const after = view.state.selection.main;
-      return {
-        before,
-        after: {anchor: after.anchor, head: after.head},
-        markdown: view.state.doc.toString()
-      };
-    },
-    selectAllForTests() {
-      view.dispatch({
-        selection: {anchor: 0, head: view.state.doc.length},
-        scrollIntoView: true
-      });
-    },
-    taskCheckboxAlignmentForTests() {
-      return [...view.dom.querySelectorAll(".task-checkbox")].map((checkbox) => {
-        const line = checkbox.closest(".cm-line");
-        const rect = checkbox.getBoundingClientRect();
-        const lineRect = line?.getBoundingClientRect();
-        const style = getComputedStyle(checkbox);
-        return {
-          checked: checkbox.classList.contains("checked"),
-          width: rect.width,
-          height: rect.height,
-          topWithinLine: lineRect ? rect.top - lineRect.top : null,
-          centerDelta: lineRect ? (rect.top + rect.height / 2) - (lineRect.top + lineRect.height / 2) : null,
-          bottomWithinLine: lineRect ? lineRect.bottom - rect.bottom : null,
-          verticalAlign: style.verticalAlign,
-          lineHeight: style.lineHeight,
-          fontSize: style.fontSize
-        };
-      });
-    },
-    dispatchKeyForTests(key, modifiers = {}) {
-      view.focus();
-      const event = new KeyboardEvent("keydown", {
-        key,
-        bubbles: true,
-        cancelable: true,
-        shiftKey: Boolean(modifiers.shiftKey),
-        metaKey: Boolean(modifiers.metaKey),
-        ctrlKey: Boolean(modifiers.ctrlKey),
-        altKey: Boolean(modifiers.altKey)
-      });
-      view.contentDOM.dispatchEvent(event);
-      return event.defaultPrevented;
-    },
-    applyTextInputForTests(text) {
-      const selection = view.state.selection.main;
-      return applyTextReplacement(view, selection.from, selection.to, text);
-    },
-    indentListItemForTests() {
-      return indentSelectedListItems(view);
-    },
-    outdentListItemForTests() {
-      return outdentSelectedListItems(view);
-    },
-    outdentEmptyListItemForTests() {
-      return outdentEmptyListItem(view);
-    },
-    presentationStylesForTests() {
-      const checkbox = view.dom.querySelector(".task-checkbox");
-      const bullet = view.dom.querySelector(".list-bullet-marker");
-      const scroller = view.dom.querySelector(".cm-scroller");
-      const headingLines = [1, 2, 3].map((level) => {
-        const line = view.dom.querySelector(`.osn-heading-line-${level}`);
-        if (!line) return null;
-        const style = getComputedStyle(line);
-        return {
-          level,
-          fontSize: style.fontSize,
-          fontWeight: style.fontWeight,
-          lineHeight: style.lineHeight
-        };
-      });
-
-      return {
-        checkbox: checkbox ? {
-          borderColor: getComputedStyle(checkbox).borderColor,
-          display: getComputedStyle(checkbox).display,
-          alignItems: getComputedStyle(checkbox).alignItems,
-          justifyContent: getComputedStyle(checkbox).justifyContent,
-          verticalAlign: getComputedStyle(checkbox).verticalAlign
-        } : null,
-        bullet: bullet ? {
-          dotCount: bullet.querySelectorAll(".list-bullet-dot").length,
-          color: getComputedStyle(bullet).color,
-          display: getComputedStyle(bullet).display,
-          height: getComputedStyle(bullet).height,
-          alignItems: getComputedStyle(bullet).alignItems,
-          justifyContent: getComputedStyle(bullet).justifyContent,
-          verticalAlign: getComputedStyle(bullet).verticalAlign,
-          usesCapHeight: CSS.supports("height", "1cap")
-        } : null,
-        scrollerLineHeight: scroller ? getComputedStyle(scroller).lineHeight : null,
-        headingLines
-      };
-    },
-    lineLayoutForTests() {
-      return [...view.dom.querySelectorAll(".cm-line")].map((line) => {
-        const style = getComputedStyle(line);
-        return {
-          text: line.innerText,
-          isList: line.classList.contains("osn-list-line"),
-          paddingLeft: style.paddingLeft,
-          textIndent: style.textIndent,
-          fontWeight: style.fontWeight
-        };
-      });
-    },
-    textColorsForTests() {
-      return [...view.dom.querySelectorAll(".cm-content, .cm-content *")]
-        .filter((element) => element.innerText && element.innerText.trim().length > 0)
-        .map((element) => getComputedStyle(element).color);
-    },
     focusEnd() {
       const end = view.state.doc.length;
       view.dispatch({selection: {anchor: end}, scrollIntoView: true});
@@ -1130,9 +1223,6 @@ function installEditor() {
     applyCommand(command) {
       return applyCommand(view, command);
     },
-    insertMarkdown(text) {
-      applyCommand(view, {type: "insertText", text});
-    },
     insertMediaEmbed(markdown) {
       return insertMediaEmbedBlock(view, markdown);
     },
@@ -1140,13 +1230,34 @@ function installEditor() {
       mediaEmbedSources = new Map(Object.entries(sources || {}));
       view.dispatch({effects: refreshMediaEmbedsEffect.of(null)});
     },
-    setTextReplacements(replacements) {
-      textReplacements = new Map(Object.entries(replacements || {}));
-    },
     setAppearance(scheme) {
       applyAppearance(view, scheme);
+    },
+    setReadOnly(isReadOnly) {
+      const readOnly = Boolean(isReadOnly);
+      if (readOnly) {
+        readOnlyViews.add(view);
+      } else {
+        readOnlyViews.delete(view);
+      }
+      view.dispatch({
+        effects: editingMode.reconfigure([
+          EditorState.readOnly.of(readOnly),
+          EditorView.editable.of(!readOnly)
+        ])
+      });
     }
   };
+
+  if (window.__OSN_EDITOR_TESTING__ === true) {
+    installEditorTestAdapter(view, {
+      focusBlankEditorArea,
+      applyTextReplacement,
+      setTextReplacements(replacements) {
+        textReplacements = new Map(Object.entries(replacements || {}));
+      }
+    });
+  }
 
   post({type: "ready"});
 }

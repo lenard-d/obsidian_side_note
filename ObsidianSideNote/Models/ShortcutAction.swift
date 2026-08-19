@@ -15,34 +15,6 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         .editVaultFile
     ]
 
-    var hotKeyID: Int {
-        switch self {
-        case .appendDaily:
-            return 1
-        case .newNote:
-            return 2
-        case .editVaultFile:
-            return 3
-        case .settings:
-            return 4
-        }
-    }
-
-    init?(hotKeyID: Int) {
-        switch hotKeyID {
-        case ShortcutAction.appendDaily.hotKeyID:
-            self = .appendDaily
-        case ShortcutAction.newNote.hotKeyID:
-            self = .newNote
-        case ShortcutAction.editVaultFile.hotKeyID:
-            self = .editVaultFile
-        case ShortcutAction.settings.hotKeyID:
-            self = .settings
-        default:
-            return nil
-        }
-    }
-
     var title: String {
         switch self {
         case .appendDaily:

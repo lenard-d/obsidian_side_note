@@ -3,56 +3,6 @@ import OSLog
 import SwiftUI
 import WebKit
 
-enum MarkdownEditorResource {
-    enum ResourceError: Error {
-        case missingIndexHTML
-        case missingEditorJavaScript
-        case unreadableResource(URL)
-    }
-
-    static func bundledHTML() throws -> String {
-        let indexURL = try resourceURL(named: "index", extension: "html")
-        let editorURL = try resourceURL(named: "editor", extension: "js")
-
-        guard let indexHTML = try? String(contentsOf: indexURL, encoding: .utf8) else {
-            throw ResourceError.unreadableResource(indexURL)
-        }
-        guard let editorJavaScript = try? String(contentsOf: editorURL, encoding: .utf8) else {
-            throw ResourceError.unreadableResource(editorURL)
-        }
-
-        return inlineHTML(indexHTML: indexHTML, editorJavaScript: editorJavaScript)
-    }
-
-    static func inlineHTML(indexHTML: String, editorJavaScript: String) -> String {
-        let escapedJavaScript = editorJavaScript.replacingOccurrences(of: "</script", with: "<\\/script")
-        let inlineScript = "<script>\n\(escapedJavaScript)\n</script>"
-        let externalScript = #"<script src="editor.js"></script>"#
-
-        if indexHTML.contains(externalScript) {
-            return indexHTML.replacingOccurrences(of: externalScript, with: inlineScript)
-        }
-
-        return indexHTML.replacingOccurrences(of: "</body>", with: "\(inlineScript)\n  </body>")
-    }
-
-    private static func resourceURL(named name: String, extension fileExtension: String) throws -> URL {
-        if let nestedURL = Bundle.main.url(
-            forResource: name,
-            withExtension: fileExtension,
-            subdirectory: "MarkdownEditor"
-        ) {
-            return nestedURL
-        }
-
-        if let flatURL = Bundle.main.url(forResource: name, withExtension: fileExtension) {
-            return flatURL
-        }
-
-        throw fileExtension == "html" ? ResourceError.missingIndexHTML : ResourceError.missingEditorJavaScript
-    }
-}
-
 struct RichMarkdownEditorView: NSViewRepresentable {
     @Binding var text: String
     @FocusState.Binding var isFocused: Bool
@@ -61,6 +11,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     let commandDispatcher: MarkdownEditorCommandDispatcher
     let insertMedia: (String) -> Void
     let didInsertMedia: () -> Void
+    let didFailMediaImport: (MediaAttachmentImportError) -> Void
+    let openWikiLink: (String, Bool) -> Void
+    let openMarkdownLink: (String, Bool) -> Void
+    let isReadOnly: Bool
+    let linkPreviewHover: (LinkPreviewHoverEvent) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -70,7 +25,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             cursorEndRequestID: $cursorEndRequestID,
             commandDispatcher: commandDispatcher,
             insertMedia: insertMedia,
-            didInsertMedia: didInsertMedia
+            didInsertMedia: didInsertMedia,
+            didFailMediaImport: didFailMediaImport,
+            openWikiLink: openWikiLink,
+            openMarkdownLink: openMarkdownLink,
+            isReadOnly: isReadOnly,
+            linkPreviewHover: linkPreviewHover
         )
     }
 
@@ -83,7 +43,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         webView.navigationDelegate = context.coordinator
         webView.editorDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
-        webView.registerForDraggedTypes(MediaAttachmentImporter.pasteboardTypes)
+        if !isReadOnly {
+            webView.registerForDraggedTypes(MediaAttachmentImporter.pasteboardTypes)
+        }
 
         context.coordinator.webView = webView
         context.coordinator.observeFocusRequests()
@@ -97,6 +59,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.syncMediaEmbedsToWebViewIfNeeded(text)
         context.coordinator.syncMarkdownToWebViewIfNeeded(text)
         context.coordinator.syncAppearanceToWebViewIfNeeded()
+        context.coordinator.syncReadOnlyModeToWebViewIfNeeded()
         context.coordinator.applyFocusIfNeeded()
         context.coordinator.applyFocusRequestIfNeeded()
         context.coordinator.applyCursorEndRequestIfNeeded()
@@ -116,6 +79,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private let commandDispatcher: MarkdownEditorCommandDispatcher
         private let insertMedia: (String) -> Void
         private let didInsertMedia: () -> Void
+        private let didFailMediaImport: (MediaAttachmentImportError) -> Void
+        private let openWikiLink: (String, Bool) -> Void
+        private let openMarkdownLink: (String, Bool) -> Void
+        private let isReadOnly: Bool
+        private let linkPreviewHover: (LinkPreviewHoverEvent) -> Void
         fileprivate weak var webView: MarkdownEditorWebView?
         private var loadedResourceURL: URL?
         private var isReady = false
@@ -123,6 +91,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private var pendingMarkdownInWebView: String?
         private var pendingFocusAtEnd = false
         private var appliedAppearanceScheme: String?
+        private var appliedReadOnlyMode: Bool?
         private var appliedFocusRequestID = 0
         private var appliedCursorEndRequestID = 0
         private var pendingCommand: MarkdownEditorCommand?
@@ -139,7 +108,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             cursorEndRequestID: Binding<Int>,
             commandDispatcher: MarkdownEditorCommandDispatcher,
             insertMedia: @escaping (String) -> Void,
-            didInsertMedia: @escaping () -> Void
+            didInsertMedia: @escaping () -> Void,
+            didFailMediaImport: @escaping (MediaAttachmentImportError) -> Void,
+            openWikiLink: @escaping (String, Bool) -> Void,
+            openMarkdownLink: @escaping (String, Bool) -> Void,
+            isReadOnly: Bool,
+            linkPreviewHover: @escaping (LinkPreviewHoverEvent) -> Void
         ) {
             _text = text
             _isFocused = isFocused
@@ -148,6 +122,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.commandDispatcher = commandDispatcher
             self.insertMedia = insertMedia
             self.didInsertMedia = didInsertMedia
+            self.didFailMediaImport = didFailMediaImport
+            self.openWikiLink = openWikiLink
+            self.openMarkdownLink = openMarkdownLink
+            self.isReadOnly = isReadOnly
+            self.linkPreviewHover = linkPreviewHover
             super.init()
             commandDispatcher.connect(owner: self) { [weak self] command in
                 self?.requestCommand(command)
@@ -165,7 +144,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 loadedResourceURL = Bundle.main.bundleURL
                 webView.loadHTMLString(html, baseURL: nil)
             } catch {
-                AppLogger.app.error("Failed to load bundled markdown editor: \(error.localizedDescription, privacy: .public)")
+                AppLogger.app.error("Failed to load bundled markdown editor: \(AppLogger.errorSummary(error))")
                 assertionFailure("Missing or unreadable bundled MarkdownEditor resources")
             }
         }
@@ -183,7 +162,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 }
 
                 if let error {
-                    AppLogger.app.error("Failed to sync markdown into web editor: \(error.localizedDescription, privacy: .public)")
+                    AppLogger.app.error("Failed to sync markdown into web editor: \(AppLogger.errorSummary(error))")
                     return
                 }
 
@@ -200,6 +179,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             appliedAppearanceScheme = scheme
             callEditorFunction("setAppearance", argument: scheme)
             syncTextReplacementsToWebViewIfNeeded()
+        }
+
+        func syncReadOnlyModeToWebViewIfNeeded() {
+            guard isReady, appliedReadOnlyMode != isReadOnly else { return }
+            appliedReadOnlyMode = isReadOnly
+            callEditorFunction("setReadOnly", argument: isReadOnly)
         }
 
         private func syncTextReplacementsToWebViewIfNeeded() {
@@ -251,7 +236,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             webView.evaluateJavaScript("window.editor?.applyCommand(\(argumentJSON));") { [weak self] result, error in
                 guard let self else { return }
                 if let error {
-                    AppLogger.app.error("Markdown editor toolbar command failed: \(error.localizedDescription, privacy: .public)")
+                    AppLogger.app.error("Markdown editor toolbar command failed: \(AppLogger.errorSummary(error))")
                     return
                 }
 
@@ -311,11 +296,13 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 markdownInWebView = ""
                 pendingMarkdownInWebView = nil
                 appliedAppearanceScheme = nil
+                appliedReadOnlyMode = nil
                 mediaEmbedsInWebView = [:]
                 textReplacementsInWebView = [:]
                 syncMediaEmbedsToWebViewIfNeeded(text)
                 syncMarkdownToWebViewIfNeeded(text)
                 syncAppearanceToWebViewIfNeeded()
+                syncReadOnlyModeToWebViewIfNeeded()
                 applyFocusIfNeeded()
                 applyFocusRequestIfNeeded()
                 applyCursorEndRequestIfNeeded()
@@ -324,6 +311,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                     focusEditorAtEnd()
                 }
             case "change":
+                guard !isReadOnly else { return }
                 guard let markdown = body["text"] as? String else { return }
                 pendingMarkdownInWebView = nil
                 markdownInWebView = markdown
@@ -338,9 +326,16 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 importMediaFromPasteboard(.general)
             case "dropMedia":
                 break
+            case "wikiLink":
+                guard let target = body["target"] as? String else { return }
+                openWikiLink(target, body["newWindow"] as? Bool ?? false)
+            case "markdownLink":
+                guard let target = body["target"] as? String else { return }
+                openMarkdownLink(target, body["newWindow"] as? Bool ?? false)
+            case "linkPreviewHover":
+                handleLinkPreviewHover(body)
             case "error":
-                let message = body["message"] as? String ?? "Unknown editor error"
-                AppLogger.app.error("Markdown editor error: \(message, privacy: .public)")
+                AppLogger.app.error("Markdown editor reported an internal error")
             default:
                 break
             }
@@ -349,18 +344,55 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
             isReady = false
             appliedAppearanceScheme = nil
+            appliedReadOnlyMode = nil
             mediaEmbedsInWebView = [:]
             textReplacementsInWebView = [:]
         }
 
+        private func handleLinkPreviewHover(_ body: [String: Any]) {
+            guard let phaseValue = body["phase"] as? String,
+                  let phase = LinkPreviewHoverEvent.Phase(rawValue: phaseValue),
+                  let sessionID = body["sessionID"] as? String,
+                  let kindValue = body["kind"] as? String,
+                  let kind = LinkPreviewHoverEvent.LinkKind(rawValue: kindValue),
+                  let target = body["target"] as? String,
+                  let anchor = body["anchor"] as? [String: Any],
+                  let x = (anchor["x"] as? NSNumber)?.doubleValue,
+                  let y = (anchor["y"] as? NSNumber)?.doubleValue,
+                  let width = (anchor["width"] as? NSNumber)?.doubleValue,
+                  let height = (anchor["height"] as? NSNumber)?.doubleValue,
+                  let webView,
+                  let window = webView.window else {
+                return
+            }
+
+            let localRect = NSRect(
+                x: x,
+                y: webView.bounds.height - y - height,
+                width: width,
+                height: height
+            )
+            let windowRect = webView.convert(localRect, to: nil)
+            let screenRect = window.convertToScreen(windowRect)
+            linkPreviewHover(
+                LinkPreviewHoverEvent(
+                    phase: phase,
+                    sessionID: sessionID,
+                    kind: kind,
+                    target: target,
+                    anchorScreenRect: screenRect
+                )
+            )
+        }
+
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation?, withError error: Error) {
             isReady = false
-            AppLogger.app.error("Markdown editor navigation failed: \(error.localizedDescription, privacy: .public)")
+            AppLogger.app.error("Markdown editor navigation failed: \(AppLogger.errorSummary(error))")
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation?, withError error: Error) {
             isReady = false
-            AppLogger.app.error("Markdown editor provisional navigation failed: \(error.localizedDescription, privacy: .public)")
+            AppLogger.app.error("Markdown editor provisional navigation failed: \(AppLogger.errorSummary(error))")
         }
 
         func markdownEditorWebViewDidRequestPasteMedia(_ webView: MarkdownEditorWebView) -> Bool {
@@ -382,10 +414,15 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         private func importMediaFromPasteboard(_ pasteboard: NSPasteboard) {
-            MediaAttachmentImporter.importFromPasteboard(pasteboard) { [weak self] relativePath in
+            MediaAttachmentImporter.importFromPasteboard(pasteboard) { [weak self] result in
                 DispatchQueue.main.async {
-                    guard let self, let relativePath else { return }
-                    self.insertMediaLink(relativePath)
+                    guard let self else { return }
+                    switch result {
+                    case let .success(relativePath):
+                        self.insertMediaLink(relativePath)
+                    case let .failure(error):
+                        self.didFailMediaImport(error)
+                    }
                 }
             }
         }
@@ -467,7 +504,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             webView.evaluateJavaScript("window.editor?.insertMediaEmbed(\(argumentJSON));") { [weak self] result, error in
                 guard let self else { return }
                 if let error {
-                    AppLogger.app.error("Markdown editor media insert failed: \(error.localizedDescription, privacy: .public)")
+                    AppLogger.app.error("Markdown editor media insert failed: \(AppLogger.errorSummary(error))")
                     self.insertMedia(fallbackRelativePath)
                     return
                 }
@@ -511,7 +548,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             guard isReady, let webView else { return }
             webView.evaluateJavaScript("window.editor?.\(name)();") { _, error in
                 if let error {
-                    AppLogger.app.error("Markdown editor command \(name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                    AppLogger.app.error("Markdown editor command \(name) failed: \(AppLogger.errorSummary(error))")
                 }
             }
         }
@@ -521,7 +558,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             let argumentJSON = Self.javaScriptLiteral(for: argument)
             webView.evaluateJavaScript("window.editor?.\(name)(\(argumentJSON));") { _, error in
                 if let error {
-                    AppLogger.app.error("Markdown editor command \(name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                    AppLogger.app.error("Markdown editor command \(name) failed: \(AppLogger.errorSummary(error))")
                 }
                 completion?(error)
             }
@@ -539,25 +576,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         private static func javaScriptLiteral(for value: Any) -> String {
-            guard JSONSerialization.isValidJSONObject(value) || value is String else {
+            guard let data = try? JSONSerialization.data(
+                withJSONObject: value,
+                options: [.fragmentsAllowed]
+            ),
+                  let literal = String(data: data, encoding: .utf8) else {
                 return "null"
-            }
-
-            let object: Any
-            if let string = value as? String {
-                object = [string]
-            } else {
-                object = value
-            }
-
-            guard let data = try? JSONSerialization.data(withJSONObject: object),
-                  var literal = String(data: data, encoding: .utf8) else {
-                return "null"
-            }
-
-            if value is String {
-                literal.removeFirst()
-                literal.removeLast()
             }
             return literal
         }
@@ -585,43 +609,5 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 replacements[shortcut] = replacement
             }
         }
-    }
-}
-
-protocol MarkdownEditorWebViewDelegate: AnyObject {
-    func markdownEditorWebViewDidRequestPasteMedia(_ webView: MarkdownEditorWebView) -> Bool
-    func markdownEditorWebView(_ webView: MarkdownEditorWebView, didReceiveDrop pasteboard: NSPasteboard) -> Bool
-}
-
-final class MarkdownEditorWebView: WKWebView {
-    weak var editorDelegate: MarkdownEditorWebViewDelegate?
-
-    override var mouseDownCanMoveWindow: Bool {
-        false
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
-        super.mouseDown(with: event)
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        if MediaAttachmentImporter.canImportFromPasteboard(sender.draggingPasteboard) {
-            return .copy
-        }
-
-        return super.draggingEntered(sender)
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        if editorDelegate?.markdownEditorWebView(self, didReceiveDrop: sender.draggingPasteboard) == true {
-            return true
-        }
-
-        if MediaAttachmentImporter.canImportFromPasteboard(sender.draggingPasteboard) {
-            return true
-        }
-
-        return super.performDragOperation(sender)
     }
 }
