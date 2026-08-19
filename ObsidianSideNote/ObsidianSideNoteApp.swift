@@ -33,14 +33,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsMenuItem: NSMenuItem?
     private var hotKeyManager: GlobalHotKeyManager?
     private var managedWindows: [ObjectIdentifier: (window: NSWindow, mode: NoteMode)] = [:]
+    private lazy var linkPreviewController = LinkPreviewController()
     private var localShortcutMonitor: Any?
+    var externalURLOpener: (URL) -> Bool = { NSWorkspace.shared.open($0) }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         ShortcutPreference.cleanupObsoleteSettingsShortcutRegistration()
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
         applyUITestingLaunchOverridesIfNeeded()
-        AppConfigStore.restorePersistedSettingsIfNeeded()
-        AppConfigStore.synchronizeCurrentSettings()
+        AppSettingsPersistenceCoordinator.restorePersistedSettingsIfNeeded()
+        AppSettingsPersistenceCoordinator.synchronizeCurrentSettings()
         AppLogger.app.info("Application did finish launching")
 
         hotKeyManager = GlobalHotKeyManager { [weak self] action in
@@ -185,11 +187,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildWindow(mode: NoteMode) -> NSWindow {
 
-        // Get the screen dimensions
-        guard let screen = NSScreen.main else {
-            fatalError("No main screen found")
-        }
-        let screenFrame = screen.visibleFrame
+        let screenFrame = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
         // Define window size
         let windowWidth: CGFloat = 350
@@ -227,9 +226,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
 
-        let contentView = ContentView(mode: mode, closeWindow: { [weak self, weak window] in
-            self?.closeWindow(window)
-        })
+        let contentView = contentView(mode: mode, for: window)
 
         // Create a container view with rounded corners
         let hostingView = NSHostingView(rootView: contentView)
@@ -250,6 +247,81 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         self.window = window
 
         return window
+    }
+
+    @discardableResult
+    func openWikiLink(_ link: String, from sourceWindow: NSWindow?, inNewWindow: Bool) -> NSWindow? {
+        guard let note = VaultStore.note(forWikiLink: link) else {
+            AppLogger.vault.warn("Could not resolve wiki link inside the selected vault")
+            return nil
+        }
+
+        return openVaultNote(note, from: sourceWindow, inNewWindow: inNewWindow)
+    }
+
+    @discardableResult
+    func openMarkdownLink(_ link: String, from sourceWindow: NSWindow?, inNewWindow: Bool) -> NSWindow? {
+        let trimmedLink = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: trimmedLink),
+           let scheme = url.scheme?.lowercased(),
+           ["http", "https", "mailto"].contains(scheme) {
+            if !externalURLOpener(url) {
+                AppLogger.app.warn("Could not open external Markdown link")
+            }
+            return nil
+        }
+
+        guard let note = VaultStore.note(forMarkdownLink: link) else {
+            AppLogger.vault.warn("Could not resolve Markdown link inside the selected vault")
+            return nil
+        }
+
+        return openVaultNote(note, from: sourceWindow, inNewWindow: inNewWindow)
+    }
+
+    private func openVaultNote(
+        _ note: VaultNote,
+        from sourceWindow: NSWindow?,
+        inNewWindow: Bool
+    ) -> NSWindow? {
+
+        UserDefaults.standard.set(note.relativePath, forKey: NoteMode.editVaultFile.draftTitleKey)
+        UserDefaults.standard.set(note.relativePath, forKey: "draft.editVaultFile.search")
+        UserDefaults.standard.removeObject(forKey: NoteMode.editVaultFile.draftTextKey)
+
+        if inNewWindow || sourceWindow == nil {
+            let targetWindow = buildWindow(mode: .editVaultFile)
+            showWindow(targetWindow)
+            return targetWindow
+        }
+
+        guard let sourceWindow,
+              let hostingView = sourceWindow.contentView as? NSHostingView<ContentView> else {
+            return nil
+        }
+
+        hostingView.rootView = contentView(mode: .editVaultFile, for: sourceWindow)
+        managedWindows[ObjectIdentifier(sourceWindow)] = (sourceWindow, .editVaultFile)
+        showWindow(sourceWindow)
+        return sourceWindow
+    }
+
+    private func contentView(mode: NoteMode, for window: NSWindow) -> ContentView {
+        ContentView(
+            mode: mode,
+            closeWindow: { [weak self, weak window] in
+                self?.closeWindow(window)
+            },
+            openWikiLink: { [weak self, weak window] link, inNewWindow in
+                self?.openWikiLink(link, from: window, inNewWindow: inNewWindow)
+            },
+            openMarkdownLink: { [weak self, weak window] link, inNewWindow in
+                self?.openMarkdownLink(link, from: window, inNewWindow: inNewWindow)
+            },
+            linkPreviewHover: { [weak self, weak window] event in
+                self?.linkPreviewController.handle(event, from: window)
+            }
+        )
     }
 
     func showWindow(_ targetWindow: NSWindow? = nil) {
@@ -310,7 +382,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func mode(for window: NSWindow) -> NoteMode? {
+    func mode(for window: NSWindow) -> NoteMode? {
         managedWindows[ObjectIdentifier(window)]?.mode
     }
 
@@ -418,6 +490,7 @@ extension AppDelegate: NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         guard let closedWindow = notification.object as? NSWindow else { return }
+        linkPreviewController.sourceWindowClosed(closedWindow)
         managedWindows.removeValue(forKey: ObjectIdentifier(closedWindow))
         if window === closedWindow {
             window = managedWindows.values.first(where: { $0.window.isVisible })?.window

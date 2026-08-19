@@ -24,7 +24,9 @@ final class ContentViewModel: ObservableObject {
     private var searchKeyMonitor: Any?
     private var openNoteKeyMonitor: Any?
     private var pendingSelectedNoteAutosave: DispatchWorkItem?
+    private var selectedNoteAutosaveToken: AutosaveCancellationToken?
     private var pendingNewNoteAutosave: DispatchWorkItem?
+    private let notePersistenceQueue = DispatchQueue(label: "live.lukesmith.ObsidianSideNote.note-persistence", qos: .utility)
     private var clearSearchFocus: (() -> Void)?
     private let activeNoteFileMonitor = VaultNoteFileMonitor()
     private var lastSyncedActiveNoteText: String?
@@ -121,6 +123,26 @@ final class ContentViewModel: ObservableObject {
         clearSearchFocus?()
         isLoadingNote = false
         startActiveNoteFileMonitorIfNeeded()
+    }
+
+    @discardableResult
+    func selectWikiLink(_ link: String) -> Bool {
+        guard mode == .editVaultFile,
+              let note = VaultStore.note(forWikiLink: link) else {
+            return false
+        }
+        selectNote(note)
+        return true
+    }
+
+    @discardableResult
+    func selectMarkdownLink(_ link: String) -> Bool {
+        guard mode == .editVaultFile,
+              let note = VaultStore.note(forMarkdownLink: link) else {
+            return false
+        }
+        selectNote(note)
+        return true
     }
 
     func insertMediaLink(_ relativePath: String) {
@@ -224,7 +246,7 @@ final class ContentViewModel: ObservableObject {
             noteText = ""
             lastSyncedActiveNoteText = nil
             saveErrorMessage = "Could not load note: \(error.localizedDescription)"
-            AppLogger.vault.error("Could not read note \(note.relativePath, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            AppLogger.vault.error("Could not read note: \(AppLogger.errorSummary(error))")
         }
     }
 
@@ -357,7 +379,11 @@ final class ContentViewModel: ObservableObject {
         guard let activeAutosavedNote else { return }
 
         do {
-            let diskText = try VaultStore.readNote(activeAutosavedNote)
+            // Serialize reads with background autosaves so an external change can
+            // never be followed by an already-running stale write.
+            let diskText = try notePersistenceQueue.sync {
+                try VaultStore.readNote(activeAutosavedNote)
+            }
             guard diskText != lastSyncedActiveNoteText else {
                 saveErrorMessage = nil
                 return
@@ -365,6 +391,8 @@ final class ContentViewModel: ObservableObject {
 
             pendingSelectedNoteAutosave?.cancel()
             pendingSelectedNoteAutosave = nil
+            selectedNoteAutosaveToken?.cancel()
+            selectedNoteAutosaveToken = nil
             pendingNewNoteAutosave?.cancel()
             pendingNewNoteAutosave = nil
             lastSyncedActiveNoteText = diskText
@@ -376,36 +404,53 @@ final class ContentViewModel: ObservableObject {
             saveDraft()
         } catch {
             saveErrorMessage = "Could not reload note: \(error.localizedDescription)"
-            AppLogger.vault.error("Could not reload note \(activeAutosavedNote.relativePath, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            AppLogger.vault.error("Could not reload note: \(AppLogger.errorSummary(error))")
         }
     }
 
     private func scheduleSelectedNoteAutosave() {
         guard (mode == .editVaultFile || mode == .appendDaily), !isLoadingNote, let selectedNote else { return }
         pendingSelectedNoteAutosave?.cancel()
+        selectedNoteAutosaveToken?.cancel()
         let textSnapshot = noteText
         let noteSnapshot = selectedNote
+        let cancellationToken = AutosaveCancellationToken()
         let workItem = DispatchWorkItem { [weak self] in
+            guard !cancellationToken.isCancelled else { return }
             do {
                 try VaultStore.write(textSnapshot, to: noteSnapshot)
                 DispatchQueue.main.async {
+                    guard !cancellationToken.isCancelled else { return }
                     self?.markActiveNotePersisted(textSnapshot, to: noteSnapshot)
                 }
             } catch {
                 DispatchQueue.main.async {
                     self?.saveErrorMessage = "Could not save note: \(error.localizedDescription)"
                 }
+                AppLogger.vault.error("Could not autosave note: \(AppLogger.errorSummary(error))")
             }
         }
         pendingSelectedNoteAutosave = workItem
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.35, execute: workItem)
+        selectedNoteAutosaveToken = cancellationToken
+        notePersistenceQueue.asyncAfter(deadline: .now() + 0.35, execute: workItem)
     }
 
     private func flushSelectedNoteAutosave() {
         guard (mode == .editVaultFile || mode == .appendDaily), !isLoadingNote, let selectedNote else { return }
         pendingSelectedNoteAutosave?.cancel()
         pendingSelectedNoteAutosave = nil
-        writeActiveNote(noteText, to: selectedNote)
+        selectedNoteAutosaveToken?.cancel()
+        selectedNoteAutosaveToken = nil
+        let textSnapshot = noteText
+        do {
+            try notePersistenceQueue.sync {
+                try VaultStore.write(textSnapshot, to: selectedNote)
+            }
+            markActiveNotePersisted(textSnapshot, to: selectedNote)
+        } catch {
+            saveErrorMessage = "Could not save note: \(error.localizedDescription)"
+            AppLogger.vault.error("Could not flush note: \(AppLogger.errorSummary(error))")
+        }
     }
 
     private func scheduleNewNoteAutosave() {
@@ -469,6 +514,7 @@ final class ContentViewModel: ObservableObject {
             markActiveNotePersisted(text, to: note)
         } catch {
             saveErrorMessage = "Could not save note: \(error.localizedDescription)"
+            AppLogger.vault.error("Could not save note: \(AppLogger.errorSummary(error))")
         }
     }
 
@@ -483,5 +529,18 @@ final class ContentViewModel: ObservableObject {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH-mm"
         return formatter.string(from: Date())
+    }
+}
+
+private final class AutosaveCancellationToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.withLock { cancelled }
+    }
+
+    func cancel() {
+        lock.withLock { cancelled = true }
     }
 }

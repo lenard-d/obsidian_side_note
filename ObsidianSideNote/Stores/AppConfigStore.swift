@@ -1,8 +1,5 @@
 import AppKit
-import Defaults
 import Foundation
-import KeyboardShortcuts
-import OSLog
 
 enum AppConfigStore {
     private static let directoryName = "ObsidianSideNote"
@@ -68,30 +65,6 @@ enum AppConfigStore {
             .appendingPathComponent("\(bundleIdentifier).plist")
     }
 
-    static var restorableUserDefaultKeys: [String] {
-        let shortcutKeys = ShortcutAction.allCases.flatMap { action in
-            [action.preferenceKey, action.modifierPreferenceKey]
-        }
-
-        return [
-            VaultStore.pathKey,
-            VaultStore.bookmarkKey,
-            "obsidianVault",
-            "startAtLogin",
-            NoteMode.appendDaily.draftTextKey,
-            NoteMode.newNote.draftTextKey,
-            NoteMode.newNote.draftTitleKey,
-            NewNotePreferences.draftFilePathKey,
-            NewNotePreferences.sessionStartedAtKey,
-            NewNotePreferences.resumeIntervalMinutesKey,
-            NewNotePreferences.useObsidianNewNoteFolderKey,
-            NewNotePreferences.folderPathKey,
-            NoteMode.editVaultFile.draftTextKey,
-            NoteMode.editVaultFile.draftTitleKey,
-            "draft.editVaultFile.search"
-        ] + shortcutKeys
-    }
-
     private static var configReadURLs: [URL] {
         guard configURLOverride == nil, !isRunningUnderXCTest else {
             return [configURL]
@@ -105,58 +78,10 @@ enum AppConfigStore {
         return [primaryConfigURL, legacyURL]
     }
 
-    static func restorePersistedSettingsIfNeeded() {
-        migrateLegacySandboxUserDefaultsIfNeeded()
-
-        guard let config = read() else { return }
-        let currentVaultURL = VaultStore.sanitizePersistedVaultSelection()
-        let persistedVaultSelection = persistedVaultSelection(in: config)
-
-        if currentVaultURL == nil, let persistedVaultSelection {
-            let vaultName = config.vaultName?.isEmpty == false
-                ? config.vaultName!
-                : persistedVaultSelection.url.lastPathComponent
-
-            UserDefaults.standard.set(persistedVaultSelection.url.path, forKey: VaultStore.pathKey)
-            UserDefaults.standard.set(vaultName, forKey: "obsidianVault")
-
-            if let bookmarkData = persistedVaultSelection.bookmarkData {
-                UserDefaults.standard.set(bookmarkData, forKey: VaultStore.bookmarkKey)
-            }
-        }
-
-        if let resumeInterval = config.newNoteResumeIntervalMinutes,
-           NewNotePreferences.allowedResumeIntervals.contains(resumeInterval) {
-            Defaults[.newNoteResumeIntervalMinutes] = resumeInterval
-        }
-
-        if let useObsidianFolder = config.useObsidianNewNoteFolder {
-            UserDefaults.standard.set(useObsidianFolder, forKey: NewNotePreferences.useObsidianNewNoteFolderKey)
-        }
-
-        if let folderPath = config.newNoteFolderPath {
-            UserDefaults.standard.set(folderPath, forKey: NewNotePreferences.folderPathKey)
-        }
-
-        if let startAtLogin = config.startAtLogin {
-            UserDefaults.standard.set(startAtLogin, forKey: "startAtLogin")
-        }
-
-        for action in ShortcutAction.allCases {
-            guard let shortcut = config.shortcuts[action.rawValue] else {
-                continue
-            }
-            ShortcutPreference.restore(
-                ShortcutDefinition(key: shortcut.key, modifiers: shortcut.modifierFlags),
-                for: action
-            )
-        }
-    }
-
-    static func migrateUserDefaults(
+    private static func migrateUserDefaults(
         from legacyValues: [String: Any],
         to defaults: UserDefaults = .standard,
-        keys: [String] = restorableUserDefaultKeys
+        keys: [String]
     ) {
         for key in keys where defaults.object(forKey: key) == nil {
             guard let value = legacyValues[key] else { continue }
@@ -164,47 +89,38 @@ enum AppConfigStore {
         }
     }
 
-    private static func migrateLegacySandboxUserDefaultsIfNeeded() {
+    static func migrateLegacySandboxUserDefaults(keys: [String]) {
         guard configURLOverride == nil, !isRunningUnderXCTest, !isRunningInUITest else { return }
         guard let legacyValues = NSDictionary(contentsOf: legacySandboxPreferencesURL) as? [String: Any] else {
             return
         }
 
-        migrateUserDefaults(from: legacyValues)
+        migrateUserDefaults(from: legacyValues, keys: keys)
     }
 
-    static func synchronizeCurrentSettings() {
-        let currentVaultURL = VaultStore.sanitizePersistedVaultSelection()
-
+    static func synchronize(_ snapshot: AppSettingsSnapshot) {
         update { config in
-            if let vaultURL = currentVaultURL {
+            if let vaultURL = snapshot.vaultURL {
                 config.vaultPath = vaultURL.path
                 config.vaultName = vaultURL.lastPathComponent
-                config.vaultBookmarkBase64 = UserDefaults.standard.data(forKey: VaultStore.bookmarkKey)?
-                    .base64EncodedString()
+                config.vaultBookmarkBase64 = snapshot.vaultBookmarkData?.base64EncodedString()
             } else if persistedVaultSelection(in: config) == nil {
                 config.vaultPath = nil
                 config.vaultName = nil
                 config.vaultBookmarkBase64 = nil
             }
 
-            config.newNoteResumeIntervalMinutes = NewNotePreferences.resumeIntervalMinutes
-            config.useObsidianNewNoteFolder = NewNotePreferences.useObsidianNewNoteFolder
-            config.newNoteFolderPath = NewNotePreferences.folderPath
-            config.startAtLogin = UserDefaults.standard.bool(forKey: "startAtLogin")
-
-            for action in ShortcutAction.allCases {
-                let shortcut = ShortcutPreference.definition(for: action)
-                config.shortcuts[action.rawValue] = PersistentShortcut(
-                    key: shortcut.key,
-                    modifiers: shortcut.modifiers
-                )
-            }
+            config.newNoteResumeIntervalMinutes = snapshot.newNoteResumeIntervalMinutes
+            config.useObsidianNewNoteFolder = snapshot.useObsidianNewNoteFolder
+            config.newNoteFolderPath = snapshot.newNoteFolderPath
+            config.linkPreviewHoverDelaySeconds = snapshot.linkPreviewHoverDelaySeconds
+            config.startAtLogin = snapshot.startAtLogin
+            config.shortcuts = snapshot.shortcuts
         }
     }
 
     static func saveVault(url: URL, bookmarkData: Data?) {
-        guard VaultStore.directoryExists(at: url, usingSecurityScope: true) else { return }
+        guard VaultSelectionStore.directoryExists(at: url, usingSecurityScope: true) else { return }
 
         update { config in
             config.vaultPath = url.path
@@ -225,6 +141,12 @@ enum AppConfigStore {
         }
     }
 
+    static func saveLinkPreviewHoverDelay(_ seconds: Double) {
+        update { config in
+            config.linkPreviewHoverDelaySeconds = LinkPreviewPreferences.sanitized(seconds)
+        }
+    }
+
     static func saveNewNoteFolderPreferences(useObsidianFolder: Bool, folderPath: String) {
         update { config in
             config.useObsidianNewNoteFolder = useObsidianFolder
@@ -240,11 +162,13 @@ enum AppConfigStore {
 
     static func read() -> PersistentAppConfig? {
         for url in configReadURLs {
-            guard let data = try? Data(contentsOf: url),
-                  let config = try? JSONDecoder().decode(PersistentAppConfig.self, from: data) else {
-                continue
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            do {
+                let data = try Data(contentsOf: url)
+                return try JSONDecoder().decode(PersistentAppConfig.self, from: data)
+            } catch {
+                AppLogger.app.warn("Skipped unreadable persistent config: \(AppLogger.errorSummary(error))")
             }
-            return config
         }
 
         return nil
@@ -267,11 +191,11 @@ enum AppConfigStore {
             )
             try data.write(to: configURL, options: .atomic)
         } catch {
-            AppLogger.app.error("Failed to write persistent config: \(error.localizedDescription, privacy: .public)")
+            AppLogger.app.error("Failed to write persistent config: \(AppLogger.errorSummary(error))")
         }
     }
 
-    private static func persistedVaultSelection(in config: PersistentAppConfig) -> (url: URL, bookmarkData: Data?)? {
+    static func persistedVaultSelection(in config: PersistentAppConfig) -> (url: URL, bookmarkData: Data?)? {
         if let base64Bookmark = config.vaultBookmarkBase64,
            let bookmarkData = Data(base64Encoded: base64Bookmark),
            let url = resolvedExistingBookmarkURL(from: bookmarkData) {
@@ -297,7 +221,7 @@ enum AppConfigStore {
         }
 
         return existingDirectoryURL(path: url.path)
-            ?? (VaultStore.directoryExists(at: url, usingSecurityScope: true) ? url : nil)
+            ?? (VaultSelectionStore.directoryExists(at: url, usingSecurityScope: true) ? url : nil)
     }
 
     private static func existingDirectoryURL(path: String?) -> URL? {
@@ -321,6 +245,7 @@ struct PersistentAppConfig: Codable, Equatable {
     var newNoteResumeIntervalMinutes: Int?
     var useObsidianNewNoteFolder: Bool?
     var newNoteFolderPath: String?
+    var linkPreviewHoverDelaySeconds: Double?
     var startAtLogin: Bool?
 }
 
@@ -329,11 +254,11 @@ struct PersistentShortcut: Codable, Equatable {
     let modifiersRawValue: UInt
 
     init(key: String, modifiers: NSEvent.ModifierFlags) {
-        self.key = ShortcutPreference.normalized(key)
-        modifiersRawValue = ShortcutPreference.menuModifierFlags(from: modifiers).rawValue
+        self.key = key
+        modifiersRawValue = modifiers.rawValue
     }
 
     var modifierFlags: NSEvent.ModifierFlags {
-        ShortcutPreference.menuModifierFlags(from: NSEvent.ModifierFlags(rawValue: modifiersRawValue))
+        NSEvent.ModifierFlags(rawValue: modifiersRawValue)
     }
 }

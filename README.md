@@ -22,7 +22,7 @@ Obsidian Side Note opens a compact floating editor from the menu bar or a global
 - Searches Markdown files by fuzzy title or vault-relative path matches, with slash paths scoped to that directory subtree.
 - Shows Edit Vault File results in a scrollable overlay without shrinking the editor.
 - Watches the open note file and reloads external Obsidian edits before the next autosave.
-- Renders Markdown preview, Obsidian wikilinks, images, videos, and embeds.
+- Renders source-preserving Markdown styling, view-mode bold text, task checkboxes, bullets, headings, and inline images in the editor.
 - Uses a bundled CodeMirror editor for source-preserving Markdown editing, list indentation, task checkboxes, bullet markers, and heading styling.
 - Copies pasted or dropped media into the vault attachment folder when configured.
 - Keeps Settings and Quit local so the app does not steal normal shortcuts from other apps.
@@ -37,7 +37,7 @@ Obsidian Side Note opens a compact floating editor from the menu bar or a global
 - The Obsidian Daily notes core plugin for Daily Note workflows.
 - The Obsidian Advanced URI community plugin for URI-driven Obsidian actions.
 
-The app is built with SwiftUI, AppKit, Carbon global hotkeys, AVKit, and [swift-markdown-ui](https://github.com/gonzalezreal/swift-markdown-ui).
+The app is built with SwiftUI, AppKit, Carbon global hotkeys, and a bundled CodeMirror editor.
 
 ## Installation
 
@@ -108,9 +108,9 @@ Choose `Edit Vault File`, type part of a note title or path, and select a result
 
 If the same file changes in Obsidian while it is open in Side Note, the editor reloads the disk version and cancels stale pending autosaves.
 
-### Media And Links
+### Markdown, Media And Links
 
-Preview mode supports regular Markdown links, Obsidian wikilinks, local media, remote images, and Obsidian embeds:
+The editor supports regular Markdown links, Obsidian wikilinks, local media, remote images, and Obsidian embeds. Inactive bold spans render as bold text without visible `**` markers; placing the cursor in the span reveals the source markers for editing.
 
 ```markdown
 [[Project Plan]]
@@ -140,20 +140,21 @@ Install JavaScript editor dependencies once:
 npm --prefix EditorWeb install
 ```
 
-Build the embedded editor bundle:
+Build and verify the embedded editor bundle:
 
 ```bash
 npm --prefix EditorWeb run build
+npm --prefix EditorWeb run verify
 ```
 
-Run unit tests:
+Run unit, integration, and UI tests with coverage:
 
 ```bash
 xcodebuild test \
   -project ObsidianSideNote.xcodeproj \
   -scheme ObsidianSideNote \
   -destination 'platform=macOS' \
-  -only-testing:ObsidianSideNoteTests
+  -enableCodeCoverage YES
 ```
 
 Run static analysis:
@@ -179,7 +180,7 @@ ObsidianSideNote/
   Services/     Global hotkeys, logging, media import, and Obsidian URI helpers.
   Stores/       UserDefaults preferences, vault access, and file persistence.
   Support/      AppKit and SwiftUI integration helpers.
-  Views/        Settings, setup, editor chrome, Markdown editor, and preview UI.
+  Views/        Settings, setup, editor chrome, and the CodeMirror bridge.
   MarkdownEditor/
                 Bundled HTML and generated JavaScript for the WKWebView editor.
 
@@ -187,14 +188,17 @@ EditorWeb/
   src/          Source for the bundled CodeMirror editor.
 
 ObsidianSideNoteTests/
-  Unit tests for vault behavior, shortcuts, URIs, drafts, search, and media parsing.
+  Unit and integration tests grouped by domain responsibility.
+
+ObsidianSideNoteUITests/
+  End-to-end launch and vault-edit persistence tests.
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the internal design notes.
 
 ## Status
 
-Obsidian Side Note 2.1 is usable, but still evolving. Known next steps:
+Obsidian Side Note 2.2 is usable, but still evolving. Known next steps:
 
 - Developer ID signing and notarization.
 - Window size and position preferences.
@@ -205,4 +209,4 @@ Obsidian Side Note 2.1 is usable, but still evolving. Known next steps:
 
 This project started from Luke Smith's original Obsidian Side Note repository: [lukesmith96/obsidian_side_note](https://github.com/lukesmith96/obsidian_side_note).
 
-Markdown rendering uses [swift-markdown-ui](https://github.com/gonzalezreal/swift-markdown-ui). Obsidian integration is based on local Markdown files and [Obsidian URI](https://help.obsidian.md/uri).
+Obsidian integration is based on local Markdown files and [Obsidian URI](https://help.obsidian.md/uri).

@@ -1,8 +1,34 @@
 import AppKit
 import UniformTypeIdentifiers
 
+enum MediaAttachmentImportError: Error, Equatable {
+    case unsupportedItem
+    case providerLoadFailed
+    case downloadFailed
+    case invalidRemoteResponse
+    case attachmentSaveFailed
+
+    var userMessage: String {
+        switch self {
+        case .unsupportedItem:
+            return "No supported image or video was found."
+        case .providerLoadFailed:
+            return "The image or video could not be read."
+        case .downloadFailed:
+            return "The remote media could not be downloaded."
+        case .invalidRemoteResponse:
+            return "The remote server did not return a supported image or video."
+        case .attachmentSaveFailed:
+            return "The media could not be saved in the selected vault."
+        }
+    }
+}
+
 enum MediaAttachmentImporter {
     private static let maxRemoteMediaBytes = 25 * 1024 * 1024
+    static var remoteDownloaderFactory: (Int) -> any RemoteMediaDownloading = {
+        RemoteMediaDownloader(maxBytes: $0)
+    }
 
     static let supportedDropTypes: [UTType] = [
         .image,
@@ -34,14 +60,29 @@ enum MediaAttachmentImporter {
         return nil
     }
 
-    static func importFromPasteboard(_ pasteboard: NSPasteboard = .general, completion: @escaping (String?) -> Void) {
-        if let relativePath = importFromPasteboard(pasteboard) {
-            completion(relativePath)
+    static func importFromPasteboard(
+        _ pasteboard: NSPasteboard = .general,
+        completion: @escaping (Result<String, MediaAttachmentImportError>) -> Void
+    ) {
+        if let fileURL = fileURL(from: pasteboard),
+           isSupportedMedia(fileURL) {
+            completeAttachmentSave(
+                VaultStore.copyAttachment(from: fileURL),
+                completion: completion
+            )
+            return
+        }
+
+        if let image = NSImage(pasteboard: pasteboard) {
+            completeAttachmentSave(
+                VaultStore.saveAttachmentImage(image),
+                completion: completion
+            )
             return
         }
 
         guard let remoteURL = remoteMediaURL(from: pasteboard) else {
-            completion(nil)
+            completion(.failure(.unsupportedItem))
             return
         }
 
@@ -60,8 +101,15 @@ enum MediaAttachmentImporter {
         return NSImage(pasteboard: pasteboard) != nil
     }
 
-    static func importFirst(from providers: [NSItemProvider], completion: @escaping (String?) -> Void) {
-        importFirst(from: ArraySlice(providers), completion: completion)
+    static func importFirst(
+        from providers: [NSItemProvider],
+        completion: @escaping (Result<String, MediaAttachmentImportError>) -> Void
+    ) {
+        importFirst(
+            from: ArraySlice(providers),
+            lastFailure: .unsupportedItem,
+            completion: completion
+        )
     }
 
     static func isSupportedMedia(_ url: URL) -> Bool {
@@ -69,39 +117,63 @@ enum MediaAttachmentImporter {
         return supportedExtensions.contains(url.pathExtension.lowercased())
     }
 
-    private static func importFirst(from providers: ArraySlice<NSItemProvider>, completion: @escaping (String?) -> Void) {
+    private static func importFirst(
+        from providers: ArraySlice<NSItemProvider>,
+        lastFailure: MediaAttachmentImportError,
+        completion: @escaping (Result<String, MediaAttachmentImportError>) -> Void
+    ) {
         guard let provider = providers.first else {
-            completion(nil)
+            completion(.failure(lastFailure))
             return
         }
 
-        importProvider(provider) { relativePath in
-            if let relativePath {
-                completion(relativePath)
-            } else {
-                importFirst(from: providers.dropFirst(), completion: completion)
+        importProvider(provider) { result in
+            switch result {
+            case .success:
+                completion(result)
+            case let .failure(error):
+                let nextFailure = error == .unsupportedItem ? lastFailure : error
+                importFirst(
+                    from: providers.dropFirst(),
+                    lastFailure: nextFailure,
+                    completion: completion
+                )
             }
         }
     }
 
-    private static func importProvider(_ provider: NSItemProvider, completion: @escaping (String?) -> Void) {
+    private static func importProvider(
+        _ provider: NSItemProvider,
+        completion: @escaping (Result<String, MediaAttachmentImportError>) -> Void
+    ) {
         if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+                guard error == nil else {
+                    completeProviderLoadFailure(error, completion: completion)
+                    return
+                }
                 guard let sourceURL = sourceURL(from: item),
                       isSupportedMedia(sourceURL) else {
-                    completion(nil)
+                    completion(.failure(.unsupportedItem))
                     return
                 }
 
-                completion(VaultStore.copyAttachment(from: sourceURL))
+                completeAttachmentSave(
+                    VaultStore.copyAttachment(from: sourceURL),
+                    completion: completion
+                )
             }
             return
         }
 
         if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
-            provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, _ in
+            provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, error in
+                guard error == nil else {
+                    completeProviderLoadFailure(error, completion: completion)
+                    return
+                }
                 guard let sourceURL = sourceURL(from: item) else {
-                    completion(nil)
+                    completeProviderLoadFailure(nil, completion: completion)
                     return
                 }
 
@@ -111,31 +183,69 @@ enum MediaAttachmentImporter {
         }
 
         if provider.canLoadObject(ofClass: NSImage.self) {
-            provider.loadObject(ofClass: NSImage.self) { object, _ in
+            provider.loadObject(ofClass: NSImage.self) { object, error in
+                guard error == nil else {
+                    completeProviderLoadFailure(error, completion: completion)
+                    return
+                }
                 guard let image = object as? NSImage else {
-                    completion(nil)
+                    completeProviderLoadFailure(nil, completion: completion)
                     return
                 }
 
-                completion(VaultStore.saveAttachmentImage(image))
+                completeAttachmentSave(
+                    VaultStore.saveAttachmentImage(image),
+                    completion: completion
+                )
             }
             return
         }
 
         for type in [UTType.png, .jpeg, .tiff, .gif] where provider.hasItemConformingToTypeIdentifier(type.identifier) {
-            provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
+            provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, error in
+                guard error == nil else {
+                    completeProviderLoadFailure(error, completion: completion)
+                    return
+                }
                 guard let data,
                       let image = NSImage(data: data) else {
-                    completion(nil)
+                    completeProviderLoadFailure(nil, completion: completion)
                     return
                 }
 
-                completion(VaultStore.saveAttachmentImage(image))
+                completeAttachmentSave(
+                    VaultStore.saveAttachmentImage(image),
+                    completion: completion
+                )
             }
             return
         }
 
-        completion(nil)
+        completion(.failure(.unsupportedItem))
+    }
+
+    private static func completeProviderLoadFailure(
+        _ error: Error?,
+        completion: (Result<String, MediaAttachmentImportError>) -> Void
+    ) {
+        if let error {
+            AppLogger.media.error("Media provider load failed: \(AppLogger.errorSummary(error))")
+        } else {
+            AppLogger.media.error("Media provider load failed without a usable value")
+        }
+        completion(.failure(.providerLoadFailed))
+    }
+
+    private static func completeAttachmentSave(
+        _ relativePath: String?,
+        completion: (Result<String, MediaAttachmentImportError>) -> Void
+    ) {
+        guard let relativePath else {
+            AppLogger.media.error("Media attachment save failed")
+            completion(.failure(.attachmentSaveFailed))
+            return
+        }
+        completion(.success(relativePath))
     }
 
     private static func fileURL(from pasteboard: NSPasteboard) -> URL? {
@@ -188,26 +298,45 @@ enum MediaAttachmentImporter {
         return nil
     }
 
-    private static func importRemoteMedia(from url: URL, completion: @escaping (String?) -> Void) {
+    private static func importRemoteMedia(
+        from url: URL,
+        completion: @escaping (Result<String, MediaAttachmentImportError>) -> Void
+    ) {
         guard isRemoteMedia(url) else {
-            completion(nil)
+            completion(.failure(.unsupportedItem))
             return
         }
 
         let request = URLRequest(url: url, timeoutInterval: 20)
-        RemoteMediaDownloader(maxBytes: maxRemoteMediaBytes).download(request) { data, response in
-            guard let data,
-                  let httpResponse = response as? HTTPURLResponse,
+        remoteDownloaderFactory(maxRemoteMediaBytes).download(request) { result in
+            guard case let .success(download) = result else {
+                if case let .failure(error) = result {
+                    AppLogger.media.error("Remote media download failed: \(AppLogger.errorSummary(error))")
+                }
+                completion(.failure(.downloadFailed))
+                return
+            }
+
+            guard let httpResponse = download.response as? HTTPURLResponse,
                   200..<300 ~= httpResponse.statusCode,
                   isSupportedRemoteMediaResponse(httpResponse, fileExtension: url.pathExtension) else {
-                completion(nil)
+                AppLogger.media.warn("Remote media response was not a supported image or video")
+                completion(.failure(.invalidRemoteResponse))
                 return
             }
 
             let baseName = url.deletingPathExtension().lastPathComponent.isEmpty
                 ? VaultStore.pastedImageBaseName()
                 : url.deletingPathExtension().lastPathComponent
-            completion(VaultStore.saveAttachmentData(data, suggestedName: baseName, fileExtension: url.pathExtension))
+            guard let relativePath = VaultStore.saveAttachmentData(
+                download.data,
+                suggestedName: baseName,
+                fileExtension: url.pathExtension
+            ) else {
+                completion(.failure(.attachmentSaveFailed))
+                return
+            }
+            completion(.success(relativePath))
         }
     }
 
@@ -257,95 +386,5 @@ enum MediaAttachmentImporter {
             .replacingOccurrences(of: #"["']$"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: "&amp;", with: "&")
         return URL(string: value)
-    }
-}
-
-final class RemoteMediaDownloader {
-    private let maxBytes: Int
-    private let configuration: URLSessionConfiguration
-
-    init(maxBytes: Int, configuration: URLSessionConfiguration = .default) {
-        self.maxBytes = maxBytes
-        self.configuration = configuration
-    }
-
-    func download(_ request: URLRequest, completion: @escaping (Data?, URLResponse?) -> Void) {
-        let delegate = RemoteMediaDownloadDelegate(maxBytes: maxBytes, completion: completion)
-        let queue = OperationQueue()
-        queue.maxConcurrentOperationCount = 1
-
-        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: queue)
-        delegate.session = session
-        session.dataTask(with: request).resume()
-    }
-}
-
-private final class RemoteMediaDownloadDelegate: NSObject, URLSessionDataDelegate {
-    private let maxBytes: Int
-    private let completion: (Data?, URLResponse?) -> Void
-    private var data = Data()
-    private var response: URLResponse?
-    private var didComplete = false
-
-    var session: URLSession?
-
-    init(maxBytes: Int, completion: @escaping (Data?, URLResponse?) -> Void) {
-        self.maxBytes = maxBytes
-        self.completion = completion
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        dataTask: URLSessionDataTask,
-        didReceive response: URLResponse,
-        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
-    ) {
-        self.response = response
-
-        if let httpResponse = response as? HTTPURLResponse,
-           !(200..<300 ~= httpResponse.statusCode) {
-            completionHandler(.cancel)
-            complete(data: nil, response: response, cancelSession: true)
-            return
-        }
-
-        if response.expectedContentLength > Int64(maxBytes) {
-            completionHandler(.cancel)
-            complete(data: nil, response: response, cancelSession: true)
-            return
-        }
-
-        completionHandler(.allow)
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive chunk: Data) {
-        guard data.count + chunk.count <= maxBytes else {
-            complete(data: nil, response: response, cancelSession: true)
-            return
-        }
-
-        data.append(chunk)
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
-        guard error == nil else {
-            complete(data: nil, response: response, cancelSession: false)
-            return
-        }
-
-        complete(data: data, response: response, cancelSession: false)
-    }
-
-    private func complete(data: Data?, response: URLResponse?, cancelSession: Bool) {
-        guard !didComplete else { return }
-
-        didComplete = true
-        completion(data, response)
-
-        if cancelSession {
-            session?.invalidateAndCancel()
-        } else {
-            session?.finishTasksAndInvalidate()
-        }
     }
 }

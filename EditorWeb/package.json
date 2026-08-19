@@ -1,6 +1,7 @@
 {
   "scripts": {
-    "build": "esbuild src/editor.js --bundle --format=iife --global-name=ObsidianSideNoteEditor --target=safari17 --outfile=../ObsidianSideNote/MarkdownEditor/editor.js"
+    "build": "esbuild src/editor.js --bundle --format=iife --global-name=ObsidianSideNoteEditor --target=safari17 --outfile=../ObsidianSideNote/MarkdownEditor/editor.js",
+    "verify": "tmp=\"$(mktemp)\"; trap 'rm -f \"$tmp\"' EXIT; esbuild src/editor.js --bundle --format=iife --global-name=ObsidianSideNoteEditor --target=safari17 --outfile=\"$tmp\" >/dev/null && cmp \"$tmp\" ../ObsidianSideNote/MarkdownEditor/editor.js"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",

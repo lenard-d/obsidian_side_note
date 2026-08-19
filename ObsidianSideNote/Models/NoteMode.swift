@@ -1,6 +1,6 @@
 import Foundation
 
-enum NoteMode {
+nonisolated enum NoteMode: Equatable, Sendable {
     case appendDaily
     case newNote
     case editVaultFile
@@ -46,15 +46,6 @@ enum NoteMode {
         }
     }
 
-    var usesTextEditor: Bool {
-        switch self {
-        case .appendDaily, .newNote, .editVaultFile:
-            return true
-        case .settings, .setup:
-            return false
-        }
-    }
-
     var startsWithTitleFocus: Bool {
         self == .newNote
     }
@@ -68,5 +59,3 @@ enum NoteMode {
         }
     }
 }
-
-extension NoteMode: Equatable {}

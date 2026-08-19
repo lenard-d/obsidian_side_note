@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.2 - 2026-08-20
+
+Obsidian Side Note 2.2 stabilizes live-preview editing, adds linked-note previews, and hardens vault and media handling.
+
+### Changed
+
+- Added hover previews for wiki and Markdown links in nonactivating, read-only floating windows, including nested previews and a configurable delay.
+- Made live-preview links clickable while preserving editor focus and source positions.
+- Added source-preserving live presentation for bold, italic, highlight, inline code, headings, task checkboxes, bullets, and inline images.
+- Removed the horizontal layout shift when a bullet changes between preview and raw Markdown, and aligned bullet dots precisely between the text baseline and cap height.
+- Hardened pasted, dropped, and remotely downloaded media with typed failures, content-type validation, download limits, and privacy-safe diagnostics.
+- Centralized vault path validation, selection persistence, media lookup, image caching, and settings restoration behind smaller focused stores.
+- Prevented unsafe vault-relative paths and symlink escapes from resolving outside the selected vault.
+- Made launch-at-login persistence reflect only system changes accepted by macOS.
+
+### Developer
+
+- Split the CodeMirror theme and test adapter from the editor transaction logic and added deterministic WebKit layout coverage.
+- Removed the obsolete STTextView, MarkdownUI, and native Markdown-renderer paths now replaced by CodeMirror.
+- Added structured logging with bounded diagnostics and quiet XCTest defaults.
+- Split the monolithic test suite by editor, window, vault, configuration, media, login-item, and logging responsibilities.
+
 ## 2.1 - 2026-07-15
 
 Obsidian Side Note 2.1 improves vault search, pasted image handling, and New Note resume behavior.

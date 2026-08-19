@@ -46,7 +46,7 @@ Risk:
 
 Source: https://github.com/krzyzanowskim/STTextView
 
-STTextView remains useful as a native TextKit 2 text surface and is still present in the project for existing regression coverage, but it does not solve Markdown parsing, task-widget rendering, or source/selection semantics by itself. Keeping all of that logic custom is the path that produced the current editor edge cases.
+STTextView was evaluated as a native TextKit 2 text surface, but it does not solve Markdown parsing, task-widget rendering, or source/selection semantics by itself. Keeping all of that logic custom is the path that produced the editor edge cases, so the obsolete implementation and package dependency were removed after equivalent CodeMirror-facing regression coverage was established.
 
 ## Migration Path
 
@@ -54,7 +54,7 @@ STTextView remains useful as a native TextKit 2 text surface and is still presen
 2. Bundle CodeMirror under `ObsidianSideNote/MarkdownEditor`.
 3. Use `EditorWeb/` as the source package for the generated `editor.js` bundle.
 4. Route focus requests, markdown changes, toolbar commands, task-checkbox toggles, and media paste/drop through the WKWebView bridge.
-5. Keep the old native helper tests until their coverage is replaced by WebKit-facing tests or removed with the old native editor code.
+5. Cover editor behavior through the CodeMirror/WebKit interface and remove the old native editor code once equivalent regression coverage exists. This migration step is complete.
 
 ## Current Status
 
