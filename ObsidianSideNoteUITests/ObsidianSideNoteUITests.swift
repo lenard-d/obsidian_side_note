@@ -78,6 +78,7 @@ final class ObsidianSideNoteUITests: XCTestCase {
         XCTAssertTrue((editor.value as? String)?.contains("Visible UI test content.") == true)
 
         clickCenter(of: editor)
+        attachInputDiagnostics(for: editor, in: app, step: "initial editor input")
         editor.typeText("OSN_UI_TEST")
         XCTAssertTrue((editor.value as? String)?.contains("OSN_UI_TEST") == true)
         XCTAssertTrue(waitForFileContent(noteURL, containing: "OSN_UI_TEST"))
@@ -87,6 +88,7 @@ final class ObsidianSideNoteUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(boldButton.frame.width, 28)
         XCTAssertGreaterThanOrEqual(boldButton.frame.height, 28)
         clickCenter(of: boldButton)
+        attachInputDiagnostics(for: editor, in: app, step: "editor input after bold")
         editor.typeText("formatted")
         let toolbarAppliedBold = NSPredicate { _, _ in
             (editor.value as? String)?.contains("**formatted**") == true
@@ -106,7 +108,11 @@ final class ObsidianSideNoteUITests: XCTestCase {
         expectation(for: linkedPathLoaded, evaluatedWith: searchField)
         waitForExpectations(timeout: 4)
 
-        app.typeKey("z", modifierFlags: .command)
+        let linkedEditor = app.textViews.firstMatch
+        attachInputDiagnostics(for: linkedEditor, in: app, step: "editor input after opening a Markdown link")
+        linkedEditor.typeText("LINK_FOCUS_INPUT")
+        XCTAssertTrue((linkedEditor.value as? String)?.contains("LINK_FOCUS_INPUT") == true)
+        XCTAssertTrue(waitForFileContent(linkedNoteURL, containing: "LINK_FOCUS_INPUT"))
     }
 
     private func testApplication() -> XCUIApplication {
@@ -132,6 +138,25 @@ final class ObsidianSideNoteUITests: XCTestCase {
         // WebKit element, even though its frame is already visible. A direct coordinate
         // click exercises the same UI without depending on XCTest's scroll heuristic.
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+    }
+
+    private func attachInputDiagnostics(
+        for element: XCUIElement,
+        in app: XCUIApplication,
+        step: String
+    ) {
+        XCTContext.runActivity(named: "Input diagnostics: \(step)") { activity in
+            let screenshot = app.screenshot()
+            let screenshotAttachment = XCTAttachment(screenshot: screenshot)
+            screenshotAttachment.name = "UI immediately before text input"
+            activity.add(screenshotAttachment)
+
+            let hierarchyAttachment = XCTAttachment(
+                string: "Target element:\n\(element.debugDescription)\n\nApplication hierarchy:\n\(app.debugDescription)"
+            )
+            hierarchyAttachment.name = "Accessibility hierarchy immediately before text input"
+            activity.add(hierarchyAttachment)
+        }
     }
 
     private func waitForFileContent(
