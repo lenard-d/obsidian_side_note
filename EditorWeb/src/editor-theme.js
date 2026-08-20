@@ -2,6 +2,10 @@ import {HighlightStyle} from "@codemirror/language";
 import {EditorView} from "@codemirror/view";
 import {tags} from "@lezer/highlight";
 
+const listLeadingSpace = "0.25em";
+const listMarkerWidth = "15px";
+const listContentIndent = `calc(${listMarkerWidth} + ${listLeadingSpace})`;
+
 export const markdownHighlightStyle = HighlightStyle.define([
   {tag: tags.strong, fontWeight: "700"},
   {tag: tags.emphasis, fontStyle: "italic"},
@@ -82,8 +86,11 @@ export const editorTheme = EditorView.theme({
     cursor: "pointer"
   },
   ".cm-line.osn-list-line": {
-    paddingLeft: "20px",
-    textIndent: "-20px"
+    paddingLeft: listLeadingSpace
+  },
+  ".cm-line.osn-hanging-list-line": {
+    paddingLeft: `calc(${listLeadingSpace} + ${listContentIndent})`,
+    textIndent: `calc(0px - ${listContentIndent})`
   },
   ".cm-line.osn-heading-line": {
     lineHeight: "1.28",
@@ -118,24 +125,27 @@ export const editorTheme = EditorView.theme({
   ".cm-gutters": {
     display: "none"
   },
+  ".task-checkbox, .list-task-source": {
+    boxSizing: "border-box",
+    width: listMarkerWidth,
+    minWidth: listMarkerWidth,
+    margin: "0",
+    textIndent: "0"
+  },
   ".task-checkbox": {
     appearance: "none",
-    boxSizing: "border-box",
     position: "relative",
-    width: "15px",
-    height: "15px",
-    minWidth: "15px",
+    height: listMarkerWidth,
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    margin: "0 5px 0 0",
     padding: "0",
     borderRadius: "4px",
     border: "1px solid rgb(255, 255, 255)",
     background: "transparent",
     color: "white",
     font: "0 -apple-system, BlinkMacSystemFont, sans-serif",
-    lineHeight: "15px",
+    lineHeight: listMarkerWidth,
     overflow: "hidden",
     textAlign: "center",
     verticalAlign: "-0.13em",
@@ -154,19 +164,21 @@ export const editorTheme = EditorView.theme({
     justifyContent: "center",
     color: "white",
     font: "11px -apple-system, BlinkMacSystemFont, sans-serif",
-    lineHeight: "15px",
+    lineHeight: listMarkerWidth,
     pointerEvents: "none"
   },
-  ".list-bullet-marker": {
+  ".list-marker-glyph": {
     boxSizing: "border-box",
     position: "relative",
     display: "inline-block",
-    width: "15px",
+    width: listMarkerWidth,
     height: "1cap",
-    minWidth: "15px",
-    margin: "0 5px 0 0",
+    minWidth: listMarkerWidth,
+    margin: "0",
     color: "rgb(255, 255, 255)",
     lineHeight: "1cap",
+    textAlign: "center",
+    textIndent: "0",
     verticalAlign: "baseline"
   },
   ".list-bullet-dot": {
@@ -182,9 +194,16 @@ export const editorTheme = EditorView.theme({
   },
   ".list-bullet-source": {
     boxSizing: "border-box",
+    display: "inline-block"
+  },
+  ".list-task-source": {
     display: "inline-block",
-    width: "20px",
-    textIndent: "0"
+    font: "inherit",
+    letterSpacing: "normal",
+    lineHeight: "inherit",
+    textAlign: "center",
+    verticalAlign: "baseline",
+    whiteSpace: "pre"
   },
   ".image-embed": {
     boxSizing: "border-box",

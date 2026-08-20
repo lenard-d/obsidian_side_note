@@ -141,13 +141,17 @@ extension ObsidianSideNoteTests {
               const source = "# Preview\\n\\n**Bold** and [Target](Target.md)";
               window.editor.setMarkdown(source);
               window.editor.setReadOnly(true);
-              window.editorTest.setSelection(source.indexOf(" and ") + 2);
+              window.editorTest.setSelection(source.indexOf("[Target]") + 2);
+              const selectionBeforeFocusEnd = window.editorTest.getSelection();
+              window.editor.focusEnd();
               const visibleText = window.editorTest.visibleText();
               const afterCommand = window.editor.applyCommand({type: "insertText", text: "changed"});
               return JSON.stringify({
                 contentEditable: document.querySelector(".cm-content")?.getAttribute("contenteditable"),
                 visibleText,
                 linkCount: document.querySelectorAll(".osn-markdown-link").length,
+                selectionBeforeFocusEnd,
+                selectionAfterFocusEnd: window.editorTest.getSelection(),
                 afterCommand
               });
             })();
@@ -159,6 +163,10 @@ extension ObsidianSideNoteTests {
         #expect(result["contentEditable"] as? String == "false")
         #expect((result["visibleText"] as? String)?.contains("Bold and Target") == true)
         #expect(result["linkCount"] as? Int == 1)
+        let selectionBeforeFocusEnd = try #require(result["selectionBeforeFocusEnd"] as? [String: Any])
+        let selectionAfterFocusEnd = try #require(result["selectionAfterFocusEnd"] as? [String: Any])
+        #expect(selectionAfterFocusEnd["anchor"] as? Int == selectionBeforeFocusEnd["anchor"] as? Int)
+        #expect(selectionAfterFocusEnd["head"] as? Int == selectionBeforeFocusEnd["head"] as? Int)
         #expect(result["afterCommand"] as? String == "# Preview\n\n**Bold** and [Target](Target.md)")
     }
 
@@ -381,15 +389,23 @@ extension ObsidianSideNoteTests {
         )
         #expect(transientHeadingLayout.first?["fontWeight"] as? String == "400")
         #expect(transientHeadingLayout.last?["isList"] as? Bool == true)
-        #expect(transientHeadingLayout.last?["paddingLeft"] as? String == "20px")
-        #expect(transientHeadingLayout.last?["textIndent"] as? String == "-20px")
+        let transientListPadding = Double(
+            (transientHeadingLayout.last?["paddingLeft"] as? String ?? "")
+                .replacingOccurrences(of: "px", with: "")
+        ) ?? 0
+        let transientListIndent = Double(
+            (transientHeadingLayout.last?["textIndent"] as? String ?? "")
+                .replacingOccurrences(of: "px", with: "")
+        ) ?? 0
+        #expect(transientListPadding > 20)
+        #expect(transientListIndent < 0)
         #expect(editorPresentation["replacementHandled"] as? Bool == true)
         #expect(editorPresentation["replacementMarkdown"] as? String == "expanded text ")
         #expect(editorPresentation["toolbarMarkdown"] as? String == "hello****")
     }
 
     @MainActor
-    @Test func markdownBulletContentKeepsItsHorizontalPositionWhenMarkerIsRevealed() async throws {
+    @Test func markdownListMarkersKeepSharedGeometryAcrossRawAndPreview() async throws {
         let html = try MarkdownEditorResource.bundledHTML(testing: true)
         let messageHandler = MarkdownEditorReadyMessageHandler()
         let configuration = WKWebViewConfiguration()
@@ -416,7 +432,7 @@ extension ObsidianSideNoteTests {
         let resultJSON = try #require(try await webView.evaluateJavaScript(
             """
             (() => {
-              const source = "- Stable content";
+              const source = "Paragraph\\n- Stable content\\n1. Ordered\\n- [ ] Task";
               const textStartX = (needle) => {
                 const walker = document.createTreeWalker(
                   document.querySelector(".cm-content"),
@@ -433,9 +449,117 @@ extension ObsidianSideNoteTests {
                 return null;
               };
 
+              const textRect = (needle) => {
+                const walker = document.createTreeWalker(
+                  document.querySelector(".cm-content"),
+                  NodeFilter.SHOW_TEXT
+                );
+                while (walker.nextNode()) {
+                  const index = walker.currentNode.textContent.indexOf(needle);
+                  if (index < 0) continue;
+                  const range = document.createRange();
+                  range.setStart(walker.currentNode, index);
+                  range.setEnd(walker.currentNode, index + needle.length);
+                  const rect = range.getBoundingClientRect();
+                  return {left: rect.left, top: rect.top, width: rect.width, height: rect.height};
+                }
+                return null;
+              };
+
+              const markerState = (position) => {
+                window.editorTest.setSelection(position);
+                const previewMarker = document.querySelector(".list-bullet-marker");
+                const rawMarker = document.querySelector(".list-bullet-source");
+                const marker = previewMarker || rawMarker;
+                const markerRect = marker?.getBoundingClientRect();
+                const dotRect = previewMarker
+                  ?.querySelector(".list-bullet-dot")
+                  ?.getBoundingClientRect();
+                let rawGlyphRect = null;
+                if (rawMarker?.firstChild) {
+                  const range = document.createRange();
+                  range.selectNodeContents(rawMarker.firstChild);
+                  rawGlyphRect = range.getBoundingClientRect();
+                }
+                return {
+                  preview: Boolean(previewMarker),
+                  raw: Boolean(rawMarker),
+                  markerX: markerRect?.left ?? null,
+                  markerWidth: markerRect?.width ?? null,
+                  markerHeight: markerRect?.height ?? null,
+                  visualCenterX: dotRect
+                    ? dotRect.left + dotRect.width / 2
+                    : rawGlyphRect
+                      ? rawGlyphRect.left + rawGlyphRect.width / 2
+                      : null,
+                  contentX: textStartX("Stable")
+                };
+              };
+
+              const taskState = (position) => {
+                window.editorTest.setSelection(position);
+                const widget = document.querySelector(".task-checkbox");
+                const rawSource = document.querySelector(".list-task-source");
+                const marker = widget || rawSource;
+                const line = marker?.closest(".cm-line");
+                const lineRect = line?.getBoundingClientRect();
+                const markerRect = marker?.getBoundingClientRect();
+                const taskRect = textRect("Task");
+                let glyphRect = null;
+                if (rawSource?.firstChild) {
+                  const range = document.createRange();
+                  range.selectNodeContents(rawSource.firstChild);
+                  const rect = range.getBoundingClientRect();
+                  glyphRect = {left: rect.left, top: rect.top, width: rect.width, height: rect.height};
+                }
+                const rawStyle = rawSource ? getComputedStyle(rawSource) : null;
+                const lineStyle = line ? getComputedStyle(line) : null;
+                const baselineY = (element) => {
+                  if (!element) return null;
+                  const probe = document.createElement("span");
+                  probe.style.cssText = [
+                    "display:inline-block",
+                    "width:0",
+                    "height:0",
+                    "margin:0",
+                    "padding:0",
+                    "border:0",
+                    "vertical-align:baseline"
+                  ].join(";");
+                  element.appendChild(probe);
+                  const baseline = probe.getBoundingClientRect().top;
+                  probe.remove();
+                  return baseline;
+                };
+                const lineBaseline = baselineY(line);
+                const rawBaseline = baselineY(rawSource);
+                return {
+                  preview: Boolean(widget),
+                  raw: Boolean(rawSource),
+                  markerX: markerRect?.left ?? null,
+                  markerWidth: markerRect?.width ?? null,
+                  markerTopWithinLine: markerRect && lineRect ? markerRect.top - lineRect.top : null,
+                  lineHeight: lineRect?.height ?? null,
+                  contentX: taskRect?.left ?? null,
+                  textTopWithinLine: taskRect && lineRect ? taskRect.top - lineRect.top : null,
+                  textHeight: taskRect?.height ?? null,
+                  glyphTopWithinLine: glyphRect && lineRect ? glyphRect.top - lineRect.top : null,
+                  glyphHeight: glyphRect?.height ?? null,
+                  rawLineHeight: rawStyle?.lineHeight ?? null,
+                  lineStyleHeight: lineStyle?.lineHeight ?? null,
+                  verticalAlign: rawStyle?.verticalAlign ?? null,
+                  fontFamily: rawStyle?.fontFamily ?? null,
+                  fontSize: rawStyle?.fontSize ?? null,
+                  baselineDelta: rawBaseline != null && lineBaseline != null
+                    ? rawBaseline - lineBaseline
+                    : null
+                };
+              };
+
               window.editor.setMarkdown(source);
               window.editorTest.setSelection(source.length);
-              const previewX = textStartX("Stable");
+              const bulletStart = source.indexOf("- Stable");
+              const preview = markerState(source.length);
               const marker = document.querySelector(".list-bullet-marker");
               const dot = marker?.querySelector(".list-bullet-dot");
               const markerRect = marker?.getBoundingClientRect();
@@ -446,13 +570,46 @@ extension ObsidianSideNoteTests {
               const capRect = capProbe.getBoundingClientRect();
               capProbe.remove();
 
-              window.editorTest.setSelection(1);
-              const rawX = textStartX("Stable");
+              const rawLeft = markerState(bulletStart);
+              const rawRight = markerState(bulletStart + 1);
+              const afterSpace = markerState(bulletStart + 2);
+              const taskToken = source.indexOf("[ ]");
+              const taskPreview = taskState(source.length);
+              const taskRaw = taskState(taskToken + 1);
+              window.editorTest.setSelection(source.length);
+
+              const paragraphX = textStartX("Paragraph");
+              const orderedX = textStartX("1. Ordered");
+              const checkboxRect = document
+                .querySelector(".task-checkbox")
+                ?.getBoundingClientRect();
+              const lineHeights = [...document.querySelectorAll(".cm-line")]
+                .map((line) => line.getBoundingClientRect().height);
+              const fontProbe = document.createElement("span");
+              fontProbe.textContent = " ";
+              fontProbe.style.cssText = [
+                "position:fixed",
+                "visibility:hidden",
+                "white-space:pre",
+                `font:${getComputedStyle(document.querySelector(".cm-line")).font}`
+              ].join(";");
+              document.body.appendChild(fontProbe);
+              const spaceWidth = fontProbe.getBoundingClientRect().width;
+              fontProbe.remove();
 
               return JSON.stringify({
-                previewX,
-                rawX,
-                shift: rawX - previewX,
+                markdown: window.editorTest.getMarkdown(),
+                preview,
+                rawLeft,
+                rawRight,
+                afterSpace,
+                taskPreview,
+                taskRaw,
+                paragraphX,
+                orderedX,
+                checkboxX: checkboxRect?.left ?? null,
+                lineHeights,
+                spaceWidth,
                 bulletCenterDelta: markerRect && dotRect
                   ? (dotRect.top + dotRect.height / 2) - (markerRect.top + markerRect.height / 2)
                   : null,
@@ -465,11 +622,78 @@ extension ObsidianSideNoteTests {
         ) as? String)
         let data = try #require(resultJSON.data(using: .utf8))
         let result = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        let shift = try #require(result["shift"] as? Double)
+        let preview = try #require(result["preview"] as? [String: Any])
+        let rawLeft = try #require(result["rawLeft"] as? [String: Any])
+        let rawRight = try #require(result["rawRight"] as? [String: Any])
+        let afterSpace = try #require(result["afterSpace"] as? [String: Any])
+        let taskPreview = try #require(result["taskPreview"] as? [String: Any])
+        let taskRaw = try #require(result["taskRaw"] as? [String: Any])
+        let paragraphX = try #require(result["paragraphX"] as? Double)
+        let orderedX = try #require(result["orderedX"] as? Double)
+        let checkboxX = try #require(result["checkboxX"] as? Double)
+        let spaceWidth = try #require(result["spaceWidth"] as? Double)
+        let lineHeights = try #require(result["lineHeights"] as? [Double])
         let bulletCenterDelta = try #require(result["bulletCenterDelta"] as? Double)
         let bulletCapCenterDelta = try #require(result["bulletCapCenterDelta"] as? Double)
 
-        #expect(abs(shift) < 0.5, "Bullet content shifted by \(shift) px")
+        #expect(result["markdown"] as? String == "Paragraph\n- Stable content\n1. Ordered\n- [ ] Task")
+        #expect(preview["preview"] as? Bool == true)
+        #expect(preview["raw"] as? Bool == false)
+        #expect(rawLeft["preview"] as? Bool == false)
+        #expect(rawLeft["raw"] as? Bool == true)
+        #expect(rawRight["preview"] as? Bool == false)
+        #expect(rawRight["raw"] as? Bool == true)
+        #expect(afterSpace["preview"] as? Bool == true)
+        #expect(afterSpace["raw"] as? Bool == false)
+        #expect(taskPreview["preview"] as? Bool == true)
+        #expect(taskPreview["raw"] as? Bool == false)
+        #expect(taskRaw["preview"] as? Bool == false)
+        #expect(taskRaw["raw"] as? Bool == true)
+
+        let previewContentX = try #require(preview["contentX"] as? Double)
+        let previewMarkerX = try #require(preview["markerX"] as? Double)
+        let previewMarkerWidth = try #require(preview["markerWidth"] as? Double)
+        let previewMarkerHeight = try #require(preview["markerHeight"] as? Double)
+        let previewVisualCenterX = try #require(preview["visualCenterX"] as? Double)
+        for state in [rawLeft, rawRight, afterSpace] {
+            let contentX = try #require(state["contentX"] as? Double)
+            let markerX = try #require(state["markerX"] as? Double)
+            let markerWidth = try #require(state["markerWidth"] as? Double)
+            let markerHeight = try #require(state["markerHeight"] as? Double)
+            #expect(abs(contentX - previewContentX) < 0.5, "Bullet content shifted by \(contentX - previewContentX) px")
+            #expect(abs(markerX - previewMarkerX) < 0.5)
+            #expect(abs(markerWidth - previewMarkerWidth) < 0.5)
+            #expect(abs(markerHeight - previewMarkerHeight) < 0.5)
+        }
+
+        let rawLeftVisualCenterX = try #require(rawLeft["visualCenterX"] as? Double)
+        let rawRightVisualCenterX = try #require(rawRight["visualCenterX"] as? Double)
+        #expect(abs(rawLeftVisualCenterX - previewVisualCenterX) < 0.5)
+        #expect(abs(rawRightVisualCenterX - previewVisualCenterX) < 0.5)
+        #expect(abs((previewMarkerX - paragraphX) - spaceWidth) < 0.5)
+        #expect(abs(orderedX - previewMarkerX) < 0.5)
+        #expect(abs(checkboxX - previewMarkerX) < 0.5)
+        #expect(lineHeights.allSatisfy { abs($0 - lineHeights[0]) < 0.5 })
+        let taskPreviewContentX = try #require(taskPreview["contentX"] as? Double)
+        let taskRawContentX = try #require(taskRaw["contentX"] as? Double)
+        let taskPreviewLineHeight = try #require(taskPreview["lineHeight"] as? Double)
+        let taskRawLineHeight = try #require(taskRaw["lineHeight"] as? Double)
+        let taskTextTop = try #require(taskRaw["textTopWithinLine"] as? Double)
+        let taskRawGlyphTop = try #require(taskRaw["glyphTopWithinLine"] as? Double)
+        let taskTextHeight = try #require(taskRaw["textHeight"] as? Double)
+        let taskRawGlyphHeight = try #require(taskRaw["glyphHeight"] as? Double)
+        let taskRawBaselineDelta = try #require(taskRaw["baselineDelta"] as? Double)
+        #expect(abs(taskRawContentX - taskPreviewContentX) < 0.5)
+        #expect(abs(taskRawLineHeight - taskPreviewLineHeight) < 0.5)
+        #expect(
+            abs(taskRawGlyphTop - taskTextTop) < 0.5,
+            "Raw checkbox brackets shifted vertically by \(taskRawGlyphTop - taskTextTop) px"
+        )
+        #expect(abs(taskRawGlyphHeight - taskTextHeight) < 0.5)
+        #expect(
+            abs(taskRawBaselineDelta) < 0.5,
+            "Raw checkbox brackets use a baseline shifted by \(taskRawBaselineDelta) px"
+        )
         #expect(abs(bulletCenterDelta) < 0.5)
         #expect(
             abs(bulletCapCenterDelta) < 0.5,
@@ -518,6 +742,68 @@ extension ObsidianSideNoteTests {
               const highlight = visibleAt("mark");
               const code = visibleAt("code");
 
+              const terminalSource = "First **bold**\\nNext";
+              const firstLineEnd = terminalSource.indexOf("\\n");
+              const boldPosition = terminalSource.indexOf("bold") + 2;
+              const lineEndNavigation = (key, modifiers) => {
+                window.editor.setMarkdown(terminalSource);
+                window.editorTest.setSelection(boldPosition);
+                const handled = window.editorTest.dispatchKey(key, modifiers);
+                return {
+                  handled,
+                  selection: window.editorTest.getSelection(),
+                  visibleText: window.editorTest.visibleText()
+                };
+              };
+              const commandRight = lineEndNavigation("ArrowRight", {metaKey: true});
+              const endKey = lineEndNavigation("End");
+              const controlE = lineEndNavigation("e", {ctrlKey: true});
+              const shiftCommandRight = lineEndNavigation("ArrowRight", {
+                metaKey: true,
+                shiftKey: true
+              });
+              const terminalSyntaxCases = [
+                {name: "bold", source: "Only **bold**", content: "bold", closingLength: 2},
+                {name: "italic", source: "Only _italic_", content: "italic", closingLength: 1},
+                {name: "highlight", source: "Only ==highlight==", content: "highlight", closingLength: 2},
+                {name: "monospace", source: "Only `monospace`", content: "monospace", closingLength: 1},
+                {name: "markdownLink", source: "Only [Link](target.md)", content: "Link", closingLength: 1},
+                {name: "wikiLink", source: "Only [[Link]]", content: "Link", closingLength: 2}
+              ];
+              const terminalSyntaxEndStates = terminalSyntaxCases.map((testCase) => {
+                window.editor.setMarkdown(testCase.source);
+                window.editorTest.setSelection(
+                  testCase.source.indexOf(testCase.content) + 1
+                );
+                const keyHandled = window.editorTest.dispatchKey("ArrowRight", {metaKey: true});
+                const keySelection = window.editorTest.getSelection();
+                const visibleAfterKey = window.editorTest.visibleText();
+
+                window.editorTest.setSelection(testCase.source.length - testCase.closingLength);
+                const arrowHandled = window.editorTest.dispatchKey("ArrowRight");
+                const arrowSelection = window.editorTest.getSelection();
+                const visibleAfterArrow = window.editorTest.visibleText();
+
+                window.editorTest.setSelection(
+                  testCase.source.indexOf(testCase.content) + 1
+                );
+                window.editor.focusEnd();
+                return {
+                  name: testCase.name,
+                  source: testCase.source,
+                  end: testCase.source.length,
+                  keyHandled,
+                  keySelection,
+                  visibleAfterKey,
+                  arrowHandled,
+                  arrowSelection,
+                  visibleAfterArrow,
+                  focusSelection: window.editorTest.getSelection(),
+                  visibleAfterFocus: window.editorTest.visibleText()
+                };
+              });
+
+              window.editor.setMarkdown(source);
               const styleFor = (className) => {
                 const element = document.querySelector(`.${className}`);
                 if (!element) return null;
@@ -540,7 +826,14 @@ extension ObsidianSideNoteTests {
                 strongStyle: styleFor("osn-inline-strong"),
                 emphasisStyle: styleFor("osn-inline-emphasis"),
                 highlightStyle: styleFor("osn-inline-highlight"),
-                codeStyle: styleFor("osn-inline-code")
+                codeStyle: styleFor("osn-inline-code"),
+                firstLineEnd,
+                boldPosition,
+                commandRight,
+                endKey,
+                controlE,
+                shiftCommandRight,
+                terminalSyntaxEndStates
               });
             })();
             """
@@ -556,6 +849,8 @@ extension ObsidianSideNoteTests {
         let emphasisStyle = try #require(result["emphasisStyle"] as? [String: String])
         let highlightStyle = try #require(result["highlightStyle"] as? [String: String])
         let codeStyle = try #require(result["codeStyle"] as? [String: String])
+        let firstLineEnd = try #require(result["firstLineEnd"] as? Int)
+        let boldPosition = try #require(result["boldPosition"] as? Int)
 
         #expect(away.contains("Start bold middle italic then mark and code end"))
         #expect(!away.contains("**"))
@@ -573,6 +868,43 @@ extension ObsidianSideNoteTests {
         #expect(emphasisStyle["fontStyle"] == "italic")
         #expect(highlightStyle["backgroundColor"] != "rgba(0, 0, 0, 0)")
         #expect(codeStyle["fontFamily"]?.lowercased().contains("mono") == true)
+
+        for key in ["commandRight", "endKey", "controlE"] {
+            let navigation = try #require(result[key] as? [String: Any])
+            let selection = try #require(navigation["selection"] as? [String: Any])
+            #expect(navigation["handled"] as? Bool == true)
+            #expect(selection["anchor"] as? Int == firstLineEnd)
+            #expect(selection["head"] as? Int == firstLineEnd)
+            #expect((navigation["visibleText"] as? String)?.contains("**bold**") == true)
+        }
+
+        let shiftedNavigation = try #require(result["shiftCommandRight"] as? [String: Any])
+        let shiftedSelection = try #require(shiftedNavigation["selection"] as? [String: Any])
+        #expect(shiftedNavigation["handled"] as? Bool == true)
+        #expect(shiftedSelection["anchor"] as? Int == boldPosition)
+        #expect(shiftedSelection["head"] as? Int == firstLineEnd)
+
+        let terminalSyntaxEndStates = try #require(result["terminalSyntaxEndStates"] as? [[String: Any]])
+        #expect(terminalSyntaxEndStates.count == 6)
+        for endState in terminalSyntaxEndStates {
+            let name = endState["name"] as? String ?? "unknown syntax"
+            let source = try #require(endState["source"] as? String)
+            let end = try #require(endState["end"] as? Int)
+            let keySelection = try #require(endState["keySelection"] as? [String: Any])
+            let arrowSelection = try #require(endState["arrowSelection"] as? [String: Any])
+            let focusSelection = try #require(endState["focusSelection"] as? [String: Any])
+            #expect(endState["keyHandled"] as? Bool == true, "End jump was not handled for \(name)")
+            #expect(keySelection["anchor"] as? Int == end, "Key cursor stopped inside \(name)")
+            #expect(keySelection["head"] as? Int == end, "Key cursor stopped inside \(name)")
+            #expect(endState["visibleAfterKey"] as? String == source)
+            #expect(endState["arrowHandled"] as? Bool == true, "Closing marker was not skipped for \(name)")
+            #expect(arrowSelection["anchor"] as? Int == end, "Arrow cursor stopped inside \(name)")
+            #expect(arrowSelection["head"] as? Int == end, "Arrow cursor stopped inside \(name)")
+            #expect(endState["visibleAfterArrow"] as? String == source)
+            #expect(focusSelection["anchor"] as? Int == end, "Focus cursor stopped inside \(name)")
+            #expect(focusSelection["head"] as? Int == end, "Focus cursor stopped inside \(name)")
+            #expect(endState["visibleAfterFocus"] as? String == source)
+        }
     }
 
     @MainActor

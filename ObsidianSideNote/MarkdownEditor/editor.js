@@ -24640,6 +24640,9 @@ var ObsidianSideNoteEditor = (() => {
   }
 
   // src/editor-theme.js
+  var listLeadingSpace = "0.25em";
+  var listMarkerWidth = "15px";
+  var listContentIndent = `calc(${listMarkerWidth} + ${listLeadingSpace})`;
   var markdownHighlightStyle = HighlightStyle.define([
     { tag: tags.strong, fontWeight: "700" },
     { tag: tags.emphasis, fontStyle: "italic" },
@@ -24719,8 +24722,11 @@ var ObsidianSideNoteEditor = (() => {
       cursor: "pointer"
     },
     ".cm-line.osn-list-line": {
-      paddingLeft: "20px",
-      textIndent: "-20px"
+      paddingLeft: listLeadingSpace
+    },
+    ".cm-line.osn-hanging-list-line": {
+      paddingLeft: `calc(${listLeadingSpace} + ${listContentIndent})`,
+      textIndent: `calc(0px - ${listContentIndent})`
     },
     ".cm-line.osn-heading-line": {
       lineHeight: "1.28",
@@ -24755,24 +24761,27 @@ var ObsidianSideNoteEditor = (() => {
     ".cm-gutters": {
       display: "none"
     },
+    ".task-checkbox, .list-task-source": {
+      boxSizing: "border-box",
+      width: listMarkerWidth,
+      minWidth: listMarkerWidth,
+      margin: "0",
+      textIndent: "0"
+    },
     ".task-checkbox": {
       appearance: "none",
-      boxSizing: "border-box",
       position: "relative",
-      width: "15px",
-      height: "15px",
-      minWidth: "15px",
+      height: listMarkerWidth,
       display: "inline-flex",
       alignItems: "center",
       justifyContent: "center",
-      margin: "0 5px 0 0",
       padding: "0",
       borderRadius: "4px",
       border: "1px solid rgb(255, 255, 255)",
       background: "transparent",
       color: "white",
       font: "0 -apple-system, BlinkMacSystemFont, sans-serif",
-      lineHeight: "15px",
+      lineHeight: listMarkerWidth,
       overflow: "hidden",
       textAlign: "center",
       verticalAlign: "-0.13em",
@@ -24791,19 +24800,21 @@ var ObsidianSideNoteEditor = (() => {
       justifyContent: "center",
       color: "white",
       font: "11px -apple-system, BlinkMacSystemFont, sans-serif",
-      lineHeight: "15px",
+      lineHeight: listMarkerWidth,
       pointerEvents: "none"
     },
-    ".list-bullet-marker": {
+    ".list-marker-glyph": {
       boxSizing: "border-box",
       position: "relative",
       display: "inline-block",
-      width: "15px",
+      width: listMarkerWidth,
       height: "1cap",
-      minWidth: "15px",
-      margin: "0 5px 0 0",
+      minWidth: listMarkerWidth,
+      margin: "0",
       color: "rgb(255, 255, 255)",
       lineHeight: "1cap",
+      textAlign: "center",
+      textIndent: "0",
       verticalAlign: "baseline"
     },
     ".list-bullet-dot": {
@@ -24819,9 +24830,16 @@ var ObsidianSideNoteEditor = (() => {
     },
     ".list-bullet-source": {
       boxSizing: "border-box",
+      display: "inline-block"
+    },
+    ".list-task-source": {
       display: "inline-block",
-      width: "20px",
-      textIndent: "0"
+      font: "inherit",
+      letterSpacing: "normal",
+      lineHeight: "inherit",
+      textAlign: "center",
+      verticalAlign: "baseline",
+      whiteSpace: "pre"
     },
     ".image-embed": {
       boxSizing: "border-box",
@@ -24889,17 +24907,17 @@ var ObsidianSideNoteEditor = (() => {
     if (!match) return null;
     const indentLength = utf16Length(match[1]);
     const tokenLength = utf16Length(match[2]);
-    const markerLength = tokenLength + utf16Length(match[3]);
     return {
-      from: indentLength,
-      to: indentLength + markerLength,
       tokenFrom: indentLength,
       tokenTo: indentLength + tokenLength
     };
   }
+  function isOrderedList2(line) {
+    return /^\s*\d+[.)]\s+/.test(line);
+  }
   var listIndent = "  ";
   var imageExtensions = /* @__PURE__ */ new Set(["apng", "avif", "gif", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp"]);
-  var refreshMediaEmbedsEffect = StateEffect.define();
+  var refreshMarkdownDecorationsEffect = StateEffect.define();
   var mediaEmbedSources = /* @__PURE__ */ new Map();
   var textReplacements = /* @__PURE__ */ new Map();
   var inlineSyntaxPresentations = /* @__PURE__ */ new Map([
@@ -25012,12 +25030,14 @@ var ObsidianSideNoteEditor = (() => {
     ]);
   }
   function selectionTouchesLine(state, line) {
+    if (state.readOnly) return false;
     return state.selection.ranges.some((range) => {
       if (range.empty) return range.head >= line.from && range.head <= line.to;
       return range.from <= line.to && range.to >= line.from;
     });
   }
   function selectionTouchesToken(state, from, to) {
+    if (state.readOnly) return false;
     return state.selection.ranges.some((range) => {
       if (!range.empty) return range.from < to && range.to > from;
       const head = range.head;
@@ -25127,7 +25147,7 @@ var ObsidianSideNoteEditor = (() => {
     }
     toDOM() {
       const marker = document.createElement("span");
-      marker.className = "list-bullet-marker";
+      marker.className = "list-marker-glyph list-bullet-marker";
       marker.setAttribute("aria-hidden", "true");
       const dot2 = document.createElement("span");
       dot2.className = "list-bullet-dot";
@@ -25135,6 +25155,59 @@ var ObsidianSideNoteEditor = (() => {
       return marker;
     }
   };
+  function addListLineDecoration(decorations2, line, hanging = false) {
+    const className = hanging ? "osn-list-line osn-hanging-list-line" : "osn-list-line";
+    decorations2.push(Decoration.line({ class: className }).range(line.from));
+  }
+  function addListDecorations(decorations2, state, line) {
+    const task = taskMarker(line.text);
+    if (task) {
+      addListLineDecoration(decorations2, line, true);
+      decorations2.push(
+        Decoration.replace({ inclusive: false }).range(
+          line.from + task.listMarkerFrom,
+          line.from + task.listMarkerTo
+        )
+      );
+      const checkboxFrom = line.from + task.checkboxFrom;
+      const checkboxTo = line.from + task.checkboxTo;
+      if (selectionTouchesToken(state, checkboxFrom, checkboxTo)) {
+        decorations2.push(
+          Decoration.mark({ class: "list-task-source" }).range(checkboxFrom, checkboxTo)
+        );
+      } else {
+        decorations2.push(
+          Decoration.replace({
+            widget: new TaskCheckboxWidget(task.checked, checkboxFrom),
+            inclusive: false
+          }).range(checkboxFrom, checkboxTo)
+        );
+      }
+      return;
+    }
+    const bullet = bulletMarker(line.text);
+    if (bullet) {
+      addListLineDecoration(decorations2, line, true);
+      const tokenFrom = line.from + bullet.tokenFrom;
+      const tokenTo = line.from + bullet.tokenTo;
+      if (selectionTouchesToken(state, tokenFrom, tokenTo)) {
+        decorations2.push(
+          Decoration.mark({ class: "list-marker-glyph list-bullet-source" }).range(tokenFrom, tokenTo)
+        );
+      } else {
+        decorations2.push(
+          Decoration.replace({
+            widget: new BulletMarkerWidget(),
+            inclusive: false
+          }).range(tokenFrom, tokenTo)
+        );
+      }
+      return;
+    }
+    if (isOrderedList2(line.text)) {
+      addListLineDecoration(decorations2, line);
+    }
+  }
   var ImageEmbedWidget = class extends WidgetType {
     constructor(embed, source, position) {
       super();
@@ -25456,47 +25529,7 @@ var ObsidianSideNoteEditor = (() => {
           );
         }
       }
-      const task = taskMarker(line.text);
-      if (task) {
-        decorations2.push(Decoration.line({ class: "osn-list-line" }).range(line.from));
-        decorations2.push(
-          Decoration.replace({ inclusive: false }).range(
-            line.from + task.listMarkerFrom,
-            line.from + task.listMarkerTo
-          )
-        );
-        const checkboxFrom = line.from + task.checkboxFrom;
-        const checkboxTo = line.from + task.checkboxTo;
-        if (!selectionTouchesToken(state, checkboxFrom, checkboxTo)) {
-          decorations2.push(
-            Decoration.replace({
-              widget: new TaskCheckboxWidget(task.checked, checkboxFrom),
-              inclusive: false
-            }).range(checkboxFrom, checkboxTo)
-          );
-        }
-      } else {
-        const bullet = bulletMarker(line.text);
-        if (bullet) {
-          decorations2.push(Decoration.line({ class: "osn-list-line" }).range(line.from));
-          const markerFrom = line.from + bullet.from;
-          const markerTo = line.from + bullet.to;
-          const tokenFrom = line.from + bullet.tokenFrom;
-          const tokenTo = line.from + bullet.tokenTo;
-          if (!selectionTouchesToken(state, tokenFrom, tokenTo)) {
-            decorations2.push(
-              Decoration.replace({
-                widget: new BulletMarkerWidget(),
-                inclusive: false
-              }).range(markerFrom, markerTo)
-            );
-          } else {
-            decorations2.push(
-              Decoration.mark({ class: "list-bullet-source" }).range(markerFrom, markerTo)
-            );
-          }
-        }
-      }
+      addListDecorations(decorations2, state, line);
     }
     return Decoration.set(decorations2, true);
   }
@@ -25557,7 +25590,7 @@ ${marker.continuation}`;
       return buildMarkdownDecorations(state);
     },
     update(decorations2, transaction) {
-      if (transaction.docChanged || transaction.selection || transaction.effects.some((effect) => effect.is(refreshMediaEmbedsEffect))) {
+      if (transaction.docChanged || transaction.selection || transaction.effects.some((effect) => effect.is(refreshMarkdownDecorationsEffect))) {
         return buildMarkdownDecorations(transaction.state);
       }
       return decorations2.map(transaction.changes);
@@ -25577,8 +25610,48 @@ ${marker.continuation}`;
     if (!items) return false;
     return [...items].some((item) => item.kind === "file" && (item.type.startsWith("image/") || item.type.startsWith("video/")));
   }
+  function trailingInlineMarkerStart(state, position) {
+    const line = state.doc.lineAt(position);
+    const markerStarts = [];
+    syntaxTree(state).iterate({
+      from: line.from,
+      to: line.to,
+      enter(node) {
+        const presentation = inlineSyntaxPresentations.get(node.name);
+        if (!presentation || node.to !== line.to) return;
+        const markers = node.node.getChildren(presentation.markerName);
+        const closingMarker = markers[markers.length - 1];
+        if (closingMarker?.to === line.to) markerStarts.push(closingMarker.from);
+      }
+    });
+    if (/==.+==$/.test(line.text)) markerStarts.push(line.to - 2);
+    if (wikiLinksInLine(line.text).some((link) => link.to === line.text.length)) {
+      markerStarts.push(line.to - 2);
+    }
+    if (markdownLinksInLine(line.text).some((link) => link.to === line.text.length)) {
+      markerStarts.push(line.to - 1);
+    }
+    return markerStarts.filter((from) => position >= from && position < line.to).reduce((earliest, from) => Math.min(earliest, from), line.to);
+  }
+  function movePastTrailingInlineMarker(view) {
+    const selection = view.state.selection.main;
+    if (!selection.empty) return false;
+    const line = view.state.doc.lineAt(selection.head);
+    const markerStart = trailingInlineMarkerStart(view.state, selection.head);
+    if (markerStart === line.to) return false;
+    view.dispatch({
+      selection: EditorSelection.cursor(line.to, 1),
+      scrollIntoView: true,
+      userEvent: "select"
+    });
+    return true;
+  }
   function markdownKeyBindings() {
     return [
+      {
+        key: "ArrowRight",
+        run: movePastTrailingInlineMarker
+      },
       {
         key: "Enter",
         run(view) {
@@ -25896,8 +25969,12 @@ ${insertion}`;
         applyingExternalChange = false;
       },
       focusEnd() {
+        if (readOnlyViews.has(view)) return;
         const end = view.state.doc.length;
-        view.dispatch({ selection: { anchor: end }, scrollIntoView: true });
+        view.dispatch({
+          selection: EditorSelection.cursor(end, 1),
+          scrollIntoView: true
+        });
         view.focus();
       },
       focus() {
@@ -25911,7 +25988,7 @@ ${insertion}`;
       },
       setMediaEmbeds(sources) {
         mediaEmbedSources = new Map(Object.entries(sources || {}));
-        view.dispatch({ effects: refreshMediaEmbedsEffect.of(null) });
+        view.dispatch({ effects: refreshMarkdownDecorationsEffect.of(null) });
       },
       setAppearance(scheme) {
         applyAppearance(view, scheme);
@@ -25924,10 +26001,13 @@ ${insertion}`;
           readOnlyViews.delete(view);
         }
         view.dispatch({
-          effects: editingMode.reconfigure([
-            EditorState.readOnly.of(readOnly2),
-            EditorView.editable.of(!readOnly2)
-          ])
+          effects: [
+            editingMode.reconfigure([
+              EditorState.readOnly.of(readOnly2),
+              EditorView.editable.of(!readOnly2)
+            ]),
+            refreshMarkdownDecorationsEffect.of(null)
+          ]
         });
       }
     };
