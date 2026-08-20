@@ -1,4 +1,4 @@
-import {Compartment, EditorState, StateEffect, StateField} from "@codemirror/state";
+import {Compartment, EditorSelection, EditorState, StateEffect, StateField} from "@codemirror/state";
 import {defaultKeymap, history, historyKeymap, indentLess, indentMore} from "@codemirror/commands";
 import {markdown, markdownKeymap} from "@codemirror/lang-markdown";
 import {syntaxHighlighting, indentUnit, syntaxTree} from "@codemirror/language";
@@ -58,18 +58,19 @@ function bulletMarker(line) {
   if (!match) return null;
   const indentLength = utf16Length(match[1]);
   const tokenLength = utf16Length(match[2]);
-  const markerLength = tokenLength + utf16Length(match[3]);
   return {
-    from: indentLength,
-    to: indentLength + markerLength,
     tokenFrom: indentLength,
     tokenTo: indentLength + tokenLength
   };
 }
 
+function isOrderedList(line) {
+  return /^\s*\d+[.)]\s+/.test(line);
+}
+
 const listIndent = "  ";
 const imageExtensions = new Set(["apng", "avif", "gif", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp"]);
-const refreshMediaEmbedsEffect = StateEffect.define();
+const refreshMarkdownDecorationsEffect = StateEffect.define();
 let mediaEmbedSources = new Map();
 let textReplacements = new Map();
 
@@ -203,6 +204,7 @@ function outdentEmptyListItem(view) {
 }
 
 function selectionTouchesLine(state, line) {
+  if (state.readOnly) return false;
   return state.selection.ranges.some((range) => {
     if (range.empty) return range.head >= line.from && range.head <= line.to;
     return range.from <= line.to && range.to >= line.from;
@@ -210,6 +212,7 @@ function selectionTouchesLine(state, line) {
 }
 
 function selectionTouchesToken(state, from, to) {
+  if (state.readOnly) return false;
   return state.selection.ranges.some((range) => {
     if (!range.empty) return range.from < to && range.to > from;
     const head = range.head;
@@ -344,12 +347,72 @@ class BulletMarkerWidget extends WidgetType {
 
   toDOM() {
     const marker = document.createElement("span");
-    marker.className = "list-bullet-marker";
+    marker.className = "list-marker-glyph list-bullet-marker";
     marker.setAttribute("aria-hidden", "true");
     const dot = document.createElement("span");
     dot.className = "list-bullet-dot";
     marker.appendChild(dot);
     return marker;
+  }
+}
+
+function addListLineDecoration(decorations, line, hanging = false) {
+  const className = hanging
+    ? "osn-list-line osn-hanging-list-line"
+    : "osn-list-line";
+  decorations.push(Decoration.line({class: className}).range(line.from));
+}
+
+function addListDecorations(decorations, state, line) {
+  const task = taskMarker(line.text);
+  if (task) {
+    addListLineDecoration(decorations, line, true);
+    decorations.push(
+      Decoration.replace({inclusive: false}).range(
+        line.from + task.listMarkerFrom,
+        line.from + task.listMarkerTo
+      )
+    );
+
+    const checkboxFrom = line.from + task.checkboxFrom;
+    const checkboxTo = line.from + task.checkboxTo;
+    if (selectionTouchesToken(state, checkboxFrom, checkboxTo)) {
+      decorations.push(
+        Decoration.mark({class: "list-task-source"}).range(checkboxFrom, checkboxTo)
+      );
+    } else {
+      decorations.push(
+        Decoration.replace({
+          widget: new TaskCheckboxWidget(task.checked, checkboxFrom),
+          inclusive: false
+        }).range(checkboxFrom, checkboxTo)
+      );
+    }
+    return;
+  }
+
+  const bullet = bulletMarker(line.text);
+  if (bullet) {
+    addListLineDecoration(decorations, line, true);
+    const tokenFrom = line.from + bullet.tokenFrom;
+    const tokenTo = line.from + bullet.tokenTo;
+    if (selectionTouchesToken(state, tokenFrom, tokenTo)) {
+      decorations.push(
+        Decoration.mark({class: "list-marker-glyph list-bullet-source"}).range(tokenFrom, tokenTo)
+      );
+    } else {
+      decorations.push(
+        Decoration.replace({
+          widget: new BulletMarkerWidget(),
+          inclusive: false
+        }).range(tokenFrom, tokenTo)
+      );
+    }
+    return;
+  }
+
+  if (isOrderedList(line.text)) {
+    addListLineDecoration(decorations, line);
   }
 }
 
@@ -723,48 +786,7 @@ function buildMarkdownDecorations(state) {
       }
     }
 
-    const task = taskMarker(line.text);
-    if (task) {
-      decorations.push(Decoration.line({class: "osn-list-line"}).range(line.from));
-      decorations.push(
-        Decoration.replace({inclusive: false}).range(
-          line.from + task.listMarkerFrom,
-          line.from + task.listMarkerTo
-        )
-      );
-
-      const checkboxFrom = line.from + task.checkboxFrom;
-      const checkboxTo = line.from + task.checkboxTo;
-      if (!selectionTouchesToken(state, checkboxFrom, checkboxTo)) {
-        decorations.push(
-          Decoration.replace({
-            widget: new TaskCheckboxWidget(task.checked, checkboxFrom),
-            inclusive: false
-          }).range(checkboxFrom, checkboxTo)
-        );
-      }
-    } else {
-      const bullet = bulletMarker(line.text);
-      if (bullet) {
-        decorations.push(Decoration.line({class: "osn-list-line"}).range(line.from));
-        const markerFrom = line.from + bullet.from;
-        const markerTo = line.from + bullet.to;
-        const tokenFrom = line.from + bullet.tokenFrom;
-        const tokenTo = line.from + bullet.tokenTo;
-        if (!selectionTouchesToken(state, tokenFrom, tokenTo)) {
-          decorations.push(
-            Decoration.replace({
-              widget: new BulletMarkerWidget(),
-              inclusive: false
-            }).range(markerFrom, markerTo)
-          );
-        } else {
-          decorations.push(
-            Decoration.mark({class: "list-bullet-source"}).range(markerFrom, markerTo)
-          );
-        }
-      }
-    }
+    addListDecorations(decorations, state, line);
   }
 
   return Decoration.set(decorations, true);
@@ -836,7 +858,7 @@ const markdownDecorationField = StateField.define({
     if (
       transaction.docChanged ||
       transaction.selection ||
-      transaction.effects.some((effect) => effect.is(refreshMediaEmbedsEffect))
+      transaction.effects.some((effect) => effect.is(refreshMarkdownDecorationsEffect))
     ) {
       return buildMarkdownDecorations(transaction.state);
     }
@@ -864,8 +886,57 @@ function hasMediaPaste(event) {
   ));
 }
 
+function trailingInlineMarkerStart(state, position) {
+  const line = state.doc.lineAt(position);
+  const markerStarts = [];
+
+  syntaxTree(state).iterate({
+    from: line.from,
+    to: line.to,
+    enter(node) {
+      const presentation = inlineSyntaxPresentations.get(node.name);
+      if (!presentation || node.to !== line.to) return;
+      const markers = node.node.getChildren(presentation.markerName);
+      const closingMarker = markers[markers.length - 1];
+      if (closingMarker?.to === line.to) markerStarts.push(closingMarker.from);
+    }
+  });
+
+  if (/==.+==$/.test(line.text)) markerStarts.push(line.to - 2);
+  if (wikiLinksInLine(line.text).some((link) => link.to === line.text.length)) {
+    markerStarts.push(line.to - 2);
+  }
+  if (markdownLinksInLine(line.text).some((link) => link.to === line.text.length)) {
+    markerStarts.push(line.to - 1);
+  }
+
+  return markerStarts
+    .filter((from) => position >= from && position < line.to)
+    .reduce((earliest, from) => Math.min(earliest, from), line.to);
+}
+
+function movePastTrailingInlineMarker(view) {
+  const selection = view.state.selection.main;
+  if (!selection.empty) return false;
+
+  const line = view.state.doc.lineAt(selection.head);
+  const markerStart = trailingInlineMarkerStart(view.state, selection.head);
+  if (markerStart === line.to) return false;
+
+  view.dispatch({
+    selection: EditorSelection.cursor(line.to, 1),
+    scrollIntoView: true,
+    userEvent: "select"
+  });
+  return true;
+}
+
 function markdownKeyBindings() {
   return [
+    {
+      key: "ArrowRight",
+      run: movePastTrailingInlineMarker
+    },
     {
       key: "Enter",
       run(view) {
@@ -1213,8 +1284,12 @@ function installEditor() {
       applyingExternalChange = false;
     },
     focusEnd() {
+      if (readOnlyViews.has(view)) return;
       const end = view.state.doc.length;
-      view.dispatch({selection: {anchor: end}, scrollIntoView: true});
+      view.dispatch({
+        selection: EditorSelection.cursor(end, 1),
+        scrollIntoView: true
+      });
       view.focus();
     },
     focus() {
@@ -1228,7 +1303,7 @@ function installEditor() {
     },
     setMediaEmbeds(sources) {
       mediaEmbedSources = new Map(Object.entries(sources || {}));
-      view.dispatch({effects: refreshMediaEmbedsEffect.of(null)});
+      view.dispatch({effects: refreshMarkdownDecorationsEffect.of(null)});
     },
     setAppearance(scheme) {
       applyAppearance(view, scheme);
@@ -1241,10 +1316,13 @@ function installEditor() {
         readOnlyViews.delete(view);
       }
       view.dispatch({
-        effects: editingMode.reconfigure([
-          EditorState.readOnly.of(readOnly),
-          EditorView.editable.of(!readOnly)
-        ])
+        effects: [
+          editingMode.reconfigure([
+            EditorState.readOnly.of(readOnly),
+            EditorView.editable.of(!readOnly)
+          ]),
+          refreshMarkdownDecorationsEffect.of(null)
+        ]
       });
     }
   };
