@@ -337,6 +337,91 @@ extension ObsidianSideNoteTests {
         #expect(try VaultStore.readNote(note) == "Template body")
     }
 
+    @Test func vaultStoreUsesPeriodicNotesSettingsAndMomentWeekdayTokens() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let obsidianConfigURL = temporaryVaultURL.appendingPathComponent(".obsidian", isDirectory: true)
+        let periodicConfigURL = obsidianConfigURL
+            .appendingPathComponent("plugins/periodic-notes", isDirectory: true)
+        let templatesURL = temporaryVaultURL.appendingPathComponent("Templates", isDirectory: true)
+        let journalURL = temporaryVaultURL.appendingPathComponent("Journal", isDirectory: true)
+        try FileManager.default.createDirectory(at: periodicConfigURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: templatesURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: journalURL, withIntermediateDirectories: true)
+        try #"{"folder":"Core Journal","template":"Templates/Core Daily","format":"YYYY-MM-DD"}"#.write(
+            to: obsidianConfigURL.appendingPathComponent("daily-notes.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"["periodic-notes"]"#.write(
+            to: obsidianConfigURL.appendingPathComponent("community-plugins.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"activeCalendarSet":"Default","localeOverride":"de","calendarSets":[{"id":"Default","day":{"enabled":true,"format":"dd, DD.MM.YYYY","folder":"Journal","templatePath":"Templates/Periodic Daily"}}]}"#.write(
+            to: periodicConfigURL.appendingPathComponent("data.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "Periodic template".write(
+            to: templatesURL.appendingPathComponent("Periodic Daily.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let note = try #require(VaultStore.ensureDailyNoteForToday(now: localDate(year: 2026, month: 8, day: 21)))
+
+        #expect(note.relativePath == "Journal/Fr, 21.08.2026.md")
+        #expect(try VaultStore.readNote(note) == "Periodic template")
+        #expect(!FileManager.default.fileExists(
+            atPath: journalURL.appendingPathComponent("Fri, 21.08.2026.md").path
+        ))
+    }
+
+    @Test func vaultStoreReusesLegacyDailyNoteNameForTheSameDay() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let periodicConfigURL = temporaryVaultURL
+            .appendingPathComponent(".obsidian/plugins/periodic-notes", isDirectory: true)
+        let journalURL = temporaryVaultURL.appendingPathComponent("Journal", isDirectory: true)
+        try FileManager.default.createDirectory(at: periodicConfigURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: journalURL, withIntermediateDirectories: true)
+        try #"["periodic-notes"]"#.write(
+            to: temporaryVaultURL.appendingPathComponent(".obsidian/community-plugins.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"activeCalendarSet":"Default","localeOverride":"de","calendarSets":[{"id":"Default","day":{"enabled":true,"format":"dd, DD.MM.YYYY","folder":"Journal","templatePath":""}}]}"#.write(
+            to: periodicConfigURL.appendingPathComponent("data.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let legacyNoteURL = journalURL.appendingPathComponent("Fri, 21.08.2026.md")
+        try "Existing entry".write(to: legacyNoteURL, atomically: true, encoding: .utf8)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let note = try #require(VaultStore.ensureDailyNoteForToday(now: localDate(year: 2026, month: 8, day: 21)))
+
+        #expect(note.relativePath == "Journal/Fri, 21.08.2026.md")
+        #expect(try VaultStore.readNote(note) == "Existing entry")
+        #expect(!FileManager.default.fileExists(
+            atPath: journalURL.appendingPathComponent("Fr, 21.08.2026.md").path
+        ))
+    }
+
     @Test func openDailyURIUsesVisibleDailyEndpoint() throws {
         let url = try #require(ObsidianURIBuilder.openDaily(vaultName: "Personal Vault"))
         let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
@@ -858,6 +943,17 @@ extension ObsidianSideNoteTests {
         #expect(NoteMode.editVaultFile.startsWithEditorFocus)
         #expect(!NoteMode.settings.startsWithTitleFocus)
         #expect(!NoteMode.settings.startsWithEditorFocus)
+    }
+
+    private func localDate(year: Int, month: Int, day: Int) throws -> Date {
+        var components = DateComponents()
+        components.calendar = Calendar(identifier: .gregorian)
+        components.timeZone = .current
+        components.year = year
+        components.month = month
+        components.day = day
+        components.hour = 12
+        return try #require(components.date)
     }
 
 }

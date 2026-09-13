@@ -482,16 +482,25 @@ struct VaultStore {
 
     private static func dailyNoteRelativePath(now: Date, in vaultURL: URL) -> String {
         let settings = dailyNoteSettings(in: vaultURL)
-        let formatter = DateFormatter()
-        formatter.locale = Locale.current
-        formatter.timeZone = .current
-        formatter.dateFormat = swiftDateFormat(fromObsidianFormat: settings.format)
+        let canonicalFileName = ObsidianDailyNoteDateFormatter.string(
+            from: now,
+            format: settings.format,
+            localeIdentifier: settings.localeIdentifier
+        )
+        let canonicalPath = dailyNotePath(fileName: canonicalFileName, folder: settings.folder)
+            ?? defaultDailyNoteRelativePath(now: now)
 
-        let fileName = formatter.string(from: now)
-        let folder = VaultPathResolver.safeRelativePath(settings.folder, allowEmpty: true) ?? ""
-        let path = folder.isEmpty ? fileName : "\(folder)/\(fileName)"
-        let markdownPath = path.hasSuffix(".md") ? path : "\(path).md"
-        return VaultPathResolver.safeRelativePath(markdownPath) ?? defaultDailyNoteRelativePath(now: now)
+        for candidatePath in dailyNoteCompatibilityPaths(
+            now: now,
+            settings: settings,
+            canonicalPath: canonicalPath
+        ) where FileManager.default.fileExists(
+            atPath: vaultURL.appendingPathComponent(candidatePath).path
+        ) {
+            return candidatePath
+        }
+
+        return canonicalPath
     }
 
     private static func dailyTemplateText(in vaultURL: URL) -> String {
@@ -512,6 +521,14 @@ struct VaultStore {
     }
 
     private static func dailyNoteSettings(in vaultURL: URL) -> DailyNoteSettings {
+        let periodicConfigURL = vaultURL.appendingPathComponent(".obsidian/plugins/periodic-notes/data.json")
+        if communityPluginIsEnabled("periodic-notes", in: vaultURL),
+           let data = try? Data(contentsOf: periodicConfigURL),
+           let periodicSettings = try? JSONDecoder().decode(PeriodicNotesSettings.self, from: data),
+           let settings = periodicSettings.activeDailyNoteSettings {
+            return settings
+        }
+
         let configURL = vaultURL.appendingPathComponent(".obsidian/daily-notes.json")
         guard let data = try? Data(contentsOf: configURL),
               let settings = try? JSONDecoder().decode(DailyNoteSettings.self, from: data) else {
@@ -521,44 +538,65 @@ struct VaultStore {
         return settings
     }
 
-    private static func swiftDateFormat(fromObsidianFormat format: String) -> String {
-        let replacements: [String: String] = [
-            "YYYY": "yyyy",
-            "YY": "yy",
-            "MMMM": "MMMM",
-            "MMM": "MMM",
-            "MM": "MM",
-            "M": "M",
-            "DD": "dd",
-            "D": "d",
-            "dddd": "EEEE",
-            "ddd": "EEE",
-            "dd": "EE",
-            "d": "e",
-            "HH": "HH",
-            "H": "H",
-            "hh": "hh",
-            "h": "h",
-            "mm": "mm",
-            "m": "m",
-            "ss": "ss",
-            "s": "s"
-        ]
-        let tokens = replacements.keys.sorted { $0.count > $1.count }
-        var result = ""
-        var index = format.startIndex
+    private static func communityPluginIsEnabled(_ pluginID: String, in vaultURL: URL) -> Bool {
+        let configURL = vaultURL.appendingPathComponent(".obsidian/community-plugins.json")
+        guard let data = try? Data(contentsOf: configURL),
+              let pluginIDs = try? JSONDecoder().decode([String].self, from: data) else {
+            return false
+        }
+        return pluginIDs.contains(pluginID)
+    }
 
-        while index < format.endIndex {
-            if let token = tokens.first(where: { format[index...].hasPrefix($0) }) {
-                result += replacements[token] ?? token
-                index = format.index(index, offsetBy: token.count)
-            } else {
-                result.append(format[index])
-                index = format.index(after: index)
+    private static func dailyNotePath(fileName: String, folder: String) -> String? {
+        let safeFolder = VaultPathResolver.safeRelativePath(folder, allowEmpty: true) ?? ""
+        let path = safeFolder.isEmpty ? fileName : "\(safeFolder)/\(fileName)"
+        let markdownPath = path.hasSuffix(".md") ? path : "\(path).md"
+        return VaultPathResolver.safeRelativePath(markdownPath)
+    }
+
+    private static func dailyNoteCompatibilityPaths(
+        now: Date,
+        settings: DailyNoteSettings,
+        canonicalPath: String
+    ) -> [String] {
+        var paths = [canonicalPath]
+        let localeIdentifiers = [
+            settings.localeIdentifier,
+            systemLocaleIdentifier(),
+            Locale.current.identifier,
+            "de",
+            "en"
+        ]
+
+        for localeIdentifier in localeIdentifiers where !localeIdentifier.isEmpty {
+            let momentFileName = ObsidianDailyNoteDateFormatter.string(
+                from: now,
+                format: settings.format,
+                localeIdentifier: localeIdentifier
+            )
+            if let momentPath = dailyNotePath(fileName: momentFileName, folder: settings.folder) {
+                paths.append(momentPath)
+            }
+
+            let legacyFileName = LegacyDailyNoteDateFormatter.string(
+                from: now,
+                format: settings.format,
+                localeIdentifier: localeIdentifier
+            )
+            if let legacyPath = dailyNotePath(fileName: legacyFileName, folder: settings.folder) {
+                paths.append(legacyPath)
             }
         }
 
-        return result.isEmpty ? "yyyy-MM-dd" : result
+        var seen = Set<String>()
+        return paths.filter { seen.insert($0).inserted }
+    }
+
+    private static func systemLocaleIdentifier() -> String {
+        if let appleLocale = UserDefaults.standard.string(forKey: "AppleLocale"), !appleLocale.isEmpty {
+            return appleLocale
+        }
+        return Locale.current.identifier
     }
 
     private static func isExistingMarkdownFile(at url: URL) -> Bool {
@@ -652,6 +690,7 @@ private struct DailyNoteSettings: Decodable {
     var folder: String = ""
     var template: String = ""
     var format: String = "YYYY-MM-DD"
+    var localeIdentifier: String = "system-default"
 
     enum CodingKeys: String, CodingKey {
         case folder
@@ -661,10 +700,233 @@ private struct DailyNoteSettings: Decodable {
 
     init() {}
 
+    init(folder: String, template: String, format: String, localeIdentifier: String) {
+        self.folder = folder
+        self.template = template
+        self.format = format
+        self.localeIdentifier = localeIdentifier
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         folder = try container.decodeIfPresent(String.self, forKey: .folder) ?? ""
         template = try container.decodeIfPresent(String.self, forKey: .template) ?? ""
         format = try container.decodeIfPresent(String.self, forKey: .format) ?? "YYYY-MM-DD"
+    }
+}
+
+private struct PeriodicNotesSettings: Decodable {
+    var activeCalendarSet: String?
+    var calendarSets: [PeriodicCalendarSet] = []
+    var localeOverride: String = "system-default"
+    var daily: PeriodicDaySettings?
+
+    var activeDailyNoteSettings: DailyNoteSettings? {
+        let calendarSet = calendarSets.first { $0.id == activeCalendarSet } ?? calendarSets.first
+        if let day = calendarSet?.day, day.enabled == true {
+            return day.dailyNoteSettings(localeIdentifier: localeOverride)
+        }
+        if let daily, daily.enabled == true {
+            return daily.dailyNoteSettings(localeIdentifier: localeOverride)
+        }
+        return nil
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case activeCalendarSet
+        case calendarSets
+        case localeOverride
+        case daily
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        activeCalendarSet = try container.decodeIfPresent(String.self, forKey: .activeCalendarSet)
+        calendarSets = try container.decodeIfPresent([PeriodicCalendarSet].self, forKey: .calendarSets) ?? []
+        localeOverride = try container.decodeIfPresent(String.self, forKey: .localeOverride) ?? "system-default"
+        daily = try container.decodeIfPresent(PeriodicDaySettings.self, forKey: .daily)
+    }
+}
+
+private struct PeriodicCalendarSet: Decodable {
+    var id: String
+    var day: PeriodicDaySettings?
+}
+
+private struct PeriodicDaySettings: Decodable {
+    var enabled: Bool?
+    var format: String?
+    var folder: String?
+    var templatePath: String?
+    var template: String?
+
+    func dailyNoteSettings(localeIdentifier: String) -> DailyNoteSettings {
+        DailyNoteSettings(
+            folder: folder ?? "",
+            template: templatePath ?? template ?? "",
+            format: format?.isEmpty == false ? format ?? "YYYY-MM-DD" : "YYYY-MM-DD",
+            localeIdentifier: localeIdentifier
+        )
+    }
+}
+
+private enum DailyNoteLocaleResolver {
+    static func locale(identifier: String) -> Locale {
+        guard !identifier.isEmpty, identifier != "system-default" else {
+            if let appleLocale = UserDefaults.standard.string(forKey: "AppleLocale"), !appleLocale.isEmpty {
+                return Locale(identifier: appleLocale)
+            }
+            return .current
+        }
+        return Locale(identifier: identifier)
+    }
+}
+
+private enum ObsidianDailyNoteDateFormatter {
+    private static let tokenPatterns: [String: String] = [
+        "YYYY": "yyyy",
+        "YY": "yy",
+        "MMMM": "MMMM",
+        "MMM": "MMM",
+        "MM": "MM",
+        "M": "M",
+        "DD": "dd",
+        "D": "d",
+        "dddd": "EEEE",
+        "ddd": "EEE",
+        "HH": "HH",
+        "H": "H",
+        "hh": "hh",
+        "h": "h",
+        "mm": "mm",
+        "m": "m",
+        "ss": "ss",
+        "s": "s"
+    ]
+    private static let tokens = (Array(tokenPatterns.keys) + ["dd", "d"])
+        .sorted { $0.count > $1.count }
+
+    static func string(from date: Date, format: String, localeIdentifier: String) -> String {
+        let momentFormat = format.isEmpty ? "YYYY-MM-DD" : format
+        let locale = DailyNoteLocaleResolver.locale(identifier: localeIdentifier)
+        var output = ""
+        var index = momentFormat.startIndex
+
+        while index < momentFormat.endIndex {
+            if momentFormat[index] == "[",
+               let closingBracket = momentFormat[index...].firstIndex(of: "]") {
+                let literalStart = momentFormat.index(after: index)
+                output += momentFormat[literalStart..<closingBracket]
+                index = momentFormat.index(after: closingBracket)
+                continue
+            }
+
+            if momentFormat[index] == "\\" {
+                let nextIndex = momentFormat.index(after: index)
+                if nextIndex < momentFormat.endIndex {
+                    output.append(momentFormat[nextIndex])
+                    index = momentFormat.index(after: nextIndex)
+                    continue
+                }
+            }
+
+            if let token = tokens.first(where: { momentFormat[index...].hasPrefix($0) }) {
+                output += render(token: token, date: date, locale: locale)
+                index = momentFormat.index(index, offsetBy: token.count)
+            } else {
+                output.append(momentFormat[index])
+                index = momentFormat.index(after: index)
+            }
+        }
+
+        return output
+    }
+
+    private static func render(token: String, date: Date, locale: Locale) -> String {
+        switch token {
+        case "dd":
+            return weekdayMinimumSymbol(for: date, locale: locale)
+        case "d":
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.locale = locale
+            calendar.timeZone = .current
+            return String(calendar.component(.weekday, from: date) - 1)
+        default:
+            guard let pattern = tokenPatterns[token] else { return token }
+            let formatter = DateFormatter()
+            formatter.locale = locale
+            formatter.timeZone = .current
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.dateFormat = pattern
+            return formatter.string(from: date)
+        }
+    }
+
+    private static func weekdayMinimumSymbol(for date: Date, locale: Locale) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = locale
+        calendar.timeZone = .current
+        let weekdayIndex = calendar.component(.weekday, from: date) - 1
+
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.calendar = calendar
+        let shortSymbols = formatter.shortWeekdaySymbols ?? calendar.shortWeekdaySymbols
+        guard shortSymbols.indices.contains(weekdayIndex) else { return "" }
+
+        let symbol = shortSymbols[weekdayIndex]
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        return String(symbol.prefix(2))
+    }
+}
+
+private enum LegacyDailyNoteDateFormatter {
+    private static let replacements: [String: String] = [
+        "YYYY": "yyyy",
+        "YY": "yy",
+        "MMMM": "MMMM",
+        "MMM": "MMM",
+        "MM": "MM",
+        "M": "M",
+        "DD": "dd",
+        "D": "d",
+        "dddd": "EEEE",
+        "ddd": "EEE",
+        "dd": "EE",
+        "d": "e",
+        "HH": "HH",
+        "H": "H",
+        "hh": "hh",
+        "h": "h",
+        "mm": "mm",
+        "m": "m",
+        "ss": "ss",
+        "s": "s"
+    ]
+
+    static func string(from date: Date, format: String, localeIdentifier: String) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = DailyNoteLocaleResolver.locale(identifier: localeIdentifier)
+        formatter.timeZone = .current
+        formatter.dateFormat = swiftFormat(from: format)
+        return formatter.string(from: date)
+    }
+
+    private static func swiftFormat(from format: String) -> String {
+        let tokens = replacements.keys.sorted { $0.count > $1.count }
+        var result = ""
+        var index = format.startIndex
+
+        while index < format.endIndex {
+            if let token = tokens.first(where: { format[index...].hasPrefix($0) }) {
+                result += replacements[token] ?? token
+                index = format.index(index, offsetBy: token.count)
+            } else {
+                result.append(format[index])
+                index = format.index(after: index)
+            }
+        }
+
+        return result.isEmpty ? "yyyy-MM-dd" : result
     }
 }
