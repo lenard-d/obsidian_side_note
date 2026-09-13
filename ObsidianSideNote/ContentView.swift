@@ -96,6 +96,9 @@ struct ContentView: View {
         .onChange(of: viewModel.noteTitle) { oldValue, newValue in
             viewModel.titleDidChange()
         }
+        .onChange(of: isVaultSearchFocused) { _, focused in
+            viewModel.searchFocusDidChange(focused)
+        }
         .onChange(of: viewModel.vaultSearchQuery) { oldValue, newValue in
             viewModel.searchQueryDidChange()
         }
@@ -110,8 +113,10 @@ struct ContentView: View {
             GeometryReader { proxy in
                 let fieldBounds = proxy[anchor]
                 VaultSearchSuggestionsPopup(
-                    results: viewModel.searchResults,
+                    results: viewModel.searchSuggestions,
+                    isSearching: viewModel.isSearching,
                     highlightedIndex: viewModel.highlightedSearchIndex,
+                    selectFolder: viewModel.selectFolder,
                     selectNote: viewModel.selectNote
                 )
                 .frame(width: fieldBounds.width)

@@ -1,6 +1,6 @@
 import Foundation
 
-struct VaultNote: Identifiable, Hashable {
+nonisolated struct VaultNote: Identifiable, Hashable, Sendable {
     let relativePath: String
     let title: String
     let url: URL
