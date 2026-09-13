@@ -55,7 +55,9 @@ These types should stay small and dependency-light.
 
 `Stores/` contains persistence and local file-system access:
 
-- `VaultStore`: vault file indexing, file read/write, note creation, and attachment copy. It remains the compatibility facade used by the app.
+- `VaultStore`: file read/write, note creation, and attachment copy. It remains the compatibility facade used by the app.
+- `VaultSearchIndexStore`: thread-safe cache of notes, folders, and prepared search candidates. Popup indexing and ranking run in background tasks.
+- `VaultNoteSearch`: fixed match levels, Unicode normalization, directory scopes, abbreviation matching, and limited typo matching. See [search behavior](search-behavior.md).
 - `VaultSelectionStore`: lowest-level bookmark/path persistence and security-scoped access checks. Both `VaultStore` and `AppConfigStore` depend on it, removing their previous cyclic dependency.
 - `VaultPathResolver`: the single path-normalization and containment boundary for vault files, including symlink-escape rejection and Unicode path repair.
 - `VaultMediaStore`: Markdown/wiki media resolution, bounded image caching, downsampling, and fallback vault scans behind the `VaultStore` facade.
@@ -157,7 +159,7 @@ Paste and drag-and-drop handling live in `MarkdownEditorView` and are normalized
 
 - Empty New Note protection.
 - Markdown file creation.
-- Vault search indexing, directory-scoped fuzzy ranking, and lazy suggestion limiting.
+- Vault search indexing, exact-name ranking, directory sections, Unicode variants, typo matching, stale-query handling, and keyboard navigation. Popup results are not silently truncated.
 - Vault file writes.
 - Obsidian Daily Note URI construction.
 - Shortcut storage and hotkey mapping.

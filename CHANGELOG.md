@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.4 - 2026-09-13
+
+### Changed
+
+- Rank exact filenames before partial and approximate file matches. Accept apostrophe variants, accents, extra spaces, and an optional `.md` extension.
+- Improve word and abbreviation matching, and accept one typo in a query word of at least four characters.
+- Show folders first, with separate sections for exact matches, direct files, and files in subfolders. File rows show titles only.
+- Enter matching folders instead of opening folder notes with the same name. Add `.md` to select the note explicitly.
+- Use Cmd+Down and Cmd+Up to move between result sections. Escape dismisses suggestions before closing the window.
+- Run indexing and matching in background tasks, reject stale results, and remove the silent 80-result cutoff.
+- Keep the active note and its save target while browsing search results.
+
+### Developer
+
+- Add focused tests for ranking, Unicode names, folder-note navigation, query cancellation, and index refresh.
+- Verify folder navigation, section shortcuts, filename searches, and file opening through the native UI.
+
 ## 2.3 - 2026-09-13
 
 ### Changed

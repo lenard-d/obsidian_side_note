@@ -8,6 +8,60 @@ import WebKit
 @testable import ObsidianSideNote
 
 extension ObsidianSideNoteTests {
+    @MainActor
+    @Test func searchFoldersIncludeEmptyDirectoriesAndEnterScopesNotes() async throws {
+        let vault = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: vault.appendingPathComponent("Projects/Empty"), withIntermediateDirectories: true)
+        try "Body".write(to: vault.appendingPathComponent("Projects/Plan.md"), atomically: true, encoding: .utf8)
+        try "Other".write(to: vault.appendingPathComponent("Other.md"), atomically: true, encoding: .utf8)
+        defer {
+            try? FileManager.default.removeItem(at: vault)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            UserDefaults.standard.removeObject(forKey: "draft.editVaultFile.search")
+        }
+        VaultStore.saveVaultURL(vault)
+        let model = ContentViewModel(mode: .editVaultFile)
+        model.vaultSearchQuery = "Projects"
+        model.searchQueryDidChange()
+        await model.searchTask?.value
+        let folderIndex = try #require(model.folderResults.firstIndex { $0.relativePath == "Projects" })
+        model.highlightedSearchIndex = folderIndex
+        model.selectHighlightedSearchResult()
+        await model.searchTask?.value
+
+        #expect(model.vaultSearchQuery == "Projects/")
+        #expect(model.folderResults.map(\.relativePath) == ["Projects/Empty"])
+        #expect(model.searchResults.map(\.relativePath) == ["Projects/Plan.md"])
+        #expect(model.highlightedSearchIndex == 0)
+        #expect(model.shouldShowSearchSuggestions)
+    }
+
+    @MainActor
+    @Test func commandDownSelectsFirstFileAndDoesNotWrap() {
+        let model = ContentViewModel(mode: .editVaultFile)
+        model.searchSuggestions = VaultSearchResults(sections: [
+            VaultSearchSection(kind: .folders, notes: [
+                VaultNote(relativePath: "Projects", title: "Projects", url: URL(fileURLWithPath: "/Projects")),
+                VaultNote(relativePath: "Work", title: "Work", url: URL(fileURLWithPath: "/Work"))
+            ]),
+            VaultSearchSection(kind: .files, notes: [
+                VaultNote(relativePath: "Plan.md", title: "Plan", url: URL(fileURLWithPath: "/Plan.md"))
+            ])
+        ], preferredID: nil)
+        model.moveSearchSelectionDown(toNextSection: true)
+        #expect(model.highlightedSearchIndex == 2)
+        model.moveSearchSelectionDown(toNextSection: true)
+        #expect(model.highlightedSearchIndex == 2)
+        model.searchSuggestions = VaultSearchResults(sections: Array(model.searchSuggestions.sections.prefix(1)), preferredID: nil)
+        model.highlightedSearchIndex = 0
+        model.moveSearchSelectionDown(toNextSection: true)
+        #expect(model.highlightedSearchIndex == 0)
+        model.moveSearchSelectionDown(toNextSection: false)
+        #expect(model.highlightedSearchIndex == 1)
+    }
+
     @Test func newNoteIsNotCreatedWithoutContent() throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -447,7 +501,7 @@ extension ObsidianSideNoteTests {
     }
 
     @MainActor
-    @Test func editVaultFileEmptySearchDoesNotPopulateVaultResults() throws {
+    @Test func editVaultFileEmptySearchDoesNotPopulateVaultResults() async throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
@@ -465,12 +519,13 @@ extension ObsidianSideNoteTests {
         let viewModel = ContentViewModel(mode: .editVaultFile)
         viewModel.vaultSearchQuery = ""
         viewModel.searchQueryDidChange()
+        await viewModel.searchTask?.value
 
         #expect(viewModel.searchResults.isEmpty)
     }
 
     @MainActor
-    @Test func editVaultFileSearchKeepsAllMatchesNavigable() throws {
+    @Test func editVaultFileSearchKeepsAllMatchesNavigable() async throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
@@ -495,9 +550,10 @@ extension ObsidianSideNoteTests {
         viewModel.highlightedSearchIndex = 11
         viewModel.vaultSearchQuery = "Note"
         viewModel.searchQueryDidChange()
+        await viewModel.searchTask?.value
 
         #expect(viewModel.searchResults.count == 12)
-        #expect(viewModel.highlightedSearchIndex == 11)
+        #expect(viewModel.highlightedSearchIndex == 0)
     }
 
     @MainActor

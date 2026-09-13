@@ -4,8 +4,6 @@ import OSLog
 import SwiftUI
 
 final class ContentViewModel: ObservableObject {
-    private static let vaultSearchSuggestionLimit = 80
-
     let mode: NoteMode
 
     @Published var noteText: String = ""
@@ -13,7 +11,16 @@ final class ContentViewModel: ObservableObject {
     @Published var vaultSearchQuery: String = ""
     @Published var vaultName: String = VaultStore.selectedVaultName
     @Published var vaultPath: String = VaultStore.selectedVaultPath
-    @Published var searchResults: [VaultNote] = []
+    @Published var searchSuggestions: VaultSearchResults = .empty
+    var searchResults: [VaultNote] { searchSuggestions.rows.filter { !$0.isFolder }.map(\.note) }
+    var folderResults: [VaultNote] { searchSuggestions.rows.filter(\.isFolder).map(\.note) }
+    var searchResultCount: Int { searchSuggestions.rows.count }
+    var isSearchFocused = false
+    @Published private(set) var isSearching = false
+    private(set) var searchTask: Task<Void, Never>?
+    private var searchWork: Task<VaultSearchResults, Never>?
+    private var activateWhenSearchCompletes = false
+    @Published private var searchSuggestionsDismissed = false
     @Published var selectedNote: VaultNote?
     @Published var createdNewNote: VaultNote?
     @Published var highlightedSearchIndex: Int = 0
@@ -39,6 +46,7 @@ final class ContentViewModel: ObservableObject {
 
     var shouldShowSearchSuggestions: Bool {
         mode == .editVaultFile
+            && !searchSuggestionsDismissed
             && !vaultSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && selectedNote?.relativePath != vaultSearchQuery
     }
@@ -69,6 +77,8 @@ final class ContentViewModel: ObservableObject {
     }
 
     func stop() {
+        searchTask?.cancel()
+        searchWork?.cancel()
         flushSelectedNoteAutosave()
         flushNewNoteAutosave()
         if mode == .newNote {
@@ -100,6 +110,7 @@ final class ContentViewModel: ObservableObject {
 
     func searchQueryDidChange() {
         guard mode == .editVaultFile else { return }
+        searchSuggestionsDismissed = false
         UserDefaults.standard.set(vaultSearchQuery, forKey: "draft.editVaultFile.search")
         refreshSearchResults()
     }
@@ -261,57 +272,100 @@ final class ContentViewModel: ObservableObject {
         }
     }
 
+    func searchFocusDidChange(_ focused: Bool) {
+        isSearchFocused = focused
+        guard focused else { return }
+        VaultSearchIndexStore.invalidate()
+        searchSuggestionsDismissed = false
+        refreshSearchResults()
+    }
+
     private func refreshSearchResults() {
         guard mode == .editVaultFile else { return }
-        let trimmedQuery = vaultSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedQuery.isEmpty else {
-            searchResults = []
+        searchTask?.cancel()
+        searchWork?.cancel()
+        let query = vaultSearchQuery
+        activateWhenSearchCompletes = false
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let vaultURL = VaultStore.selectedVaultURL else {
+            searchSuggestions = .empty
             highlightedSearchIndex = 0
+            isSearching = false
             return
         }
-
-        searchResults = VaultStore.markdownNotes(
-            matching: vaultSearchQuery,
-            limit: Self.vaultSearchSuggestionLimit
-        )
-        highlightedSearchIndex = min(highlightedSearchIndex, max(searchResults.count - 1, 0))
-        if let selectedNote, !searchResults.contains(where: { $0.relativePath == selectedNote.relativePath }) {
-            self.selectedNote = nil
+        isSearching = true
+        searchTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
+            let work = Task.detached(priority: .userInitiated) {
+                let index = VaultSearchIndexStore.index(in: vaultURL)
+                guard !Task.isCancelled else { return VaultSearchResults.empty }
+                return index.search.suggestions(matching: query)
+            }
+            self?.searchWork = work
+            let results = await work.value
+            guard !Task.isCancelled, let self, vaultSearchQuery == query,
+                  VaultStore.selectedVaultURL == vaultURL else { return }
+            searchSuggestions = results
+            highlightedSearchIndex = results.preferredIndex
+            isSearching = false
+            if activateWhenSearchCompletes {
+                activateWhenSearchCompletes = false
+                if isSearchFocused && shouldShowSearchSuggestions { selectHighlightedSearchResult() }
+            }
         }
     }
 
-    private func selectHighlightedSearchResult() {
-        guard !searchResults.isEmpty else { return }
-        let index = min(max(highlightedSearchIndex, 0), searchResults.count - 1)
-        selectNote(searchResults[index])
+    func selectFolder(_ folder: VaultNote) {
+        vaultSearchQuery = folder.relativePath + "/"
+        searchQueryDidChange()
+    }
+
+    func selectHighlightedSearchResult() {
+        guard !isSearching, searchSuggestions.rows.indices.contains(highlightedSearchIndex) else { return }
+        let row = searchSuggestions.rows[highlightedSearchIndex]
+        if row.isFolder { selectFolder(row.note) } else { selectNote(row.note) }
+    }
+
+    func moveSearchSelectionDown(toNextSection: Bool) {
+        if toNextSection {
+            highlightedSearchIndex = searchSuggestions.nextSection(after: highlightedSearchIndex)
+        } else {
+            highlightedSearchIndex = min(highlightedSearchIndex + 1, max(searchResultCount - 1, 0))
+        }
+    }
+
+    func handleSearchKey(_ event: NSEvent) -> Bool {
+        guard isSearchFocused, shouldShowSearchSuggestions, eventBelongsToWindow(event) else { return false }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard modifiers.isEmpty || modifiers == .command else { return false }
+        switch event.keyCode {
+        case 53 where modifiers.isEmpty:
+            searchSuggestionsDismissed = true
+            activateWhenSearchCompletes = false
+        case 125:
+            moveSearchSelectionDown(toNextSection: modifiers == .command)
+        case 126:
+            highlightedSearchIndex = modifiers == .command
+                ? searchSuggestions.previousSection(before: highlightedSearchIndex)
+                : max(highlightedSearchIndex - 1, 0)
+        case 36, 76, 48:
+            guard modifiers.isEmpty else { return false }
+            if isSearching {
+                activateWhenSearchCompletes = true
+                return true
+            }
+            guard searchResultCount > 0 else { return false }
+            selectHighlightedSearchResult()
+        default:
+            return false
+        }
+        return true
     }
 
     private func installSearchKeyMonitor() {
         guard mode == .editVaultFile, searchKeyMonitor == nil else { return }
         searchKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return event }
-            guard eventBelongsToWindow(event) else { return event }
-            guard shouldShowSearchSuggestions else {
-                return event
-            }
-
-            guard !searchResults.isEmpty else {
-                return event
-            }
-
-            switch event.keyCode {
-            case 125:
-                highlightedSearchIndex = min(highlightedSearchIndex + 1, searchResults.count - 1)
-                return nil
-            case 126:
-                highlightedSearchIndex = max(highlightedSearchIndex - 1, 0)
-                return nil
-            case 36, 48:
-                selectHighlightedSearchResult()
-                return nil
-            default:
-                return event
-            }
+            self?.handleSearchKey(event) == true ? nil : event
         }
     }
 

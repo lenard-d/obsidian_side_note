@@ -4,7 +4,7 @@ import Foundation
 /// Keeping this logic separate makes the filesystem boundary explicit and
 /// prevents callers from constructing unchecked vault URLs.
 enum VaultPathResolver {
-    static func relativePath(for fileURL: URL, in vaultURL: URL) -> String {
+    nonisolated static func relativePath(for fileURL: URL, in vaultURL: URL) -> String {
         let vaultPath = vaultURL.standardizedFileURL.path
         let filePath = fileURL.standardizedFileURL.path
         guard filePath.hasPrefix(vaultPath + "/") else {

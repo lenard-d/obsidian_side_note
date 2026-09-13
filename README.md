@@ -198,7 +198,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the internal design notes.
 
 ## Status
 
-Obsidian Side Note 2.2 is usable, but still evolving. Known next steps:
+Obsidian Side Note 2.4 is usable, but still evolving. Known next steps:
 
 - Developer ID signing and notarization.
 - Window size and position preferences.
