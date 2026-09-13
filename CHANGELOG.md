@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.3 - 2026-09-13
+
+### Changed
+
+- Fixed macOS text replacements in the editor. Shortcuts expand after a space, punctuation mark, or Enter.
+- Reload text replacements when the editor receives focus.
+- Added support for Periodic Notes daily note names.
+- Stabilized list marker positions and cursor movement between source and preview text.
+
+### Developer
+
+- Made UI tests check visible input and saved Markdown after opening linked notes.
+- Added UI coverage for text replacements through the app's normal editor interface.
+
 ## 2.2 - 2026-08-20
 
 Obsidian Side Note 2.2 stabilizes live-preview editing, adds linked-note previews, and hardens vault and media handling.
