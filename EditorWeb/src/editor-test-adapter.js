@@ -158,9 +158,6 @@ export function installEditorTestAdapter(view, helpers) {
       return [...view.dom.querySelectorAll(".cm-content, .cm-content *")]
         .filter((element) => element.innerText && element.innerText.trim().length > 0)
         .map((element) => getComputedStyle(element).color);
-    },
-    setTextReplacements(replacements) {
-      helpers.setTextReplacements(replacements);
     }
   };
 }

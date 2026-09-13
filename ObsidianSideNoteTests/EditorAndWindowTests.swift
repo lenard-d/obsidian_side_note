@@ -259,7 +259,7 @@ extension ObsidianSideNoteTests {
               const transientHeadingLayout = window.editorTest.lineLayout();
               window.editor.setMarkdown("abbr");
               window.editorTest.setSelection(4);
-              window.editorTest.setTextReplacements({abbr: "expanded text"});
+              window.editor.setTextReplacements({abbr: "expanded text"});
               const replacementHandled = window.editorTest.applyTextInput(" ");
               const replacementMarkdown = window.editorTest.getMarkdown();
               window.editor.setMarkdown("hello");

@@ -24632,9 +24632,6 @@ var ObsidianSideNoteEditor = (() => {
       },
       textColors() {
         return [...view.dom.querySelectorAll(".cm-content, .cm-content *")].filter((element) => element.innerText && element.innerText.trim().length > 0).map((element) => getComputedStyle(element).color);
-      },
-      setTextReplacements(replacements) {
-        helpers.setTextReplacements(replacements);
       }
     };
   }
@@ -25564,7 +25561,7 @@ ${marker.continuation}`;
     return true;
   }
   function applyTextReplacement(view, from, to, text) {
-    if (from !== to || textReplacements.size === 0 || !/^[\s.,!?;:]$/.test(text)) return false;
+    if (readOnlyViews.has(view) || from !== to || textReplacements.size === 0 || !/^[\s.,!?;:]?$/.test(text)) return false;
     const line = view.state.doc.lineAt(from);
     const prefix = view.state.sliceDoc(line.from, from);
     let matchedShortcut = null;
@@ -25655,6 +25652,8 @@ ${marker.continuation}`;
       {
         key: "Enter",
         run(view) {
+          const selection = view.state.selection.main;
+          applyTextReplacement(view, selection.from, selection.to, "");
           return insertListNewline(view);
         }
       },
@@ -25993,6 +25992,9 @@ ${insertion}`;
       setAppearance(scheme) {
         applyAppearance(view, scheme);
       },
+      setTextReplacements(replacements) {
+        textReplacements = new Map(Object.entries(replacements || {}));
+      },
       setReadOnly(isReadOnly) {
         const readOnly2 = Boolean(isReadOnly);
         if (readOnly2) {
@@ -26014,10 +26016,7 @@ ${insertion}`;
     if (window.__OSN_EDITOR_TESTING__ === true) {
       installEditorTestAdapter(view, {
         focusBlankEditorArea,
-        applyTextReplacement,
-        setTextReplacements(replacements) {
-          textReplacements = new Map(Object.entries(replacements || {}));
-        }
+        applyTextReplacement
       });
     }
     post({ type: "ready" });

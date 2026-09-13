@@ -826,7 +826,7 @@ function insertListNewline(view) {
 }
 
 function applyTextReplacement(view, from, to, text) {
-  if (from !== to || textReplacements.size === 0 || !/^[\s.,!?;:]$/.test(text)) return false;
+  if (readOnlyViews.has(view) || from !== to || textReplacements.size === 0 || !/^[\s.,!?;:]?$/.test(text)) return false;
 
   const line = view.state.doc.lineAt(from);
   const prefix = view.state.sliceDoc(line.from, from);
@@ -940,6 +940,8 @@ function markdownKeyBindings() {
     {
       key: "Enter",
       run(view) {
+        const selection = view.state.selection.main;
+        applyTextReplacement(view, selection.from, selection.to, "");
         return insertListNewline(view);
       }
     },
@@ -1308,6 +1310,9 @@ function installEditor() {
     setAppearance(scheme) {
       applyAppearance(view, scheme);
     },
+    setTextReplacements(replacements) {
+      textReplacements = new Map(Object.entries(replacements || {}));
+    },
     setReadOnly(isReadOnly) {
       const readOnly = Boolean(isReadOnly);
       if (readOnly) {
@@ -1330,10 +1335,7 @@ function installEditor() {
   if (window.__OSN_EDITOR_TESTING__ === true) {
     installEditorTestAdapter(view, {
       focusBlankEditorArea,
-      applyTextReplacement,
-      setTextReplacements(replacements) {
-        textReplacements = new Map(Object.entries(replacements || {}));
-      }
+      applyTextReplacement
     });
   }
 

@@ -178,7 +178,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
             appliedAppearanceScheme = scheme
             callEditorFunction("setAppearance", argument: scheme)
-            syncTextReplacementsToWebViewIfNeeded()
         }
 
         func syncReadOnlyModeToWebViewIfNeeded() {
@@ -302,6 +301,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 syncMediaEmbedsToWebViewIfNeeded(text)
                 syncMarkdownToWebViewIfNeeded(text)
                 syncAppearanceToWebViewIfNeeded()
+                syncTextReplacementsToWebViewIfNeeded()
                 syncReadOnlyModeToWebViewIfNeeded()
                 applyFocusIfNeeded()
                 applyFocusRequestIfNeeded()
@@ -320,6 +320,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 }
             case "focus":
                 isFocused = true
+                syncTextReplacementsToWebViewIfNeeded()
             case "blur":
                 isFocused = false
             case "pasteMedia":

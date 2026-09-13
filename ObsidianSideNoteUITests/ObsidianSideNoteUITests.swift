@@ -55,6 +55,14 @@ final class ObsidianSideNoteUITests: XCTestCase {
         }
 
         let app = testApplication()
+        // Keep the replacement test independent of the Mac's personal shortcuts.
+        app.launchArguments += ["-NSUserDictionaryReplacementItems", """
+        (
+          { on = 1; replace = "==>"; with = "➯"; },
+          { on = 1; replace = "=/"; with = "≠"; },
+          { on = 1; replace = "nciht"; with = "nicht"; }
+        )
+        """]
         app.launchEnvironment["OSN_TEST_CONFIG_URL"] = configURL.path
         app.launchEnvironment["OSN_TEST_VAULT_PATH"] = vaultURL.path
         app.launchEnvironment["OSN_TEST_EDIT_FILE_PATH"] = "Inbox/Existing.md"
@@ -113,6 +121,13 @@ final class ObsidianSideNoteUITests: XCTestCase {
         linkedEditor.typeText("LINK_FOCUS_INPUT")
         XCTAssertTrue((linkedEditor.value as? String)?.contains("LINK_FOCUS_INPUT") == true)
         XCTAssertTrue(waitForFileContent(linkedNoteURL, containing: "LINK_FOCUS_INPUT"))
+
+        for (shortcut, replacement, delimiter) in [("==>", "➯", " "), ("=/", "≠", " "), ("nciht", "nicht", "\n")] {
+            linkedEditor.typeText("\n" + shortcut + delimiter)
+            XCTAssertTrue((linkedEditor.value as? String)?.contains(replacement + delimiter) == true,
+                          "Shortcut \(shortcut): \(linkedEditor.value ?? "missing editor value")")
+            XCTAssertTrue(waitForFileContent(linkedNoteURL, containing: replacement + delimiter))
+        }
     }
 
     private func testApplication() -> XCUIApplication {
