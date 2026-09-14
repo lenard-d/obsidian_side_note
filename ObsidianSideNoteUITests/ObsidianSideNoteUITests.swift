@@ -6,11 +6,63 @@
 //
 
 import XCTest
+import AppKit
 
 final class ObsidianSideNoteUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
+    }
+
+    @MainActor
+    func testInactiveWindowDragsFromEmptyHeaderOnFirstPress() throws {
+        let app = testApplication()
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WindowDragTest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        let bundleID = "live.lukesmith.ObsidianSideNote"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: bundleID))
+        let savedDefaults = defaults.persistentDomain(forName: bundleID)
+        app.launchEnvironment["OSN_TEST_CONFIG_URL"] = temporary.appendingPathComponent("config.json").path
+        app.launchEnvironment["OSN_TEST_VAULT_PATH"] = temporary.path
+        app.launchEnvironment["OSN_TEST_EDIT_FILE_PATH"] = "Example.md"
+        try "# Example".write(to: temporary.appendingPathComponent("Example.md"), atomically: true, encoding: .utf8)
+        app.launch()
+        defer {
+            app.terminate()
+            if let savedDefaults { defaults.setPersistentDomain(savedDefaults, forName: bundleID) }
+            else { defaults.removePersistentDomain(forName: bundleID) }
+            defaults.synchronize()
+            try? FileManager.default.removeItem(at: temporary)
+        }
+        app.typeKey("v", modifierFlags: [.command, .option, .control])
+        let title = app.staticTexts["Edit Vault File"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        let window = app.windows.firstMatch
+
+        // Send the drag through Finder so XCTest does not first activate the note app.
+        for headerPoint in [CGVector(dx: 0.75, dy: 23), CGVector(dx: 0.5, dy: 4)] {
+            let before = window.frame
+            let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
+            finder.activate()
+            XCTAssertTrue(finder.wait(for: .runningForeground, timeout: 3))
+            XCTAssertNotEqual(NSWorkspace.shared.frontmostApplication?.bundleIdentifier, "live.lukesmith.ObsidianSideNote")
+            let start = CGPoint(x: before.minX + before.width * headerPoint.dx,
+                                y: before.minY + headerPoint.dy)
+            let end = CGPoint(x: start.x - 80, y: start.y + 50)
+            let origin = finder.coordinate(withNormalizedOffset: .zero)
+            let startCoordinate = origin.withOffset(CGVector(dx: start.x - origin.screenPoint.x,
+                                                             dy: start.y - origin.screenPoint.y))
+            let endCoordinate = origin.withOffset(CGVector(dx: end.x - origin.screenPoint.x,
+                                                           dy: end.y - origin.screenPoint.y))
+            startCoordinate.press(forDuration: 0.01, thenDragTo: endCoordinate)
+            let moved = NSPredicate { _, _ in
+                abs(window.frame.minX - (before.minX - 80)) < 12 &&
+                abs(window.frame.minY - (before.minY + 50)) < 12
+            }
+            expectation(for: moved, evaluatedWith: nil)
+            waitForExpectations(timeout: 3)
+        }
     }
 
     @MainActor
