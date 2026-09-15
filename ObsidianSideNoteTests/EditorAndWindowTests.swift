@@ -1278,19 +1278,44 @@ extension ObsidianSideNoteTests {
         let resultJSON = try #require(try await webView.evaluateJavaScript(
             """
             (() => {
-              const insertLineBreak = (source) => {
+              const textLeft = (line, text) => {
+                if (!line) return null;
+                const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+                while (walker.nextNode()) {
+                  const node = walker.currentNode;
+                  const index = node.textContent?.indexOf(text) ?? -1;
+                  if (index < 0) continue;
+                  const range = document.createRange();
+                  range.setStart(node, index);
+                  range.setEnd(node, index + 1);
+                  return range.getBoundingClientRect().left;
+                }
+                return null;
+              };
+
+              const insertLineBreak = (source, firstText) => {
                 window.editor.setMarkdown(source);
                 window.editorTest.setSelection(source.length);
                 const handled = window.editorTest.dispatchKey("Enter", {shiftKey: true});
-                return {handled, markdown: window.editorTest.getMarkdown()};
+                window.editorTest.applyTextInput("continued");
+                const lines = document.querySelectorAll(".cm-line");
+                const firstLeft = textLeft(lines[0], firstText);
+                const continuationLeft = textLeft(lines[1], "continued");
+                return {
+                  handled,
+                  markdown: window.editorTest.getMarkdown(),
+                  alignmentDelta: firstLeft == null || continuationLeft == null
+                    ? null
+                    : Math.abs(firstLeft - continuationLeft)
+                };
               };
 
               return JSON.stringify({
-                unordered: insertLineBreak("- Item"),
-                ordered: insertLineBreak("12. Item"),
-                task: insertLineBreak("- [ ] Task"),
-                blockquote: insertLineBreak("> Quote"),
-                quotedList: insertLineBreak("> - Nested item")
+                unordered: insertLineBreak("- Item", "Item"),
+                ordered: insertLineBreak("12. Item", "Item"),
+                task: insertLineBreak("- [ ] Task", "Task"),
+                blockquote: insertLineBreak("> Quote", "Quote"),
+                quotedList: insertLineBreak("> - Nested item", "Nested item")
               });
             })();
             """
@@ -1305,15 +1330,19 @@ extension ObsidianSideNoteTests {
         let quotedList = try #require(result["quotedList"] as? [String: Any])
 
         #expect(unordered["handled"] as? Bool == true)
-        #expect(unordered["markdown"] as? String == "- Item\n  ")
+        #expect(unordered["markdown"] as? String == "- Item\n  continued")
+        #expect(try #require(unordered["alignmentDelta"] as? Double) < 0.5)
         #expect(ordered["handled"] as? Bool == true)
-        #expect(ordered["markdown"] as? String == "12. Item\n    ")
+        #expect(ordered["markdown"] as? String == "12. Item\n    continued")
+        #expect(try #require(ordered["alignmentDelta"] as? Double) < 0.5)
         #expect(task["handled"] as? Bool == true)
-        #expect(task["markdown"] as? String == "- [ ] Task\n      ")
+        #expect(task["markdown"] as? String == "- [ ] Task\n      continued")
+        #expect(try #require(task["alignmentDelta"] as? Double) < 0.5)
         #expect(blockquote["handled"] as? Bool == true)
-        #expect(blockquote["markdown"] as? String == "> Quote\n> ")
+        #expect(blockquote["markdown"] as? String == "> Quote\n> continued")
+        #expect(try #require(blockquote["alignmentDelta"] as? Double) < 0.5)
         #expect(quotedList["handled"] as? Bool == true)
-        #expect(quotedList["markdown"] as? String == "> - Nested item\n>   ")
+        #expect(quotedList["markdown"] as? String == "> - Nested item\n>   continued")
     }
 
     @MainActor
