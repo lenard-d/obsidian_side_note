@@ -24725,6 +24725,11 @@ var ObsidianSideNoteEditor = (() => {
       paddingLeft: `calc(${listLeadingSpace} + ${listContentIndent})`,
       textIndent: `calc(0px - ${listContentIndent})`
     },
+    ".cm-line.osn-blockquote-line": {
+      marginLeft: "0.15em",
+      paddingLeft: "0.75em",
+      borderLeft: "2px solid rgba(255, 255, 255, 0.42)"
+    },
     ".cm-line.osn-heading-line": {
       lineHeight: "1.28",
       padding: "2px 0 1px"
@@ -24911,6 +24916,14 @@ var ObsidianSideNoteEditor = (() => {
   }
   function isOrderedList2(line) {
     return /^\s*\d+[.)]\s+/.test(line);
+  }
+  function blockquoteMarker(line) {
+    const match = /^(\s{0,3})>(?:[ \t]?)/.exec(line);
+    if (!match) return null;
+    return {
+      from: utf16Length(match[1]),
+      to: utf16Length(match[0])
+    };
   }
   var listIndent = "  ";
   var imageExtensions = /* @__PURE__ */ new Set(["apng", "avif", "gif", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp"]);
@@ -25203,6 +25216,21 @@ var ObsidianSideNoteEditor = (() => {
     }
     if (isOrderedList2(line.text)) {
       addListLineDecoration(decorations2, line);
+    }
+  }
+  function addBlockquoteDecorations(decorations2, state, line) {
+    const marker = blockquoteMarker(line.text);
+    if (!marker) return;
+    decorations2.push(
+      Decoration.line({ class: "osn-blockquote-line" }).range(line.from)
+    );
+    if (!selectionTouchesLine(state, line)) {
+      decorations2.push(
+        Decoration.replace({ inclusive: false }).range(
+          line.from + marker.from,
+          line.from + marker.to
+        )
+      );
     }
   }
   var ImageEmbedWidget = class extends WidgetType {
@@ -25527,6 +25555,7 @@ var ObsidianSideNoteEditor = (() => {
         }
       }
       addListDecorations(decorations2, state, line);
+      addBlockquoteDecorations(decorations2, state, line);
     }
     return Decoration.set(decorations2, true);
   }

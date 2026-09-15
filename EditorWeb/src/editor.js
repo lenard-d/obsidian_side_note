@@ -68,6 +68,15 @@ function isOrderedList(line) {
   return /^\s*\d+[.)]\s+/.test(line);
 }
 
+function blockquoteMarker(line) {
+  const match = /^(\s{0,3})>(?:[ \t]?)/.exec(line);
+  if (!match) return null;
+  return {
+    from: utf16Length(match[1]),
+    to: utf16Length(match[0])
+  };
+}
+
 const listIndent = "  ";
 const imageExtensions = new Set(["apng", "avif", "gif", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp"]);
 const refreshMarkdownDecorationsEffect = StateEffect.define();
@@ -413,6 +422,23 @@ function addListDecorations(decorations, state, line) {
 
   if (isOrderedList(line.text)) {
     addListLineDecoration(decorations, line);
+  }
+}
+
+function addBlockquoteDecorations(decorations, state, line) {
+  const marker = blockquoteMarker(line.text);
+  if (!marker) return;
+
+  decorations.push(
+    Decoration.line({class: "osn-blockquote-line"}).range(line.from)
+  );
+  if (!selectionTouchesLine(state, line)) {
+    decorations.push(
+      Decoration.replace({inclusive: false}).range(
+        line.from + marker.from,
+        line.from + marker.to
+      )
+    );
   }
 }
 
@@ -787,6 +813,7 @@ function buildMarkdownDecorations(state) {
     }
 
     addListDecorations(decorations, state, line);
+    addBlockquoteDecorations(decorations, state, line);
   }
 
   return Decoration.set(decorations, true);
