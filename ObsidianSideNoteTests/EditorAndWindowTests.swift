@@ -1360,6 +1360,95 @@ extension ObsidianSideNoteTests {
     }
 
     @MainActor
+    @Test func markdownEditorPresentsAndContinuesBlockquotes() async throws {
+        let html = try MarkdownEditorResource.bundledHTML(testing: true)
+        let messageHandler = MarkdownEditorReadyMessageHandler()
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.userContentController.add(messageHandler, name: "editor")
+        defer {
+            configuration.userContentController.removeScriptMessageHandler(forName: "editor")
+        }
+
+        let webView = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 480),
+            configuration: configuration
+        )
+        webView.loadHTMLString(html, baseURL: nil)
+
+        let deadline = Date().addingTimeInterval(3)
+        while !messageHandler.isReady && messageHandler.errorMessage == nil && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(messageHandler.errorMessage == nil)
+        #expect(messageHandler.isReady)
+
+        let resultJSON = try #require(try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const quotedTextLeft = () => {
+                const line = document.querySelector(".osn-blockquote-line");
+                if (!line) return null;
+                const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+                while (walker.nextNode()) {
+                  const node = walker.currentNode;
+                  const index = node.textContent?.indexOf("Quoted text") ?? -1;
+                  if (index < 0) continue;
+                  const range = document.createRange();
+                  range.setStart(node, index);
+                  range.setEnd(node, index + 1);
+                  return range.getBoundingClientRect().left;
+                }
+                return null;
+              };
+
+              const source = "> Quoted text\\nPlain text";
+              window.editor.setMarkdown(source);
+              window.editorTest.setSelection(source.length);
+              const inactiveLine = document.querySelector(".osn-blockquote-line");
+              const inactiveText = inactiveLine?.innerText ?? null;
+              const inactiveStyle = inactiveLine ? getComputedStyle(inactiveLine) : null;
+              const inactiveLeft = quotedTextLeft();
+
+              window.editorTest.setSelection(2);
+              const activeText = document.querySelector(".osn-blockquote-line")?.innerText ?? null;
+
+              window.editorTest.setSelection(5);
+              const editingText = document.querySelector(".osn-blockquote-line")?.innerText ?? null;
+              const editingLeft = quotedTextLeft();
+
+              window.editor.setMarkdown("> Quoted text");
+              window.editorTest.setSelection("> Quoted text".length);
+              const enterHandled = window.editorTest.dispatchKey("Enter");
+
+              return JSON.stringify({
+                inactiveText,
+                activeText,
+                editingText,
+                editingAlignmentDelta: inactiveLeft == null || editingLeft == null
+                  ? null
+                  : Math.abs(inactiveLeft - editingLeft),
+                borderLeftWidth: inactiveStyle?.borderLeftWidth ?? null,
+                enterHandled,
+                markdown: window.editorTest.getMarkdown()
+              });
+            })();
+            """
+        ) as? String)
+        let resultData = try #require(resultJSON.data(using: .utf8))
+        let result = try #require(JSONSerialization.jsonObject(with: resultData) as? [String: Any])
+
+        #expect(result["inactiveText"] as? String == "Quoted text")
+        #expect(result["activeText"] as? String == "> Quoted text")
+        #expect(result["editingText"] as? String == "Quoted text")
+        #expect(try #require(result["editingAlignmentDelta"] as? Double) < 0.5)
+        #expect(result["borderLeftWidth"] as? String == "2px")
+        #expect(result["enterHandled"] as? Bool == true)
+        #expect(result["markdown"] as? String == "> Quoted text\n> ")
+    }
+
+    @MainActor
     @Test func titleFieldReturnCommitsAndRequestsEditorFocus() async throws {
         var title = "Old Title"
         var didCommit = false

@@ -92,6 +92,11 @@ export const editorTheme = EditorView.theme({
     paddingLeft: `calc(${listLeadingSpace} + ${listContentIndent})`,
     textIndent: `calc(0px - ${listContentIndent})`
   },
+  ".cm-line.osn-blockquote-line": {
+    marginLeft: "0.15em",
+    paddingLeft: "0.75em",
+    borderLeft: "2px solid rgba(255, 255, 255, 0.42)"
+  },
   ".cm-line.osn-heading-line": {
     lineHeight: "1.28",
     padding: "2px 0 1px"

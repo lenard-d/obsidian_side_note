@@ -149,6 +149,7 @@ Paste and drag-and-drop handling live in `MarkdownEditorView` and are normalized
 - Inline syntax presentation is data-driven: each supported syntax node maps its marker type to a presentation class. Bold text is rendered with strong emphasis while inactive, and its `**` markers are replaced visually. Moving the cursor into that syntax range reveals the markers for predictable source editing. Further inline styles can use the same mapping instead of adding feature-specific editor branches.
 - Task checkboxes are rendered as CodeMirror replacement widgets over the `[ ]` / `[x]` marker. The marker remains in the document source, and CodeMirror maps cursor/selection through the widget range.
 - When the cursor is adjacent to the checkbox marker, the raw marker is revealed so source editing remains predictable without turning the whole task line back into text.
+- Blockquotes use a visible left rule while inactive. Their `>` marker stays in the Markdown source and appears when the cursor enters the quoted line.
 - Image embeds on their own line are rendered as CodeMirror block widgets when the cursor is outside that line. Swift resolves local vault images into bounded data URLs for the web editor, while the Markdown embed line remains the document source and is revealed for editing when selected.
 - Embed lines such as `![Title](path-or-url)` are parsed for image preloading when their extension is supported.
 - Local relative paths are resolved through `VaultStore.url(forMarkdownLink:)` and `VaultStore.url(forWikiLink:)`, with vault-bound path validation.
