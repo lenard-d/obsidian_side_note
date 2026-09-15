@@ -1387,15 +1387,36 @@ extension ObsidianSideNoteTests {
         let resultJSON = try #require(try await webView.evaluateJavaScript(
             """
             (() => {
+              const quotedTextLeft = () => {
+                const line = document.querySelector(".osn-blockquote-line");
+                if (!line) return null;
+                const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+                while (walker.nextNode()) {
+                  const node = walker.currentNode;
+                  const index = node.textContent?.indexOf("Quoted text") ?? -1;
+                  if (index < 0) continue;
+                  const range = document.createRange();
+                  range.setStart(node, index);
+                  range.setEnd(node, index + 1);
+                  return range.getBoundingClientRect().left;
+                }
+                return null;
+              };
+
               const source = "> Quoted text\\nPlain text";
               window.editor.setMarkdown(source);
               window.editorTest.setSelection(source.length);
               const inactiveLine = document.querySelector(".osn-blockquote-line");
               const inactiveText = inactiveLine?.innerText ?? null;
               const inactiveStyle = inactiveLine ? getComputedStyle(inactiveLine) : null;
+              const inactiveLeft = quotedTextLeft();
 
               window.editorTest.setSelection(2);
               const activeText = document.querySelector(".osn-blockquote-line")?.innerText ?? null;
+
+              window.editorTest.setSelection(5);
+              const editingText = document.querySelector(".osn-blockquote-line")?.innerText ?? null;
+              const editingLeft = quotedTextLeft();
 
               window.editor.setMarkdown("> Quoted text");
               window.editorTest.setSelection("> Quoted text".length);
@@ -1404,6 +1425,10 @@ extension ObsidianSideNoteTests {
               return JSON.stringify({
                 inactiveText,
                 activeText,
+                editingText,
+                editingAlignmentDelta: inactiveLeft == null || editingLeft == null
+                  ? null
+                  : Math.abs(inactiveLeft - editingLeft),
                 borderLeftWidth: inactiveStyle?.borderLeftWidth ?? null,
                 enterHandled,
                 markdown: window.editorTest.getMarkdown()
@@ -1416,6 +1441,8 @@ extension ObsidianSideNoteTests {
 
         #expect(result["inactiveText"] as? String == "Quoted text")
         #expect(result["activeText"] as? String == "> Quoted text")
+        #expect(result["editingText"] as? String == "Quoted text")
+        #expect(try #require(result["editingAlignmentDelta"] as? Double) < 0.5)
         #expect(result["borderLeftWidth"] as? String == "2px")
         #expect(result["enterHandled"] as? Bool == true)
         #expect(result["markdown"] as? String == "> Quoted text\n> ")

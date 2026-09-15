@@ -25224,11 +25224,13 @@ var ObsidianSideNoteEditor = (() => {
     decorations2.push(
       Decoration.line({ class: "osn-blockquote-line" }).range(line.from)
     );
-    if (!selectionTouchesLine(state, line)) {
+    const markerFrom = line.from + marker.from;
+    const markerTo = line.from + marker.to;
+    if (!selectionTouchesToken(state, markerFrom, markerTo)) {
       decorations2.push(
         Decoration.replace({ inclusive: false }).range(
-          line.from + marker.from,
-          line.from + marker.to
+          markerFrom,
+          markerTo
         )
       );
     }
