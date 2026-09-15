@@ -22,8 +22,8 @@ Obsidian Side Note opens a compact floating editor from the menu bar or a global
 - Searches Markdown files by fuzzy title or vault-relative path matches, with slash paths scoped to that directory subtree.
 - Shows Edit Vault File results in a scrollable overlay without shrinking the editor.
 - Watches the open note file and reloads external Obsidian edits before the next autosave.
-- Renders source-preserving Markdown styling, view-mode bold text, task checkboxes, bullets, headings, and inline images in the editor.
-- Uses a bundled CodeMirror editor for source-preserving Markdown editing, list indentation, task checkboxes, bullet markers, and heading styling.
+- Renders source-preserving Markdown styling, blockquotes, task checkboxes, bullets, headings, and inline images in the bundled CodeMirror editor.
+- Keeps `Shift+Enter` continuation lines inside list items and blockquotes, aligned with their text.
 - Copies pasted or dropped media into the vault attachment folder when configured.
 - Keeps Settings and Quit local so the app does not steal normal shortcuts from other apps.
 
@@ -198,7 +198,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the internal design notes.
 
 ## Status
 
-Obsidian Side Note 2.4 is usable, but still evolving. Known next steps:
+Obsidian Side Note 2.5 is usable, but still evolving. Known next steps:
 
 - Developer ID signing and notarization.
 - Window size and position preferences.

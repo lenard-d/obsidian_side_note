@@ -1297,7 +1297,7 @@ extension ObsidianSideNoteTests {
                 window.editor.setMarkdown(source);
                 window.editorTest.setSelection(source.length);
                 const handled = window.editorTest.dispatchKey("Enter", {shiftKey: true});
-                window.editorTest.applyTextInput("continued");
+                window.editor.applyCommand({type: "insertText", text: "continued"});
                 const lines = document.querySelectorAll(".cm-line");
                 const firstLeft = textLeft(lines[0], firstText);
                 const continuationLeft = textLeft(lines[1], "continued");

@@ -149,7 +149,8 @@ Paste and drag-and-drop handling live in `MarkdownEditorView` and are normalized
 - Inline syntax presentation is data-driven: each supported syntax node maps its marker type to a presentation class. Bold text is rendered with strong emphasis while inactive, and its `**` markers are replaced visually. Moving the cursor into that syntax range reveals the markers for predictable source editing. Further inline styles can use the same mapping instead of adding feature-specific editor branches.
 - Task checkboxes are rendered as CodeMirror replacement widgets over the `[ ]` / `[x]` marker. The marker remains in the document source, and CodeMirror maps cursor/selection through the widget range.
 - When the cursor is adjacent to the checkbox marker, the raw marker is revealed so source editing remains predictable without turning the whole task line back into text.
-- Blockquotes use a visible left rule while inactive. Their `>` marker stays in the Markdown source and appears when the cursor enters the quoted line.
+- Blockquotes use a visible left rule. Their `>` marker stays in the Markdown source and appears when the cursor touches the marker.
+- `Shift+Enter` keeps structural prefixes in list items and blockquotes. List continuation decorations preserve the same visible text alignment as the first line.
 - Image embeds on their own line are rendered as CodeMirror block widgets when the cursor is outside that line. Swift resolves local vault images into bounded data URLs for the web editor, while the Markdown embed line remains the document source and is revealed for editing when selected.
 - Embed lines such as `![Title](path-or-url)` are parsed for image preloading when their extension is supported.
 - Local relative paths are resolved through `VaultStore.url(forMarkdownLink:)` and `VaultStore.url(forWikiLink:)`, with vault-bound path validation.
@@ -171,7 +172,7 @@ Paste and drag-and-drop handling live in `MarkdownEditorView` and are normalized
 - Vault-relative path traversal rejection for Markdown links and Obsidian-configured folders.
 - Remote media byte-limit and content-type checks.
 - Two-way active-note sync, including New Note, Edit Vault File, atomic external writes, and cancellation of stale pending autosaves.
-- Rich Markdown editor rendering, command application, heading hierarchy, task-list toggling, bullet-marker presentation, smart list editing, and media preload behavior.
+- Rich Markdown editor rendering, command application, heading hierarchy, task-list toggling, bullet-marker presentation, blockquotes, structural line breaks, and media preload behavior.
 - Inline image embed rendering in the bundled CodeMirror editor.
 - Structured log levels, quiet test configuration, and diagnostic-buffer bounds.
 - Launch-at-login rejection without falsely persisted enabled state.

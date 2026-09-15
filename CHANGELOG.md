@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.5 - 2026-09-15
+
+### Changed
+
+- Added live blockquote presentation with a left rule while keeping the Markdown source editable.
+- Kept `Shift+Enter` inside list items and blockquotes without creating a new list item or leaving the quote.
+- Aligned list continuation text with the first line for bullets, numbered lists, and task lists.
+- Fixed dragging inactive note windows from the empty header area.
+
+### Developer
+
+- Added WebKit layout tests for blockquotes and structural line breaks.
+- Added a UI test for dragging an inactive window from its empty header area.
+
 ## 2.4 - 2026-09-13
 
 ### Changed

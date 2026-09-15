@@ -16,7 +16,7 @@ The reliable local build path is:
 
 ## Install a Release Build
 
-1. Download `ObsidianSideNote-2.4.zip` from GitHub Releases.
+1. Download `ObsidianSideNote-2.5.zip` from GitHub Releases.
 2. Unzip it.
 3. Move `ObsidianSideNote.app` into `/Applications`.
 4. Open the app.
