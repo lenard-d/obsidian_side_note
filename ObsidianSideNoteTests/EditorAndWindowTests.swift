@@ -1251,6 +1251,72 @@ extension ObsidianSideNoteTests {
     }
 
     @MainActor
+    @Test func markdownEditorInsertsStructuralLineBreaks() async throws {
+        let html = try MarkdownEditorResource.bundledHTML(testing: true)
+        let messageHandler = MarkdownEditorReadyMessageHandler()
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.userContentController.add(messageHandler, name: "editor")
+        defer {
+            configuration.userContentController.removeScriptMessageHandler(forName: "editor")
+        }
+
+        let webView = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 480),
+            configuration: configuration
+        )
+        webView.loadHTMLString(html, baseURL: nil)
+
+        let deadline = Date().addingTimeInterval(3)
+        while !messageHandler.isReady && messageHandler.errorMessage == nil && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(messageHandler.errorMessage == nil)
+        #expect(messageHandler.isReady)
+
+        let resultJSON = try #require(try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const insertLineBreak = (source) => {
+                window.editor.setMarkdown(source);
+                window.editorTest.setSelection(source.length);
+                const handled = window.editorTest.dispatchKey("Enter", {shiftKey: true});
+                return {handled, markdown: window.editorTest.getMarkdown()};
+              };
+
+              return JSON.stringify({
+                unordered: insertLineBreak("- Item"),
+                ordered: insertLineBreak("12. Item"),
+                task: insertLineBreak("- [ ] Task"),
+                blockquote: insertLineBreak("> Quote"),
+                quotedList: insertLineBreak("> - Nested item")
+              });
+            })();
+            """
+        ) as? String)
+        let resultData = try #require(resultJSON.data(using: .utf8))
+        let result = try #require(JSONSerialization.jsonObject(with: resultData) as? [String: Any])
+
+        let unordered = try #require(result["unordered"] as? [String: Any])
+        let ordered = try #require(result["ordered"] as? [String: Any])
+        let task = try #require(result["task"] as? [String: Any])
+        let blockquote = try #require(result["blockquote"] as? [String: Any])
+        let quotedList = try #require(result["quotedList"] as? [String: Any])
+
+        #expect(unordered["handled"] as? Bool == true)
+        #expect(unordered["markdown"] as? String == "- Item\n  ")
+        #expect(ordered["handled"] as? Bool == true)
+        #expect(ordered["markdown"] as? String == "12. Item\n    ")
+        #expect(task["handled"] as? Bool == true)
+        #expect(task["markdown"] as? String == "- [ ] Task\n      ")
+        #expect(blockquote["handled"] as? Bool == true)
+        #expect(blockquote["markdown"] as? String == "> Quote\n> ")
+        #expect(quotedList["handled"] as? Bool == true)
+        #expect(quotedList["markdown"] as? String == "> - Nested item\n>   ")
+    }
+
+    @MainActor
     @Test func markdownEditorHandlesListIndentationKeysInWebView() async throws {
         let html = try MarkdownEditorResource.bundledHTML(testing: true)
         let messageHandler = MarkdownEditorReadyMessageHandler()

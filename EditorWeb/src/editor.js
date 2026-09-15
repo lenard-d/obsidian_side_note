@@ -130,6 +130,29 @@ function listItemMarker(line) {
   return null;
 }
 
+function structuralContinuation(line) {
+  const blockquote = /^(\s{0,3}(?:>[ \t]?)+)/.exec(line);
+  const blockquotePrefix = blockquote?.[1] || "";
+  const list = listItemMarker(line.slice(blockquotePrefix.length));
+
+  if (list) {
+    const markerWidth = list.markerTo - list.indentationLength;
+    return {
+      contentFrom: utf16Length(blockquotePrefix) + list.markerTo,
+      prefix: `${blockquotePrefix}${list.indentation}${" ".repeat(markerWidth)}`
+    };
+  }
+
+  if (blockquotePrefix) {
+    return {
+      contentFrom: utf16Length(blockquotePrefix),
+      prefix: blockquotePrefix
+    };
+  }
+
+  return null;
+}
+
 function selectedLineNumbers(state) {
   const lineNumbers = new Set();
 
@@ -854,6 +877,25 @@ function insertListNewline(view) {
   return true;
 }
 
+function insertStructuralLineBreak(view) {
+  const selection = view.state.selection.main;
+  const startLine = view.state.doc.lineAt(selection.from);
+  const endLine = view.state.doc.lineAt(selection.to);
+  if (startLine.number !== endLine.number) return false;
+
+  const continuation = structuralContinuation(startLine.text);
+  if (!continuation || selection.from < startLine.from + continuation.contentFrom) return false;
+
+  const insertion = `\n${continuation.prefix}`;
+  view.dispatch({
+    changes: {from: selection.from, to: selection.to, insert: insertion},
+    selection: {anchor: selection.from + insertion.length},
+    scrollIntoView: true
+  });
+  view.focus();
+  return true;
+}
+
 function applyTextReplacement(view, from, to, text) {
   if (readOnlyViews.has(view) || from !== to || textReplacements.size === 0 || !/^[\s.,!?;:]?$/.test(text)) return false;
 
@@ -965,6 +1007,14 @@ function markdownKeyBindings() {
     {
       key: "ArrowRight",
       run: movePastTrailingInlineMarker
+    },
+    {
+      key: "Shift-Enter",
+      run(view) {
+        const selection = view.state.selection.main;
+        applyTextReplacement(view, selection.from, selection.to, "");
+        return insertStructuralLineBreak(view);
+      }
     },
     {
       key: "Enter",
