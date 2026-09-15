@@ -201,6 +201,14 @@ export const editorTheme = EditorView.theme({
     boxSizing: "border-box",
     display: "inline-block"
   },
+  ".list-continuation-spacer": {
+    visibility: "hidden",
+    whiteSpace: "pre"
+  },
+  ".list-continuation-fixed-marker": {
+    display: "inline-block",
+    width: listMarkerWidth
+  },
   ".list-task-source": {
     display: "inline-block",
     font: "inherit",

@@ -24834,6 +24834,14 @@ var ObsidianSideNoteEditor = (() => {
       boxSizing: "border-box",
       display: "inline-block"
     },
+    ".list-continuation-spacer": {
+      visibility: "hidden",
+      whiteSpace: "pre"
+    },
+    ".list-continuation-fixed-marker": {
+      display: "inline-block",
+      width: listMarkerWidth
+    },
     ".list-task-source": {
       display: "inline-block",
       font: "inherit",
@@ -24944,7 +24952,11 @@ var ObsidianSideNoteEditor = (() => {
         indentation,
         indentationLength: utf16Length(indentation),
         markerTo: utf16Length(indentation) + utf16Length(marker),
-        continuation: `${indentation}${marker.replace(/\[[ xX]\]/, "[ ]")}`
+        continuation: `${indentation}${marker.replace(/\[[ xX]\]/, "[ ]")}`,
+        continuationSpacer: {
+          kind: "fixed",
+          spacing: marker.slice(marker.lastIndexOf("]") + 1)
+        }
       };
     }
     const unordered = /^(\s*)([-*+]\s+)/.exec(line);
@@ -24955,7 +24967,11 @@ var ObsidianSideNoteEditor = (() => {
         indentation,
         indentationLength: utf16Length(indentation),
         markerTo: utf16Length(indentation) + utf16Length(marker),
-        continuation: `${indentation}${marker}`
+        continuation: `${indentation}${marker}`,
+        continuationSpacer: {
+          kind: "fixed",
+          spacing: marker.slice(1)
+        }
       };
     }
     const ordered = /^(\s*)(\d+)([.)]\s+)/.exec(line);
@@ -24967,7 +24983,61 @@ var ObsidianSideNoteEditor = (() => {
         indentation,
         indentationLength: utf16Length(indentation),
         markerTo: utf16Length(indentation) + utf16Length(ordered[2]) + utf16Length(delimiter),
-        continuation: `${indentation}${number2 + 1}${delimiter}`
+        continuation: `${indentation}${number2 + 1}${delimiter}`,
+        continuationSpacer: {
+          kind: "text",
+          text: `${ordered[2]}${delimiter}`
+        }
+      };
+    }
+    return null;
+  }
+  function listStructure(line) {
+    const blockquote = /^(\s{0,3}(?:>[ \t]?)+)/.exec(line);
+    const blockquotePrefix = blockquote?.[1] || "";
+    const list = listItemMarker(line.slice(blockquotePrefix.length));
+    if (!list) return null;
+    const markerWidth = list.markerTo - list.indentationLength;
+    return {
+      blockquotePrefix,
+      contentFrom: utf16Length(blockquotePrefix) + list.markerTo,
+      indentation: list.indentation,
+      prefix: `${blockquotePrefix}${list.indentation}${" ".repeat(markerWidth)}`,
+      spacer: list.continuationSpacer
+    };
+  }
+  function continuedListStructure(state, line) {
+    if (listStructure(line.text)) return null;
+    for (let lineNumber = line.number - 1; lineNumber >= 1; lineNumber -= 1) {
+      const candidate = state.doc.line(lineNumber);
+      const structure = listStructure(candidate.text);
+      if (structure) {
+        for (let continuationLine = lineNumber + 1; continuationLine <= line.number; continuationLine += 1) {
+          if (!state.doc.line(continuationLine).text.startsWith(structure.prefix)) return null;
+        }
+        return {
+          ...structure,
+          contentFrom: utf16Length(structure.prefix)
+        };
+      }
+      if (candidate.text.trim().length === 0) return null;
+    }
+    return null;
+  }
+  function structuralContinuation(state, line) {
+    const list = listStructure(line.text) || continuedListStructure(state, line);
+    if (list) {
+      return {
+        contentFrom: list.contentFrom,
+        prefix: list.prefix
+      };
+    }
+    const blockquote = /^(\s{0,3}(?:>[ \t]?)+)/.exec(line.text);
+    const blockquotePrefix = blockquote?.[1] || "";
+    if (blockquotePrefix) {
+      return {
+        contentFrom: utf16Length(blockquotePrefix),
+        prefix: blockquotePrefix
       };
     }
     return null;
@@ -25165,6 +25235,30 @@ var ObsidianSideNoteEditor = (() => {
       return marker;
     }
   };
+  var ListContinuationWidget = class _ListContinuationWidget extends WidgetType {
+    constructor(indentation, spacer) {
+      super();
+      this.indentation = indentation;
+      this.spacer = spacer;
+    }
+    eq(other) {
+      return other instanceof _ListContinuationWidget && other.indentation === this.indentation && other.spacer.kind === this.spacer.kind && other.spacer.spacing === this.spacer.spacing && other.spacer.text === this.spacer.text;
+    }
+    toDOM() {
+      const spacer = document.createElement("span");
+      spacer.className = "list-continuation-spacer";
+      spacer.setAttribute("aria-hidden", "true");
+      spacer.append(this.indentation);
+      if (this.spacer.kind === "fixed") {
+        const marker = document.createElement("span");
+        marker.className = "list-continuation-fixed-marker";
+        spacer.append(marker, this.spacer.spacing);
+      } else {
+        spacer.append(this.spacer.text);
+      }
+      return spacer;
+    }
+  };
   function addListLineDecoration(decorations2, line, hanging = false) {
     const className = hanging ? "osn-list-line osn-hanging-list-line" : "osn-list-line";
     decorations2.push(Decoration.line({ class: className }).range(line.from));
@@ -25234,6 +25328,17 @@ var ObsidianSideNoteEditor = (() => {
         )
       );
     }
+  }
+  function addListContinuationDecorations(decorations2, state, line) {
+    const continuation = continuedListStructure(state, line);
+    if (!continuation || continuation.blockquotePrefix) return;
+    addListLineDecoration(decorations2, line);
+    decorations2.push(
+      Decoration.replace({
+        widget: new ListContinuationWidget(continuation.indentation, continuation.spacer),
+        inclusive: false
+      }).range(line.from, line.from + continuation.contentFrom)
+    );
   }
   var ImageEmbedWidget = class extends WidgetType {
     constructor(embed, source, position) {
@@ -25558,6 +25663,7 @@ var ObsidianSideNoteEditor = (() => {
       }
       addListDecorations(decorations2, state, line);
       addBlockquoteDecorations(decorations2, state, line);
+      addListContinuationDecorations(decorations2, state, line);
     }
     return Decoration.set(decorations2, true);
   }
@@ -25586,6 +25692,23 @@ ${marker.continuation}`;
     view.dispatch({
       changes: { from: selection.head, insert: insertion },
       selection: { anchor: selection.head + insertion.length },
+      scrollIntoView: true
+    });
+    view.focus();
+    return true;
+  }
+  function insertStructuralLineBreak(view) {
+    const selection = view.state.selection.main;
+    const startLine = view.state.doc.lineAt(selection.from);
+    const endLine = view.state.doc.lineAt(selection.to);
+    if (startLine.number !== endLine.number) return false;
+    const continuation = structuralContinuation(view.state, startLine);
+    if (!continuation || selection.from < startLine.from + continuation.contentFrom) return false;
+    const insertion = `
+${continuation.prefix}`;
+    view.dispatch({
+      changes: { from: selection.from, to: selection.to, insert: insertion },
+      selection: { anchor: selection.from + insertion.length },
       scrollIntoView: true
     });
     view.focus();
@@ -25679,6 +25802,14 @@ ${marker.continuation}`;
       {
         key: "ArrowRight",
         run: movePastTrailingInlineMarker
+      },
+      {
+        key: "Shift-Enter",
+        run(view) {
+          const selection = view.state.selection.main;
+          applyTextReplacement(view, selection.from, selection.to, "");
+          return insertStructuralLineBreak(view);
+        }
       },
       {
         key: "Enter",
