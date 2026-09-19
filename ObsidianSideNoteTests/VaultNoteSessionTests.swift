@@ -62,6 +62,49 @@ extension ObsidianSideNoteTests {
         #expect(model.highlightedSearchIndex == 1)
     }
 
+    @MainActor
+    @Test func fileSearchActivationRequestsEditorFocusWhileFolderKeepsSearchFocus() async throws {
+        let vault = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let folderURL = vault.appendingPathComponent("Projects")
+        let noteURL = vault.appendingPathComponent("Plan.md")
+        try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
+        try "Plan body".write(to: noteURL, atomically: true, encoding: .utf8)
+        defer {
+            try? FileManager.default.removeItem(at: vault)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(vault)
+        let folder = VaultNote(relativePath: "Projects", title: "Projects", url: folderURL)
+        let note = try #require(VaultStore.note(relativePath: "Plan.md"))
+        let model = ContentViewModel(mode: .editVaultFile)
+        var editorFocusRequests = 0
+        model.start(clearSearchFocus: {}, focusEditor: { editorFocusRequests += 1 })
+        defer { model.stop() }
+        await Task.yield()
+        editorFocusRequests = 0
+
+        model.searchSuggestions = VaultSearchResults(sections: [
+            VaultSearchSection(kind: .files, notes: [note])
+        ], preferredID: note.relativePath)
+        model.selectHighlightedSearchResult()
+
+        #expect(model.selectedNote == note)
+        #expect(editorFocusRequests == 1)
+
+        editorFocusRequests = 0
+        model.searchSuggestions = VaultSearchResults(sections: [
+            VaultSearchSection(kind: .folders, notes: [folder])
+        ], preferredID: folder.relativePath)
+        model.highlightedSearchIndex = 0
+        model.selectHighlightedSearchResult()
+
+        #expect(model.vaultSearchQuery == "Projects/")
+        #expect(editorFocusRequests == 0)
+    }
+
     @Test func newNoteIsNotCreatedWithoutContent() throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

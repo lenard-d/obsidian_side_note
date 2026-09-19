@@ -12,6 +12,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     let insertMedia: (String) -> Void
     let didInsertMedia: () -> Void
     let didFailMediaImport: (MediaAttachmentImportError) -> Void
+    let focusSearch: (NSWindow?) -> Void
     let openWikiLink: (String, Bool) -> Void
     let openMarkdownLink: (String, Bool) -> Void
     let isReadOnly: Bool
@@ -27,6 +28,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             insertMedia: insertMedia,
             didInsertMedia: didInsertMedia,
             didFailMediaImport: didFailMediaImport,
+            focusSearch: focusSearch,
             openWikiLink: openWikiLink,
             openMarkdownLink: openMarkdownLink,
             isReadOnly: isReadOnly,
@@ -80,6 +82,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private let insertMedia: (String) -> Void
         private let didInsertMedia: () -> Void
         private let didFailMediaImport: (MediaAttachmentImportError) -> Void
+        private let focusSearch: (NSWindow?) -> Void
         private let openWikiLink: (String, Bool) -> Void
         private let openMarkdownLink: (String, Bool) -> Void
         private let isReadOnly: Bool
@@ -110,6 +113,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             insertMedia: @escaping (String) -> Void,
             didInsertMedia: @escaping () -> Void,
             didFailMediaImport: @escaping (MediaAttachmentImportError) -> Void,
+            focusSearch: @escaping (NSWindow?) -> Void,
             openWikiLink: @escaping (String, Bool) -> Void,
             openMarkdownLink: @escaping (String, Bool) -> Void,
             isReadOnly: Bool,
@@ -123,6 +127,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.insertMedia = insertMedia
             self.didInsertMedia = didInsertMedia
             self.didFailMediaImport = didFailMediaImport
+            self.focusSearch = focusSearch
             self.openWikiLink = openWikiLink
             self.openMarkdownLink = openMarkdownLink
             self.isReadOnly = isReadOnly
@@ -323,6 +328,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 syncTextReplacementsToWebViewIfNeeded()
             case "blur":
                 isFocused = false
+            case "focusSearch":
+                focusSearch(webView?.window)
             case "pasteMedia":
                 importMediaFromPasteboard(.general)
             case "dropMedia":

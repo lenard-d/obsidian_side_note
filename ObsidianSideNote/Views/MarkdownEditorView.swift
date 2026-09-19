@@ -8,6 +8,7 @@ struct MarkdownEditorView: View {
     @Binding var focusRequestID: Int
     @Binding var cursorEndRequestID: Int
     let insertMedia: (String) -> Void
+    let focusSearch: (NSWindow?) -> Void
     let openWikiLink: (String, Bool) -> Void
     let openMarkdownLink: (String, Bool) -> Void
     let linkPreviewHover: (LinkPreviewHoverEvent) -> Void
@@ -89,6 +90,7 @@ struct MarkdownEditorView: View {
             didFailMediaImport: { error in
                 mediaImportError = error
             },
+            focusSearch: focusSearch,
             openWikiLink: openWikiLink,
             openMarkdownLink: openMarkdownLink,
             isReadOnly: false,

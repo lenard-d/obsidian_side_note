@@ -31,8 +31,9 @@ Matching ignores case, accents, straight versus curved apostrophes, repeated whi
 
 ## Keyboard and search state
 
+- Cmd+L moves focus from the editor to the search field and selects the current path.
 - Up and Down move one row. Cmd+Down and Cmd+Up move between sections without wrapping.
-- Enter and Tab activate the selected result. If a search is still running, activation waits for that query's results.
+- Enter and Tab activate the selected result. A file opens with editor focus and the cursor at the end. A folder keeps focus in search. If a search is still running, activation waits for that query's results.
 - Escape dismisses suggestions first. It does not close the note window on that first press.
 - Search keys only apply while the search field has focus.
 - A new query selects its best result. Old background searches cannot replace newer results.
