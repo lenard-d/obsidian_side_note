@@ -38,6 +38,7 @@ final class ContentViewModel: ObservableObject {
     private var focusEditor: (() -> Void)?
     private let activeNoteFileMonitor = VaultNoteFileMonitor()
     private var lastSyncedActiveNoteText: String?
+    private var latestQueuedNoteWrite: QueuedNoteWrite?
     private var textAutosaveSuppressionValue: String?
     private var eventWindowNumber: Int?
 
@@ -443,8 +444,20 @@ final class ContentViewModel: ObservableObject {
         do {
             // Serialize reads with background autosaves so an external change can
             // never be followed by an already-running stale write.
-            let diskText = try notePersistenceQueue.sync {
-                try VaultStore.readNote(activeAutosavedNote)
+            let diskSnapshot = try notePersistenceQueue.sync {
+                let text = try VaultStore.readNote(activeAutosavedNote)
+                let notePath = activeAutosavedNote.url.standardizedFileURL.path
+                let matchesLocalWrite = latestQueuedNoteWrite == QueuedNoteWrite(notePath: notePath, text: text)
+                if latestQueuedNoteWrite?.notePath == notePath {
+                    latestQueuedNoteWrite = nil
+                }
+                return (text: text, matchesLocalWrite: matchesLocalWrite)
+            }
+            let diskText = diskSnapshot.text
+            if diskSnapshot.matchesLocalWrite {
+                lastSyncedActiveNoteText = diskText
+                saveErrorMessage = nil
+                return
             }
             guard diskText != lastSyncedActiveNoteText else {
                 saveErrorMessage = nil
@@ -478,16 +491,20 @@ final class ContentViewModel: ObservableObject {
         let noteSnapshot = selectedNote
         let cancellationToken = AutosaveCancellationToken()
         let workItem = DispatchWorkItem { [weak self] in
-            guard !cancellationToken.isCancelled else { return }
+            guard !cancellationToken.isCancelled, let self else { return }
             do {
                 try VaultStore.write(textSnapshot, to: noteSnapshot)
+                self.latestQueuedNoteWrite = QueuedNoteWrite(
+                    notePath: noteSnapshot.url.standardizedFileURL.path,
+                    text: textSnapshot
+                )
                 DispatchQueue.main.async {
                     guard !cancellationToken.isCancelled else { return }
-                    self?.markActiveNotePersisted(textSnapshot, to: noteSnapshot)
+                    self.markActiveNotePersisted(textSnapshot, to: noteSnapshot)
                 }
             } catch {
                 DispatchQueue.main.async {
-                    self?.saveErrorMessage = "Could not save note: \(error.localizedDescription)"
+                    self.saveErrorMessage = "Could not save note: \(error.localizedDescription)"
                 }
                 AppLogger.vault.error("Could not autosave note: \(AppLogger.errorSummary(error))")
             }
@@ -507,6 +524,10 @@ final class ContentViewModel: ObservableObject {
         do {
             try notePersistenceQueue.sync {
                 try VaultStore.write(textSnapshot, to: selectedNote)
+                latestQueuedNoteWrite = QueuedNoteWrite(
+                    notePath: selectedNote.url.standardizedFileURL.path,
+                    text: textSnapshot
+                )
             }
             markActiveNotePersisted(textSnapshot, to: selectedNote)
         } catch {
@@ -592,6 +613,11 @@ final class ContentViewModel: ObservableObject {
         formatter.dateFormat = "yyyy-MM-dd HH-mm"
         return formatter.string(from: Date())
     }
+}
+
+private struct QueuedNoteWrite: Equatable {
+    let notePath: String
+    let text: String
 }
 
 private final class AutosaveCancellationToken: @unchecked Sendable {

@@ -709,6 +709,52 @@ extension ObsidianSideNoteTests {
     }
 
     @MainActor
+    @Test func editVaultFileDoesNotReloadAnOlderCompletedAutosave() throws {
+        let temporaryVaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryVaultURL, withIntermediateDirectories: true)
+        let noteURL = temporaryVaultURL.appendingPathComponent("Draft.md")
+        try "Original".write(to: noteURL, atomically: true, encoding: .utf8)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryVaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+            UserDefaults.standard.removeObject(forKey: "draft.editVaultFile.text")
+            UserDefaults.standard.removeObject(forKey: "draft.editVaultFile.path")
+        }
+
+        VaultStore.saveVaultURL(temporaryVaultURL)
+        let note = try #require(VaultStore.note(relativePath: "Draft.md"))
+        let viewModel = ContentViewModel(mode: .editVaultFile)
+        viewModel.selectNote(note)
+        defer { viewModel.stop() }
+
+        func waitForDiskText(_ expectedText: String) throws -> Bool {
+            let deadline = Date().addingTimeInterval(2)
+            while try VaultStore.readNote(note) != expectedText, Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+            return try VaultStore.readNote(note) == expectedText
+        }
+
+        viewModel.noteText = "Older local edit"
+        viewModel.textDidChange()
+
+        // Keep the main thread busy until the background write has finished,
+        // then replace that edit before its completion callback can run.
+        #expect(try waitForDiskText("Older local edit"))
+
+        viewModel.noteText = "Newest local edit"
+        viewModel.textDidChange()
+        viewModel.syncActiveNoteFromDiskIfNeeded()
+
+        #expect(viewModel.noteText == "Newest local edit")
+
+        #expect(try waitForDiskText("Newest local edit"))
+    }
+
+    @MainActor
     @Test func newNoteMonitorReloadsExternalChangesAutomatically() async throws {
         let temporaryVaultURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

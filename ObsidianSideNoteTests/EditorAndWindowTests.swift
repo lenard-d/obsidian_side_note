@@ -768,7 +768,14 @@ extension ObsidianSideNoteTests {
                 {name: "highlight", source: "Only ==highlight==", content: "highlight", closingLength: 2},
                 {name: "monospace", source: "Only `monospace`", content: "monospace", closingLength: 1},
                 {name: "markdownLink", source: "Only [Link](target.md)", content: "Link", closingLength: 1},
-                {name: "wikiLink", source: "Only [[Link]]", content: "Link", closingLength: 2}
+                {name: "wikiLink", source: "Only [[Link]]", content: "Link", closingLength: 2},
+                {
+                  name: "multipleHighlights",
+                  source: "==Hallo== das ist ein ==Test==",
+                  content: "Hallo",
+                  closingLength: 2,
+                  visibleAtEnd: "Hallo das ist ein ==Test=="
+                }
               ];
               const terminalSyntaxEndStates = terminalSyntaxCases.map((testCase) => {
                 window.editor.setMarkdown(testCase.source);
@@ -791,6 +798,7 @@ extension ObsidianSideNoteTests {
                 return {
                   name: testCase.name,
                   source: testCase.source,
+                  visibleAtEnd: testCase.visibleAtEnd || testCase.source,
                   end: testCase.source.length,
                   keyHandled,
                   keySelection,
@@ -802,6 +810,74 @@ extension ObsidianSideNoteTests {
                   visibleAfterFocus: window.editorTest.visibleText()
                 };
               });
+
+              const listStartCases = [
+                {name: "unordered", source: "- Item", contentStart: 2},
+                {name: "ordered", source: "12. Item", contentStart: 4},
+                {name: "task", source: "- [ ] Task", contentStart: 6},
+                {name: "nested", source: "\t- Nested", contentStart: 3}
+              ];
+              const listStartStates = listStartCases.map((testCase) => {
+                window.editor.setMarkdown(testCase.source);
+                window.editorTest.setSelection(testCase.source.length);
+                const firstHandled = window.editorTest.dispatchKey("ArrowLeft", {metaKey: true});
+                const firstSelection = window.editorTest.getSelection();
+                const firstVisibleText = window.editorTest.visibleText();
+                const secondHandled = window.editorTest.dispatchKey("ArrowLeft", {metaKey: true});
+                return {
+                  ...testCase,
+                  firstHandled,
+                  firstSelection,
+                  firstVisibleText,
+                  secondHandled,
+                  secondSelection: window.editorTest.getSelection(),
+                  secondVisibleText: window.editorTest.visibleText()
+                };
+              });
+
+              window.editor.setMarkdown("- Item");
+              window.editorTest.setSelection("- Item".length);
+              const firstShiftListStartHandled = window.editorTest.dispatchKey("ArrowLeft", {
+                metaKey: true,
+                shiftKey: true
+              });
+              const firstShiftListStartSelection = window.editorTest.getSelection();
+              const secondShiftListStartHandled = window.editorTest.dispatchKey("ArrowLeft", {
+                metaKey: true,
+                shiftKey: true
+              });
+              const secondShiftListStartSelection = window.editorTest.getSelection();
+
+              window.editor.setMarkdown("- [ ] Task");
+              window.editorTest.setSelection("- [ ] Task".length);
+              window.editorTest.dispatchKey("ArrowLeft", {metaKey: true});
+              const taskArrowLeftHandled = window.editorTest.dispatchKey("ArrowLeft");
+              const taskAfterArrowLeft = {
+                handled: taskArrowLeftHandled,
+                selection: window.editorTest.getSelection(),
+                visibleText: window.editorTest.visibleText()
+              };
+
+              const highlightedLine = "==Hallo== das ist ein ==Test==";
+              const directRawStartCases = ["**Bold** text", "# Heading", highlightedLine].map((line) => {
+                window.editor.setMarkdown(line);
+                window.editorTest.setSelection(line.length);
+                const handled = window.editorTest.dispatchKey("ArrowLeft", {metaKey: true});
+                return {
+                  line,
+                  handled,
+                  selection: window.editorTest.getSelection(),
+                  visibleText: window.editorTest.visibleText()
+                };
+              });
+
+              window.editor.setMarkdown(highlightedLine);
+              window.editorTest.setSelection(highlightedLine.length);
+              const shiftDirectRawStartHandled = window.editorTest.dispatchKey("ArrowLeft", {
+                metaKey: true,
+                shiftKey: true
+              });
+              const shiftDirectRawStartSelection = window.editorTest.getSelection();
 
               window.editor.setMarkdown(source);
               const styleFor = (className) => {
@@ -833,7 +909,16 @@ extension ObsidianSideNoteTests {
                 endKey,
                 controlE,
                 shiftCommandRight,
-                terminalSyntaxEndStates
+                terminalSyntaxEndStates,
+                listStartStates,
+                firstShiftListStartHandled,
+                firstShiftListStartSelection,
+                secondShiftListStartHandled,
+                secondShiftListStartSelection,
+                taskAfterArrowLeft,
+                directRawStartCases,
+                shiftDirectRawStartHandled,
+                shiftDirectRawStartSelection
               });
             })();
             """
@@ -885,10 +970,10 @@ extension ObsidianSideNoteTests {
         #expect(shiftedSelection["head"] as? Int == firstLineEnd)
 
         let terminalSyntaxEndStates = try #require(result["terminalSyntaxEndStates"] as? [[String: Any]])
-        #expect(terminalSyntaxEndStates.count == 6)
+        #expect(terminalSyntaxEndStates.count == 7)
         for endState in terminalSyntaxEndStates {
             let name = endState["name"] as? String ?? "unknown syntax"
-            let source = try #require(endState["source"] as? String)
+            let visibleAtEnd = try #require(endState["visibleAtEnd"] as? String)
             let end = try #require(endState["end"] as? Int)
             let keySelection = try #require(endState["keySelection"] as? [String: Any])
             let arrowSelection = try #require(endState["arrowSelection"] as? [String: Any])
@@ -896,15 +981,73 @@ extension ObsidianSideNoteTests {
             #expect(endState["keyHandled"] as? Bool == true, "End jump was not handled for \(name)")
             #expect(keySelection["anchor"] as? Int == end, "Key cursor stopped inside \(name)")
             #expect(keySelection["head"] as? Int == end, "Key cursor stopped inside \(name)")
-            #expect(endState["visibleAfterKey"] as? String == source)
+            #expect(endState["visibleAfterKey"] as? String == visibleAtEnd)
             #expect(endState["arrowHandled"] as? Bool == true, "Closing marker was not skipped for \(name)")
             #expect(arrowSelection["anchor"] as? Int == end, "Arrow cursor stopped inside \(name)")
             #expect(arrowSelection["head"] as? Int == end, "Arrow cursor stopped inside \(name)")
-            #expect(endState["visibleAfterArrow"] as? String == source)
+            #expect(endState["visibleAfterArrow"] as? String == visibleAtEnd)
             #expect(focusSelection["anchor"] as? Int == end, "Focus cursor stopped inside \(name)")
             #expect(focusSelection["head"] as? Int == end, "Focus cursor stopped inside \(name)")
-            #expect(endState["visibleAfterFocus"] as? String == source)
+            #expect(endState["visibleAfterFocus"] as? String == visibleAtEnd)
         }
+
+        let listStartStates = try #require(result["listStartStates"] as? [[String: Any]])
+        #expect(listStartStates.count == 4)
+        for state in listStartStates {
+            let name = state["name"] as? String ?? "unknown list"
+            let source = try #require(state["source"] as? String)
+            let contentStart = try #require(state["contentStart"] as? Int)
+            let firstSelection = try #require(state["firstSelection"] as? [String: Any])
+            let secondSelection = try #require(state["secondSelection"] as? [String: Any])
+            #expect(state["firstHandled"] as? Bool == true, "First list jump was not handled for \(name)")
+            #expect(firstSelection["head"] as? Int == contentStart, "First list jump missed content for \(name)")
+            #expect(state["secondHandled"] as? Bool == true, "Second list jump was not handled for \(name)")
+            #expect(secondSelection["head"] as? Int == 0, "Second list jump missed raw start for \(name)")
+            #expect(state["secondVisibleText"] as? String == source)
+        }
+
+        #expect(result["firstShiftListStartHandled"] as? Bool == true)
+        let firstShiftListStartSelection = try #require(
+            result["firstShiftListStartSelection"] as? [String: Any]
+        )
+        #expect(firstShiftListStartSelection["anchor"] as? Int == 6)
+        #expect(firstShiftListStartSelection["head"] as? Int == 2)
+        #expect(result["secondShiftListStartHandled"] as? Bool == true)
+        let secondShiftListStartSelection = try #require(
+            result["secondShiftListStartSelection"] as? [String: Any]
+        )
+        #expect(secondShiftListStartSelection["anchor"] as? Int == 6)
+        #expect(secondShiftListStartSelection["head"] as? Int == 0)
+
+        let taskAfterArrowLeft = try #require(result["taskAfterArrowLeft"] as? [String: Any])
+        let taskAfterArrowLeftSelection = try #require(
+            taskAfterArrowLeft["selection"] as? [String: Any]
+        )
+        #expect(taskAfterArrowLeft["handled"] as? Bool == true)
+        #expect(taskAfterArrowLeftSelection["head"] as? Int == 5)
+        #expect((taskAfterArrowLeft["visibleText"] as? String)?.contains("[ ] Task") == true)
+
+        let directRawStartCases = try #require(result["directRawStartCases"] as? [[String: Any]])
+        #expect(directRawStartCases.count == 3)
+        for state in directRawStartCases {
+            let line = try #require(state["line"] as? String)
+            let selection = try #require(state["selection"] as? [String: Any])
+            let visibleText = try #require(state["visibleText"] as? String)
+            #expect(state["handled"] as? Bool == true)
+            #expect(selection["head"] as? Int == 0)
+            if line.hasPrefix("==") {
+                #expect(visibleText.hasPrefix("==Hallo=="))
+            } else {
+                #expect(visibleText == line)
+            }
+        }
+
+        #expect(result["shiftDirectRawStartHandled"] as? Bool == true)
+        let shiftDirectRawStartSelection = try #require(
+            result["shiftDirectRawStartSelection"] as? [String: Any]
+        )
+        #expect(shiftDirectRawStartSelection["anchor"] as? Int == "==Hallo== das ist ein ==Test==".count)
+        #expect(shiftDirectRawStartSelection["head"] as? Int == 0)
     }
 
     @MainActor
@@ -1382,16 +1525,16 @@ extension ObsidianSideNoteTests {
               const enterHandled = window.editorTest.dispatchKey("Enter");
               const afterEnter = window.editorTest.getMarkdown();
 
-              window.editor.setMarkdown("  - Item");
-              window.editorTest.setSelection("  - Item".length);
+              window.editor.setMarkdown("\t- Item");
+              window.editorTest.setSelection("\t- Item".length);
               const commandShiftTabHandled = window.editorTest.dispatchKey("Tab", {
                 metaKey: true,
                 shiftKey: true
               });
               const afterCommandShiftTab = window.editorTest.getMarkdown();
 
-              window.editor.setMarkdown("    - ");
-              window.editorTest.setSelection("    - ".length);
+              window.editor.setMarkdown("\t\t- ");
+              window.editorTest.setSelection("\t\t- ".length);
               const backspaceHandled = window.editorTest.dispatchKey("Backspace");
               const afterBackspace = window.editorTest.getMarkdown();
 
@@ -1437,13 +1580,13 @@ extension ObsidianSideNoteTests {
         )
 
         #expect(indentation["tabHandled"] as? Bool == true)
-        #expect(indentation["afterTab"] as? String == "  - Item")
+        #expect(indentation["afterTab"] as? String == "\t- Item")
         #expect(indentation["enterHandled"] as? Bool == true)
-        #expect(indentation["afterEnter"] as? String == "  - Item\n  - ")
+        #expect(indentation["afterEnter"] as? String == "\t- Item\n\t- ")
         #expect(indentation["commandShiftTabHandled"] as? Bool == true)
         #expect(indentation["afterCommandShiftTab"] as? String == "- Item")
         #expect(indentation["backspaceHandled"] as? Bool == true)
-        #expect(indentation["afterBackspace"] as? String == "  - ")
+        #expect(indentation["afterBackspace"] as? String == "\t- ")
         #expect(indentation["emptyEnterHandled"] as? Bool == true)
         #expect(indentation["afterEmptyEnter"] as? String == "- First\n- Second\n")
         let emptyEnterSelection = try #require(indentation["afterEmptyEnterSelection"] as? [String: Any])
@@ -1452,6 +1595,58 @@ extension ObsidianSideNoteTests {
         #expect(indentation["afterOrderedEnter"] as? String == "1. Ordered\n2. ")
         #expect(indentation["taskEnterHandled"] as? Bool == true)
         #expect(indentation["afterTaskEnter"] as? String == "- [ ] Task\n- [ ] ")
+
+        let emptyLineTab = try #require(try await webView.evaluateJavaScript(
+            """
+            (() => {
+              window.editor.setMarkdown("");
+              window.editorTest.setSelection(0);
+              const handled = window.editorTest.dispatchKey("Tab");
+              return JSON.stringify({
+                handled,
+                markdown: window.editorTest.getMarkdown(),
+                selection: window.editorTest.getSelection()
+              });
+            })();
+            """
+        ) as? String)
+        let emptyLineTabData = try #require(emptyLineTab.data(using: .utf8))
+        let emptyLineTabResult = try #require(
+            JSONSerialization.jsonObject(with: emptyLineTabData) as? [String: Any]
+        )
+        #expect(emptyLineTabResult["handled"] as? Bool == true)
+        #expect(emptyLineTabResult["markdown"] as? String == "\t")
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let emptyLineBackspace = try #require(try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const handled = window.editorTest.dispatchKey("Backspace");
+              return JSON.stringify({
+                handled,
+                markdown: window.editorTest.getMarkdown(),
+                selection: window.editorTest.getSelection()
+              });
+            })();
+            """
+        ) as? String)
+        let emptyLineBackspaceData = try #require(emptyLineBackspace.data(using: .utf8))
+        let emptyLineBackspaceResult = try #require(
+            JSONSerialization.jsonObject(with: emptyLineBackspaceData) as? [String: Any]
+        )
+        let emptyLineSelection = try #require(emptyLineBackspaceResult["selection"] as? [String: Any])
+        #expect(emptyLineBackspaceResult["handled"] as? Bool == true)
+        #expect(emptyLineBackspaceResult["markdown"] as? String == "")
+        #expect(emptyLineSelection["head"] as? Int == 0)
+
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let cursorRendering = try #require(
+            try await webView.evaluateJavaScript("window.editorTest.cursorRendering()") as? [String: Any]
+        )
+        #expect((cursorRendering["cursorCount"] as? Int ?? 0) <= 1)
+        #expect(cursorRendering["selectionLayerCount"] as? Int == 1)
+        #expect(cursorRendering["nativeCaretHidden"] as? Bool == true)
+        #expect(cursorRendering["tabSize"] as? String == "4")
     }
 
     @MainActor

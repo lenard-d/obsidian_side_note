@@ -32,13 +32,23 @@ export function installEditorTestAdapter(view, helpers) {
       return helpers.focusBlankEditorArea(view, event);
     },
     visibleText() {
-      return view.contentDOM.innerText;
+      return view.contentDOM.innerText.replace(/\n$/, "");
     },
     taskCheckboxCount() {
       return view.dom.querySelectorAll(".task-checkbox").length;
     },
     bulletMarkerCount() {
       return view.dom.querySelectorAll(".list-bullet-marker").length;
+    },
+    cursorRendering() {
+      const nativeCaretColor = getComputedStyle(view.contentDOM).caretColor;
+      return {
+        cursorCount: view.dom.querySelectorAll(".cm-cursor").length,
+        selectionLayerCount: view.dom.querySelectorAll(".cm-selectionLayer").length,
+        nativeCaretColor,
+        nativeCaretHidden: nativeCaretColor === "transparent" || /rgba\([^)]*,\s*0\)$/.test(nativeCaretColor),
+        tabSize: getComputedStyle(view.contentDOM).tabSize
+      };
     },
     imageEmbedCount() {
       return view.dom.querySelectorAll(".image-embed img").length;
