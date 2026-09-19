@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.6 - 2026-09-20
+
+### Changed
+
+- Added `Command+L` to focus and select vault search while editing a vault file.
+- Made Return and Tab open the selected search result and move focus to the end of the editor.
+- Store indentation as real tab characters and display each tab at four spaces wide.
+- Fixed stale cursor artifacts after indenting and deleting on empty lines.
+- Fixed rare cursor rollbacks when autosave confirms a local edit.
+- Made `Command+Left` and `Command+Right` reveal and reach the Markdown source boundaries without skipping list prefixes.
+
+### Developer
+
+- Added focused editor tests for tab handling, cursor drawing, source-boundary navigation, and local autosave confirmation.
+- Added search focus and file-selection tests for the vault editor.
+
 ## 2.5 - 2026-09-15
 
 ### Changed
