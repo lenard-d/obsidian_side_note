@@ -151,6 +151,8 @@ Paste and drag-and-drop handling live in `MarkdownEditorView` and are normalized
 - When the cursor is adjacent to the checkbox marker, the raw marker is revealed so source editing remains predictable without turning the whole task line back into text.
 - Blockquotes use a visible left rule. Their `>` marker stays in the Markdown source and appears when the cursor touches the marker.
 - `Shift+Enter` keeps structural prefixes in list items and blockquotes. List continuation decorations preserve the same visible text alignment as the first line.
+- Tab indentation stays as real tab characters in the Markdown source and renders at four spaces wide.
+- `Command+Left` stops at the visible text boundary of list items before a second move reveals the raw prefix. `Command+Right` moves directly to the raw line end.
 - Image embeds on their own line are rendered as CodeMirror block widgets when the cursor is outside that line. Swift resolves local vault images into bounded data URLs for the web editor, while the Markdown embed line remains the document source and is revealed for editing when selected.
 - Embed lines such as `![Title](path-or-url)` are parsed for image preloading when their extension is supported.
 - Local relative paths are resolved through `VaultStore.url(forMarkdownLink:)` and `VaultStore.url(forWikiLink:)`, with vault-bound path validation.
