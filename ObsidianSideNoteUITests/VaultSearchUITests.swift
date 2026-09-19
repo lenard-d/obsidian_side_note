@@ -60,6 +60,15 @@ final class VaultSearchUITests: XCTestCase {
         let editor = app.textViews.firstMatch
         XCTAssertTrue(waitForText("Direct file content.", on: editor))
 
+        editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        app.typeKey("l", modifierFlags: [.command])
+        XCTAssertTrue(waitForKeyboardFocus(on: search))
+        app.typeText("Projects.md")
+        XCTAssertTrue(
+            waitForValue("Projects.md", on: search),
+            "Cmd+L search value: \(String(describing: search.value))"
+        )
+
         replaceSearch(search, with: "Work/", in: app)
         XCTAssertTrue(folder.waitForExistence(timeout: 5))
         app.typeKey(.return, modifierFlags: [])
@@ -110,6 +119,16 @@ final class VaultSearchUITests: XCTestCase {
 
     private func waitForText(_ text: String, on element: XCUIElement) -> Bool {
         XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", text), object: element)], timeout: 5) == .completed
+    }
+
+    private func waitForKeyboardFocus(on element: XCUIElement) -> Bool {
+        XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "hasKeyboardFocus == true"),
+                object: element
+            )],
+            timeout: 5
+        ) == .completed
     }
 
     @MainActor

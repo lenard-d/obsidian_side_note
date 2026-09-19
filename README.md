@@ -91,6 +91,7 @@ The selected vault is stored in app configuration so the menu bar app can keep a
 - `Control-Option-Command-D`: Daily Note.
 - `Control-Option-Command-N`: Create New Note.
 - `Control-Option-Command-V`: Edit Vault File.
+- `Command-L`: Focus and select the vault search while editing a vault file.
 - `Command-,`: Settings while the app is active.
 - `Command-Q`: Quit while the app is active.
 

@@ -301,6 +301,7 @@ private struct LinkPreviewContentView: View {
                 insertMedia: { _ in },
                 didInsertMedia: {},
                 didFailMediaImport: { _ in },
+                focusSearch: { _ in },
                 openWikiLink: { _, _ in },
                 openMarkdownLink: { _, _ in },
                 isReadOnly: true,

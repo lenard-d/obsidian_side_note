@@ -1164,6 +1164,14 @@ function markdownKeyBindings() {
         return true;
       }
     },
+    {
+      key: "Mod-l",
+      run(view) {
+        if (readOnlyViews.has(view)) return false;
+        post({type: "focusSearch"});
+        return true;
+      }
+    },
     ...markdownKeymap,
     ...defaultKeymap,
     ...historyKeymap

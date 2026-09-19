@@ -55,6 +55,7 @@ struct ContentView: View {
                             focusRequestID: $editorFocusRequestID,
                             cursorEndRequestID: $viewModel.cursorEndRequestID,
                             insertMedia: viewModel.insertMediaLink,
+                            focusSearch: focusVaultSearch,
                             openWikiLink: handleWikiLink,
                             openMarkdownLink: handleMarkdownLink,
                             linkPreviewHover: linkPreviewHover
@@ -199,6 +200,23 @@ struct ContentView: View {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
             NotificationCenter.default.post(name: .editorShouldFocus, object: window)
+        }
+    }
+
+    private func focusVaultSearch(in window: NSWindow?) {
+        guard mode == .editVaultFile else { return }
+        isTextEditorFocused = false
+        isVaultSearchFocused = true
+
+        let targetWindow = window ?? NSApp.keyWindow
+        for delay in [0, 0.03, 0.12] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard let fieldEditor = targetWindow?.firstResponder as? NSTextView,
+                      fieldEditor.isFieldEditor else {
+                    return
+                }
+                fieldEditor.selectAll(nil)
+            }
         }
     }
 }
