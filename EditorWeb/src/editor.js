@@ -2,7 +2,7 @@ import {Compartment, EditorSelection, EditorState, StateEffect, StateField} from
 import {defaultKeymap, history, historyKeymap, indentLess, indentMore} from "@codemirror/commands";
 import {markdown, markdownKeymap} from "@codemirror/lang-markdown";
 import {syntaxHighlighting, indentUnit, syntaxTree} from "@codemirror/language";
-import {Decoration, EditorView, keymap, WidgetType} from "@codemirror/view";
+import {Decoration, drawSelection, EditorView, keymap, WidgetType} from "@codemirror/view";
 import {installEditorTestAdapter} from "./editor-test-adapter.js";
 import {editorTheme, markdownHighlightStyle} from "./editor-theme.js";
 
@@ -77,7 +77,7 @@ function blockquoteMarker(line) {
   };
 }
 
-const listIndent = "  ";
+const listIndent = "\t";
 const imageExtensions = new Set(["apng", "avif", "gif", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp"]);
 const refreshMarkdownDecorationsEffect = StateEffect.define();
 let mediaEmbedSources = new Map();
@@ -481,26 +481,35 @@ function addListDecorations(decorations, state, line) {
   const task = taskMarker(line.text);
   if (task) {
     addListLineDecoration(decorations, line, true);
-    decorations.push(
-      Decoration.replace({inclusive: false}).range(
-        line.from + task.listMarkerFrom,
-        line.from + task.listMarkerTo
-      )
-    );
-
+    const listMarkerFrom = line.from + task.listMarkerFrom;
+    const listMarkerTo = line.from + task.listMarkerTo;
     const checkboxFrom = line.from + task.checkboxFrom;
     const checkboxTo = line.from + task.checkboxTo;
-    if (selectionTouchesToken(state, checkboxFrom, checkboxTo)) {
+    const editingListMarker = selectionTouchesToken(state, listMarkerFrom, listMarkerTo);
+    const editingCheckbox = selectionTouchesToken(state, checkboxFrom, checkboxTo);
+    if (editingListMarker) {
       decorations.push(
         Decoration.mark({class: "list-task-source"}).range(checkboxFrom, checkboxTo)
       );
     } else {
       decorations.push(
-        Decoration.replace({
-          widget: new TaskCheckboxWidget(task.checked, checkboxFrom),
-          inclusive: false
-        }).range(checkboxFrom, checkboxTo)
+        Decoration.replace({inclusive: false}).range(
+          listMarkerFrom,
+          listMarkerTo
+        )
       );
+      if (editingCheckbox) {
+        decorations.push(
+          Decoration.mark({class: "list-task-source"}).range(checkboxFrom, checkboxTo)
+        );
+      } else {
+        decorations.push(
+          Decoration.replace({
+            widget: new TaskCheckboxWidget(task.checked, checkboxFrom),
+            inclusive: false
+          }).range(checkboxFrom, checkboxTo)
+        );
+      }
     }
     return;
   }
@@ -510,7 +519,7 @@ function addListDecorations(decorations, state, line) {
     addListLineDecoration(decorations, line, true);
     const tokenFrom = line.from + bullet.tokenFrom;
     const tokenTo = line.from + bullet.tokenTo;
-    if (selectionTouchesToken(state, tokenFrom, tokenTo)) {
+    if (selectionTouchesToken(state, line.from, tokenTo)) {
       decorations.push(
         Decoration.mark({class: "list-marker-glyph list-bullet-source"}).range(tokenFrom, tokenTo)
       );
@@ -1098,8 +1107,60 @@ function movePastTrailingInlineMarker(view) {
   return true;
 }
 
+function moveToPreferredLineStart(view, extendSelection = false) {
+  const selection = view.state.selection.main;
+  if (!extendSelection && !selection.empty) return false;
+
+  const line = view.state.doc.lineAt(selection.head);
+  const marker = listItemMarker(line.text);
+  const contentStart = marker ? line.from + marker.markerTo : line.from;
+  const destination = marker && selection.head > contentStart ? contentStart : line.from;
+
+  view.dispatch({
+    selection: extendSelection
+      ? EditorSelection.range(selection.anchor, destination)
+      : EditorSelection.cursor(destination, -1),
+    scrollIntoView: true,
+    userEvent: "select"
+  });
+  return true;
+}
+
+function moveToRawLineEnd(view, extendSelection = false) {
+  const selection = view.state.selection.main;
+  if (!extendSelection && !selection.empty) return false;
+
+  const lineEnd = view.state.doc.lineAt(selection.head).to;
+  view.dispatch({
+    selection: extendSelection
+      ? EditorSelection.range(selection.anchor, lineEnd)
+      : EditorSelection.cursor(lineEnd, 1),
+    scrollIntoView: true,
+    userEvent: "select"
+  });
+  return true;
+}
+
 function markdownKeyBindings() {
   return [
+    {
+      mac: "Cmd-ArrowLeft",
+      run(view) {
+        return moveToPreferredLineStart(view);
+      },
+      shift(view) {
+        return moveToPreferredLineStart(view, true);
+      }
+    },
+    {
+      mac: "Cmd-ArrowRight",
+      run(view) {
+        return moveToRawLineEnd(view);
+      },
+      shift(view) {
+        return moveToRawLineEnd(view, true);
+      }
+    },
     {
       key: "ArrowRight",
       run: movePastTrailingInlineMarker
@@ -1397,7 +1458,9 @@ function installEditor() {
         EditorState.readOnly.of(false),
         EditorView.editable.of(true)
       ]),
+      EditorState.tabSize.of(4),
       indentUnit.of(listIndent),
+      drawSelection(),
       syntaxHighlighting(markdownHighlightStyle),
       markdownDecorationField,
       EditorView.inputHandler.of((view, from, to, text) => applyTextReplacement(view, from, to, text)),
