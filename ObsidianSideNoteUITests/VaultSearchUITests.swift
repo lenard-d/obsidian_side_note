@@ -59,6 +59,15 @@ final class VaultSearchUITests: XCTestCase {
         XCTAssertTrue(waitForValue("Work/Plan.md", on: search))
         let editor = app.textViews.firstMatch
         XCTAssertTrue(waitForText("Direct file content.", on: editor))
+        XCTAssertTrue(waitForKeyboardFocus(on: editor))
+        editor.typeText("RETURN_FOCUS")
+        XCTAssertTrue(waitForText("Direct file content.RETURN_FOCUS", on: editor))
+        XCTAssertTrue(
+            waitForFileContent(
+                vault.appendingPathComponent("Work/Plan.md"),
+                containing: "Direct file content.RETURN_FOCUS"
+            )
+        )
 
         editor.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         app.typeKey("l", modifierFlags: [.command])
@@ -77,9 +86,13 @@ final class VaultSearchUITests: XCTestCase {
         app.typeText("Team's Weekly Review.md")
         XCTAssertTrue(waitForValue("Selected", on: nested))
         attachScreenshot(app, name: "Exact Unicode filename match")
-        app.typeKey(.return, modifierFlags: [])
+        app.typeKey(.tab, modifierFlags: [])
         XCTAssertTrue(waitForText("Unicode search target.", on: editor))
         XCTAssertTrue(waitForValue("Work/Archive/Team’s Weekly Review.md", on: search))
+        XCTAssertTrue(waitForKeyboardFocus(on: editor))
+        editor.typeText("TAB_FOCUS")
+        XCTAssertTrue(waitForText("Unicode search target.TAB_FOCUS", on: editor))
+        XCTAssertTrue(waitForFileContent(exactURL, containing: "Unicode search target.TAB_FOCUS"))
 
         replaceSearch(search, with: "Projects", in: app)
         let projectsFolder = app.buttons["vault-search-row-Projects"]
@@ -119,6 +132,16 @@ final class VaultSearchUITests: XCTestCase {
 
     private func waitForText(_ text: String, on element: XCUIElement) -> Bool {
         XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", text), object: element)], timeout: 5) == .completed
+    }
+
+    private func waitForFileContent(_ url: URL, containing text: String) -> Bool {
+        let predicate = NSPredicate { _, _ in
+            (try? String(contentsOf: url, encoding: .utf8))?.contains(text) == true
+        }
+        return XCTWaiter.wait(
+            for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)],
+            timeout: 5
+        ) == .completed
     }
 
     private func waitForKeyboardFocus(on element: XCUIElement) -> Bool {

@@ -35,6 +35,7 @@ final class ContentViewModel: ObservableObject {
     private var pendingNewNoteAutosave: DispatchWorkItem?
     private let notePersistenceQueue = DispatchQueue(label: "live.lukesmith.ObsidianSideNote.note-persistence", qos: .utility)
     private var clearSearchFocus: (() -> Void)?
+    private var focusEditor: (() -> Void)?
     private let activeNoteFileMonitor = VaultNoteFileMonitor()
     private var lastSyncedActiveNoteText: String?
     private var textAutosaveSuppressionValue: String?
@@ -63,6 +64,7 @@ final class ContentViewModel: ObservableObject {
     func start(clearSearchFocus: @escaping () -> Void, focusEditor: @escaping () -> Void) {
         guard mode != .settings && mode != .setup else { return }
         self.clearSearchFocus = clearSearchFocus
+        self.focusEditor = focusEditor
         loadDraft()
         refreshSearchResults()
         loadDailyNoteIfNeeded()
@@ -88,6 +90,7 @@ final class ContentViewModel: ObservableObject {
         removeSearchKeyMonitor()
         removeOpenNoteKeyMonitor()
         clearSearchFocus = nil
+        focusEditor = nil
     }
 
     func textDidChange() {
@@ -323,7 +326,12 @@ final class ContentViewModel: ObservableObject {
     func selectHighlightedSearchResult() {
         guard !isSearching, searchSuggestions.rows.indices.contains(highlightedSearchIndex) else { return }
         let row = searchSuggestions.rows[highlightedSearchIndex]
-        if row.isFolder { selectFolder(row.note) } else { selectNote(row.note) }
+        if row.isFolder {
+            selectFolder(row.note)
+        } else {
+            selectNote(row.note)
+            focusEditor?()
+        }
     }
 
     func moveSearchSelectionDown(toNextSection: Bool) {
