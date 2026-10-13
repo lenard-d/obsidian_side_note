@@ -6,6 +6,8 @@ struct MarkdownEditorView: View {
     @Binding var text: String
     @FocusState.Binding var isFocused: Bool
     @Binding var focusRequestID: Int
+    @Binding var properties: NoteProperties
+    @Binding var propertiesSourceRequestID: Int
     @Binding var cursorEndRequestID: Int
     let insertMedia: (String) -> Void
     let focusSearch: (NSWindow?) -> Void
@@ -52,6 +54,9 @@ struct MarkdownEditorView: View {
         } message: {
             Text(mediaImportError?.userMessage ?? "The media could not be imported.")
         }
+        .onChange(of: propertiesSourceRequestID) { _, _ in
+            commandDispatcher.send(.togglePropertiesSource)
+        }
     }
 
     private var toolbar: some View {
@@ -73,7 +78,7 @@ struct MarkdownEditorView: View {
                 }
                 .padding(.vertical, 8)
             }
-            .padding(.leading, 12)
+            .padding(.leading, 16)
         }
         .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
     }
@@ -83,6 +88,7 @@ struct MarkdownEditorView: View {
             text: $text,
             isFocused: $isFocused,
             focusRequestID: $focusRequestID,
+            properties: $properties,
             cursorEndRequestID: $cursorEndRequestID,
             commandDispatcher: commandDispatcher,
             insertMedia: insertMedia,
@@ -131,6 +137,7 @@ struct MarkdownEditorView: View {
 }
 
 enum MarkdownEditorCommand: Equatable {
+    case togglePropertiesSource
     case wrap(String)
     case insertLink
     case insertPrefix(String)

@@ -93,6 +93,7 @@ The selected vault is stored in app configuration so the menu bar app can keep a
 - `Control-Option-Command-D`: Daily Note.
 - `Control-Option-Command-N`: Create New Note.
 - `Control-Option-Command-V`: Edit Vault File.
+- Note shortcuts show or hide the most recent window for that action. Add `Shift` to open a new window.
 - `Command-L`: Focus and select the vault search while editing a vault file.
 - `Command-,`: Settings while the app is active.
 - `Command-Q`: Quit while the app is active.
@@ -103,7 +104,7 @@ Global shortcuts must include Control or Option. Command-only app-management sho
 
 New notes autosave into the selected vault once the body has content. If you close a title-only note, it remains a local draft and no empty Markdown file is created.
 
-Reopening New Note from the menu or shortcut resumes the current draft or created note within the configured interval. After the interval expires, New Note starts a fresh draft.
+The New Note shortcut shows or hides the most recent New Note window and keeps its draft, even after the resume interval expires. Add Shift to start a fresh note in a separate window. After a window is closed, the configured interval controls whether a later New Note action resumes its draft.
 
 ### Existing Notes
 
@@ -114,6 +115,8 @@ If the same file changes in Obsidian while it is open in Side Note, the editor r
 ### Markdown, Media And Links
 
 The editor supports regular Markdown links, Obsidian wikilinks, local media, remote images, and Obsidian embeds. Inactive bold spans render as bold text without visible `**` markers; placing the cursor in the span reveals the source markers for editing.
+
+YAML properties at the top of a note stay hidden. Open the note actions menu beside the close button and choose `Properties…` to see their values. Use `Edit YAML` to change the source. The menu also offers rename, copy-link, Finder, and Trash actions for saved notes. Move to Trash asks for confirmation.
 
 ```markdown
 [[Project Plan]]
@@ -201,7 +204,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the internal design notes.
 
 ## Status
 
-Obsidian Side Note 2.6 is usable, but still evolving. Known next steps:
+Obsidian Side Note 2.7 is usable, but still evolving. Known next steps:
 
 - Developer ID signing and notarization.
 - Window size and position preferences.

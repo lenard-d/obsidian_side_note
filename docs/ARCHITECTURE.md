@@ -37,6 +37,7 @@ The `AppDelegate` owns:
 - Global shortcut dispatch for note workflows.
 - Local shortcut dispatch for Settings and Quit while the app is active.
 - New Note resume-versus-force-new behavior.
+- Recent-window tracking for show/hide shortcuts and independent windows opened with Shift.
 
 The app uses a borderless `FloatingWindow` so the editor can stay compact, become key, and float above normal app windows.
 
@@ -77,6 +78,7 @@ Store types are static because the app has a single active vault. AppKit owns a 
 `Services/` contains integrations that are not UI views:
 
 - `GlobalHotKeyManager`: registers configured note-workflow shortcuts as global Carbon hotkeys.
+- Each note shortcut also registers a derived Shift variant for opening a new window. Settings updates refresh both registrations without adding duplicate handlers.
 - `MediaAttachmentImporter`: normalizes paste/drop/import sources for local files, pasteboard images, and remote media URLs. Its public asynchronous result preserves unsupported, provider-load, download, response-validation, and vault-save failures instead of collapsing them to `nil`.
 - `RemoteMediaDownloader`: isolated `URLSession` transport adapter for remote media, with an explicit byte limit and response preservation for diagnostics.
 - `VaultNoteFileMonitor`: watches the active Markdown file for external writes and atomic replacements so edits made in Obsidian can update the open Side Note editor.

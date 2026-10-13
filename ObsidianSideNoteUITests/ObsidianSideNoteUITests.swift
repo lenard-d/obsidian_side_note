@@ -15,6 +15,121 @@ final class ObsidianSideNoteUITests: XCTestCase {
     }
 
     @MainActor
+    func testWindowShortcutsTogglePreservedContentAndShiftCreatesWindows() throws {
+        let bundleID = "live.lukesmith.ObsidianSideNote"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: bundleID))
+        let originalDefaults = defaults.persistentDomain(forName: bundleID)
+        let vault = FileManager.default.temporaryDirectory
+            .appendingPathComponent("WindowShortcuts-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: vault, withIntermediateDirectories: true)
+        try "# Example\n\nPreserved shortcut test content.".write(
+            to: vault.appendingPathComponent("Example.md"), atomically: true, encoding: .utf8
+        )
+        let app = testApplication()
+        app.launchArguments += ["-shortcut.newNote", "space", "-shortcut.newNote.modifiers", "1835008"]
+        app.launchEnvironment["OSN_TEST_CONFIG_URL"] = vault.appendingPathComponent("config.json").path
+        app.launchEnvironment["OSN_TEST_VAULT_PATH"] = vault.path
+        app.launchEnvironment["OSN_TEST_EDIT_FILE_PATH"] = "Example.md"
+        app.launch()
+        defer {
+            app.terminate()
+            if let originalDefaults { defaults.setPersistentDomain(originalDefaults, forName: bundleID) }
+            else { defaults.removePersistentDomain(forName: bundleID) }
+            defaults.synchronize()
+            try? FileManager.default.removeItem(at: vault)
+        }
+
+        let modifiers: XCUIElement.KeyModifierFlags = [.command, .option, .control]
+        app.typeKey("v", modifierFlags: modifiers)
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue((app.textViews.firstMatch.value as? String)?.contains("Preserved shortcut test content.") == true)
+        app.typeKey("v", modifierFlags: modifiers)
+        XCTAssertTrue(app.windows.firstMatch.waitForNonExistence(timeout: 3))
+        app.typeKey("v", modifierFlags: modifiers)
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 3))
+        XCTAssertEqual(app.windows.count, 1)
+        XCTAssertEqual(app.textFields.firstMatch.value as? String, "Example.md")
+        XCTAssertTrue((app.textViews.firstMatch.value as? String)?.contains("Preserved shortcut test content.") == true)
+
+        app.typeKey("v", modifierFlags: modifiers.union(.shift))
+        XCTAssertEqual(app.windows.count, 2)
+        app.typeKey("v", modifierFlags: modifiers)
+        XCTAssertEqual(app.windows.count, 1)
+        app.typeKey("v", modifierFlags: modifiers)
+        XCTAssertEqual(app.windows.count, 2)
+
+        app.typeKey(XCUIKeyboardKey.space, modifierFlags: modifiers)
+        XCTAssertEqual(app.windows.count, 3)
+        let newWindow = app.windows.containing(.staticText, identifier: "New Note").firstMatch
+        XCTAssertTrue(newWindow.waitForExistence(timeout: 3))
+        newWindow.textFields.firstMatch.click()
+        newWindow.textFields.firstMatch.typeKey("a", modifierFlags: .command)
+        newWindow.textFields.firstMatch.typeText("Preserved draft title")
+        app.typeKey(XCUIKeyboardKey.space, modifierFlags: modifiers)
+        XCTAssertEqual(app.windows.count, 2)
+        app.typeKey(XCUIKeyboardKey.space, modifierFlags: modifiers)
+        XCTAssertEqual(app.windows.count, 3)
+        XCTAssertEqual(newWindow.textFields.firstMatch.value as? String, "Preserved draft title")
+        app.typeKey(XCUIKeyboardKey.space, modifierFlags: modifiers.union(.shift))
+        XCTAssertEqual(app.windows.count, 4)
+    }
+
+    @MainActor
+    func testNoteActionsOpenHiddenPropertiesAndAlignControls() throws {
+        let bundleIdentifier = "live.lukesmith.ObsidianSideNote"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: bundleIdentifier))
+        let originalDefaults = defaults.persistentDomain(forName: bundleIdentifier)
+        let vaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SideNoteProperties-\(UUID().uuidString)", isDirectory: true)
+        let noteURL = vaultURL.appendingPathComponent("Example.md")
+        try FileManager.default.createDirectory(at: vaultURL, withIntermediateDirectories: true)
+        try "---\ncreated: 2026-09-23T00:33:17\n---\n\n# Example".write(
+            to: noteURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        defer {
+            if let originalDefaults { defaults.setPersistentDomain(originalDefaults, forName: bundleIdentifier) }
+            else { defaults.removePersistentDomain(forName: bundleIdentifier) }
+            defaults.synchronize()
+            try? FileManager.default.removeItem(at: vaultURL)
+        }
+
+        let app = testApplication()
+        app.launchEnvironment["OSN_TEST_VAULT_PATH"] = vaultURL.path
+        app.launchEnvironment["OSN_TEST_EDIT_FILE_PATH"] = "Example.md"
+        app.launch()
+        defer { app.terminate() }
+        app.typeKey("v", modifierFlags: [.command, .option, .control])
+
+        let actions = app.menuButtons["note-actions-menu"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 5))
+        let close = app.buttons["Close"]
+        let open = app.buttons["Open file in Obsidian"]
+        XCTAssertTrue(close.exists)
+        XCTAssertTrue(open.exists)
+        XCTAssertLessThan(abs(close.frame.midX - open.frame.midX), 3)
+
+        let bold = app.buttons["markdown-toolbar-bold"]
+        let search = app.textFields.firstMatch
+        XCTAssertTrue(bold.exists)
+        XCTAssertTrue(search.exists)
+        XCTAssertLessThan(abs(bold.frame.minX - search.frame.minX), 3)
+
+        clickCenter(of: actions)
+        let properties = app.menuItems["Properties…"]
+        XCTAssertTrue(properties.waitForExistence(timeout: 3))
+        properties.click()
+        XCTAssertTrue(app.popovers.firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.popovers.firstMatch.staticTexts["created"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.popovers.firstMatch.staticTexts["2026-09-23T00:33:17"].exists)
+        let evidence = XCTAttachment(screenshot: app.popovers.firstMatch.screenshot())
+        evidence.name = "Native note properties"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+    }
+
+    @MainActor
     func testInactiveWindowDragsFromEmptyHeaderOnFirstPress() throws {
         let app = testApplication()
         let temporary = FileManager.default.temporaryDirectory

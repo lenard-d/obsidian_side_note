@@ -16,7 +16,7 @@ The reliable local build path is:
 
 ## Install a Release Build
 
-1. Download `ObsidianSideNote-2.6.zip` from GitHub Releases.
+1. Download `ObsidianSideNote-2.7.zip` from GitHub Releases.
 2. Unzip it.
 3. Move `ObsidianSideNote.app` into `/Applications`.
 4. Open the app.
@@ -89,6 +89,8 @@ The app stores the selected vault path in app configuration. Selecting the vault
 Daily Note append uses Obsidian's URI endpoint. Obsidian's Daily Notes core plugin must be enabled for template-aware daily note creation.
 
 Global keyboard shortcuts are registered through macOS hotkey APIs for Append to Daily Note, Create New Note, and Edit Vault File. Their defaults are `Control` + `Option` + `Command` + `D`, `N`, and `V` to avoid normal app shortcuts.
+
+Each note shortcut shows or hides its most recent window. Add `Shift` to open a separate window. Shift is reserved for this action, and the extra shortcut follows the configured note shortcut. Existing custom shortcuts, including Space, are kept.
 
 Settings and Quit are local-only so they do not override shortcuts in the app you are currently using. The shortcut recorder rejects Command-only global shortcuts for the same reason.
 

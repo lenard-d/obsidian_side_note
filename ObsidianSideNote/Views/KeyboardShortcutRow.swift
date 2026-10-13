@@ -59,14 +59,13 @@ struct KeyboardShortcutRow: View {
 
         let key = GlobalHotKeyManager.key(forKeyCode: recordedShortcut.carbonKeyCode) ?? action.defaultKey
         let modifiers = ShortcutPreference.menuModifierFlags(from: recordedShortcut.modifiers)
-        if let message = ShortcutPolicy.validationMessage(for: action, key: key, modifiers: modifiers) {
+        let recorded = ShortcutDefinition(key: key, modifiers: modifiers)
+        if let message = ShortcutPreference.acceptRecordedShortcut(recorded, previous: shortcut, for: action) {
             validationMessage = message
-            ShortcutPreference.syncRecorderShortcut(for: action)
             return
         }
 
-        ShortcutPreference.set(key, modifiers: modifiers, for: action)
-        shortcut = ShortcutDefinition(key: key, modifiers: modifiers)
+        shortcut = recorded
         validationMessage = nil
     }
 

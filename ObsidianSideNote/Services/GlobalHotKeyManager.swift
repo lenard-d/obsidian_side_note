@@ -2,24 +2,41 @@ import AppKit
 import KeyboardShortcuts
 
 final class GlobalHotKeyManager {
-    private let handler: (ShortcutAction) -> Void
+    private let handler: (ShortcutAction, Bool) -> Void
     private var didRegisterHandlers = false
 
-    init(handler: @escaping (ShortcutAction) -> Void) {
+    init(handler: @escaping (ShortcutAction, Bool) -> Void) {
         self.handler = handler
         registerAll()
     }
 
     func registerAll() {
-        guard !didRegisterHandlers else { return }
-        didRegisterHandlers = true
-
         for action in ShortcutAction.globalActions {
-            guard let shortcutName = action.globalShortcutName else { continue }
-            _ = ShortcutPreference.definition(for: action)
-            KeyboardShortcuts.onKeyUp(for: shortcutName) { [handler] in
-                handler(action)
+            guard let shortcutName = action.globalShortcutName,
+                  let newWindowName = action.newWindowShortcutName else { continue }
+            let definition = ShortcutPreference.definition(for: action)
+            let newWindowShortcut = definition.modifiers.contains(.shift)
+                || KeyboardShortcuts.getShortcut(for: shortcutName) == nil
+                ? nil
+                : ShortcutPreference.keyboardShortcut(key: definition.key, modifiers: definition.addingShift.modifiers)
+            KeyboardShortcuts.setShortcut(newWindowShortcut, for: newWindowName)
+
+            if !didRegisterHandlers {
+                KeyboardShortcuts.onKeyUp(for: shortcutName) { [handler] in
+                    handler(action, false)
+                }
+                KeyboardShortcuts.onKeyUp(for: newWindowName) { [handler] in
+                    handler(action, true)
+                }
             }
+        }
+        didRegisterHandlers = true
+    }
+
+    deinit {
+        for action in ShortcutAction.globalActions {
+            if let name = action.globalShortcutName { KeyboardShortcuts.removeHandler(for: name) }
+            if let name = action.newWindowShortcutName { KeyboardShortcuts.removeHandler(for: name) }
         }
     }
 

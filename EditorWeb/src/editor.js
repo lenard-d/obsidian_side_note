@@ -5,6 +5,15 @@ import {syntaxHighlighting, indentUnit, syntaxTree} from "@codemirror/language";
 import {Decoration, drawSelection, EditorView, keymap, WidgetType} from "@codemirror/view";
 import {installEditorTestAdapter} from "./editor-test-adapter.js";
 import {editorTheme, markdownHighlightStyle} from "./editor-theme.js";
+import {
+  frontmatterAtomicRanges,
+  frontmatterField,
+  frontmatterProperties,
+  protectHiddenFrontmatter,
+  moveSelectionAfterHiddenFrontmatter,
+  setFrontmatterMode,
+  toggleFrontmatterSource
+} from "./frontmatter.js";
 
 const bridge = window.webkit?.messageHandlers?.editor;
 const readOnlyViews = new WeakSet();
@@ -284,21 +293,18 @@ function outdentEmptyListItem(view) {
   ]);
 }
 
-function selectionTouchesLine(state, line) {
+function cursorTouchesLine(state, line) {
   if (state.readOnly) return false;
-  return state.selection.ranges.some((range) => {
-    if (range.empty) return range.head >= line.from && range.head <= line.to;
-    return range.from <= line.to && range.to >= line.from;
-  });
+  return state.selection.ranges.some((range) =>
+    range.empty && range.head >= line.from && range.head <= line.to
+  );
 }
 
-function selectionTouchesToken(state, from, to) {
+function cursorTouchesToken(state, from, to) {
   if (state.readOnly) return false;
-  return state.selection.ranges.some((range) => {
-    if (!range.empty) return range.from < to && range.to > from;
-    const head = range.head;
-    return head >= from && head <= to;
-  });
+  return state.selection.ranges.some((range) =>
+    range.empty && range.head >= from && range.head <= to
+  );
 }
 
 function inlineSyntaxPresentationDecorations(state) {
@@ -348,7 +354,7 @@ function addInlinePresentationDecorations(
     );
   }
 
-  if (selectionTouchesToken(state, from, to)) return;
+  if (cursorTouchesToken(state, from, to)) return;
   for (const marker of markers) {
     decorations.push(
       Decoration.replace({inclusive: false}).range(marker.from, marker.to)
@@ -485,8 +491,8 @@ function addListDecorations(decorations, state, line) {
     const listMarkerTo = line.from + task.listMarkerTo;
     const checkboxFrom = line.from + task.checkboxFrom;
     const checkboxTo = line.from + task.checkboxTo;
-    const editingListMarker = selectionTouchesToken(state, listMarkerFrom, listMarkerTo);
-    const editingCheckbox = selectionTouchesToken(state, checkboxFrom, checkboxTo);
+    const editingListMarker = cursorTouchesToken(state, listMarkerFrom, listMarkerTo);
+    const editingCheckbox = cursorTouchesToken(state, checkboxFrom, checkboxTo);
     if (editingListMarker) {
       decorations.push(
         Decoration.mark({class: "list-task-source"}).range(checkboxFrom, checkboxTo)
@@ -519,7 +525,7 @@ function addListDecorations(decorations, state, line) {
     addListLineDecoration(decorations, line, true);
     const tokenFrom = line.from + bullet.tokenFrom;
     const tokenTo = line.from + bullet.tokenTo;
-    if (selectionTouchesToken(state, line.from, tokenTo)) {
+    if (cursorTouchesToken(state, line.from, tokenTo)) {
       decorations.push(
         Decoration.mark({class: "list-marker-glyph list-bullet-source"}).range(tokenFrom, tokenTo)
       );
@@ -548,7 +554,7 @@ function addBlockquoteDecorations(decorations, state, line) {
   );
   const markerFrom = line.from + marker.from;
   const markerTo = line.from + marker.to;
-  if (!selectionTouchesToken(state, markerFrom, markerTo)) {
+  if (!cursorTouchesToken(state, markerFrom, markerTo)) {
     decorations.push(
       Decoration.replace({inclusive: false}).range(
         markerFrom,
@@ -882,7 +888,7 @@ function buildMarkdownDecorations(state) {
     const line = state.doc.line(lineNumber);
     const media = imageEmbed(line.text);
     const mediaSource = media ? mediaSourceForLink(media.link) : null;
-    if (media && mediaSource && !selectionTouchesLine(state, line)) {
+    if (media && mediaSource && !cursorTouchesLine(state, line)) {
       decorations.push(
         Decoration.replace({
           widget: new ImageEmbedWidget(media, mediaSource, line.from),
@@ -895,7 +901,7 @@ function buildMarkdownDecorations(state) {
     for (const wikiLink of wikiLinksInLine(line.text)) {
       const from = line.from + wikiLink.from;
       const to = line.from + wikiLink.to;
-      if (selectionTouchesToken(state, from, to)) {
+      if (cursorTouchesToken(state, from, to)) {
         decorations.push(
           Decoration.mark({class: "osn-wiki-link-source"}).range(from, to)
         );
@@ -912,7 +918,7 @@ function buildMarkdownDecorations(state) {
     for (const markdownLink of markdownLinksInLine(line.text)) {
       const from = line.from + markdownLink.from;
       const to = line.from + markdownLink.to;
-      if (selectionTouchesToken(state, from, to)) {
+      if (cursorTouchesToken(state, from, to)) {
         decorations.push(
           Decoration.mark({class: "osn-markdown-link-source"}).range(from, to)
         );
@@ -931,7 +937,7 @@ function buildMarkdownDecorations(state) {
       decorations.push(
         Decoration.line({class: `osn-heading-line osn-heading-line-${heading.level}`}).range(line.from)
       );
-      if (!selectionTouchesLine(state, line)) {
+      if (!cursorTouchesLine(state, line)) {
         decorations.push(
           Decoration.replace({inclusive: false}).range(
             line.from + heading.from,
@@ -1462,16 +1468,26 @@ function installEditor() {
       indentUnit.of(listIndent),
       drawSelection(),
       syntaxHighlighting(markdownHighlightStyle),
+      frontmatterField,
+      frontmatterAtomicRanges,
+      protectHiddenFrontmatter,
       markdownDecorationField,
       EditorView.inputHandler.of((view, from, to, text) => applyTextReplacement(view, from, to, text)),
       keymap.of(markdownKeyBindings()),
       EditorView.lineWrapping,
       EditorView.updateListener.of((update) => {
-        if (update.focusChanged) {
-          post({type: update.view.hasFocus ? "focus" : "blur"});
-        }
         if (update.docChanged && !applyingExternalChange) {
           post({type: "change", text: update.state.doc.toString()});
+        }
+      }),
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged || update.transactions.some((transaction) =>
+          transaction.effects.some((effect) => effect.is(setFrontmatterMode))
+        )) {
+          post({type: "properties", ...frontmatterProperties(update.view)});
+        }
+        if (update.focusChanged) {
+          post({type: update.view.hasFocus ? "focus" : "blur"});
         }
       }),
       EditorView.domEventHandlers({
@@ -1527,8 +1543,11 @@ function installEditor() {
       applyingExternalChange = true;
       view.dispatch({
         changes: {from: 0, to: current.length, insert: text},
-        selection: {anchor: Math.min(view.state.selection.main.head, text.length)}
+        selection: {anchor: Math.min(view.state.selection.main.head, text.length)},
+        filter: false,
+        effects: setFrontmatterMode.of("collapsed")
       });
+      moveSelectionAfterHiddenFrontmatter(view);
       applyingExternalChange = false;
     },
     focusEnd() {
@@ -1542,6 +1561,12 @@ function installEditor() {
     },
     focus() {
       view.focus();
+    },
+    getProperties() {
+      return frontmatterProperties(view);
+    },
+    togglePropertiesSource() {
+      toggleFrontmatterSource(view);
     },
     applyCommand(command) {
       return applyCommand(view, command);

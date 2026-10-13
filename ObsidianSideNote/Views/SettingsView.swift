@@ -93,7 +93,7 @@ struct SettingsView: View {
                 NewNotePreferences.setResumeIntervalMinutes(newValue)
             }
 
-            Text("Within this window, reopening New Note keeps the current draft unless you use the shortcut.")
+            Text("After closing New Note, reopening it within this interval resumes the draft. Add Shift to the shortcut to start a new note.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
 
@@ -176,6 +176,10 @@ struct SettingsView: View {
             ForEach(ShortcutAction.allCases) { action in
                 KeyboardShortcutRow(action: action)
             }
+
+            Text("Note shortcuts show or hide the most recent window. Add Shift to open a new window.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
         }
     }
 

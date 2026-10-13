@@ -124,8 +124,16 @@ export const editorTheme = EditorView.theme({
   ".cm-focused": {
     outline: "none"
   },
-  ".cm-selectionBackground, .cm-content ::selection": {
-    backgroundColor: "SelectedTextBackgroundColor"
+  ".cm-selectionLayer .cm-selectionBackground": {
+    display: "none"
+  },
+  "&.cm-focused .cm-content .cm-line::selection, &.cm-focused .cm-content .cm-line *::selection": {
+    backgroundColor: "#245aa8 !important",
+    color: "#ffffff !important"
+  },
+  ".cm-content .cm-line::selection, .cm-content .cm-line *::selection": {
+    backgroundColor: "#245aa8 !important",
+    color: "#ffffff !important"
   },
   ".cm-gutters": {
     display: "none"

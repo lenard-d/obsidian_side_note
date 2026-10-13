@@ -33,6 +33,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsMenuItem: NSMenuItem?
     private var hotKeyManager: GlobalHotKeyManager?
     private var managedWindows: [ObjectIdentifier: (window: NSWindow, mode: NoteMode)] = [:]
+    private var windowOrder: [ObjectIdentifier] = []
     private lazy var linkPreviewController = LinkPreviewController()
     private var localShortcutMonitor: Any?
     var externalURLOpener: (URL) -> Bool = { NSWorkspace.shared.open($0) }
@@ -45,8 +46,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         AppSettingsPersistenceCoordinator.synchronizeCurrentSettings()
         AppLogger.app.info("Application did finish launching")
 
-        hotKeyManager = GlobalHotKeyManager { [weak self] action in
-            self?.performShortcutAction(action)
+        hotKeyManager = GlobalHotKeyManager { [weak self] action, inNewWindow in
+            self?.performShortcutAction(action, inNewWindow: inNewWindow)
         }
 
         // Create the status bar item
@@ -104,6 +105,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         installLocalShortcutMonitor()
         openSetupOnFirstLaunchIfNeeded()
+
+        if ProcessInfo.processInfo.arguments.contains("--open-edit-vault-file") {
+            DispatchQueue.main.async { [weak self] in
+                self?.openEditVaultFile()
+            }
+        }
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
@@ -244,6 +251,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = hostingView
 
         managedWindows[ObjectIdentifier(window)] = (window, mode)
+        rememberWindow(window)
         self.window = window
 
         return window
@@ -327,6 +335,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func showWindow(_ targetWindow: NSWindow? = nil) {
         guard let window = targetWindow ?? window else { return }
         self.window = window
+        rememberWindow(window)
         if !ProcessInfo.processInfo.arguments.contains("--uitesting") {
             NSApp.setActivationPolicy(.accessory)
         }
@@ -336,29 +345,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         focusContentAfterWindowActivation(window)
     }
 
-    private func performShortcutAction(_ action: ShortcutAction) {
-        if action == .appendDaily, shouldCloseVisibleWindow(for: action) {
-            closeWindow(window)
+    func performShortcutAction(_ action: ShortcutAction, inNewWindow: Bool = false) {
+        guard let mode = action.noteMode else { return }
+
+        if !inNewWindow, let existingWindow = mostRecentWindow(mode: mode) {
+            if existingWindow.isVisible {
+                existingWindow.orderOut(nil)
+                restoreAccessoryActivationPolicyIfNeeded()
+            } else {
+                showWindow(existingWindow)
+            }
             return
         }
 
-        switch action {
-        case .appendDaily:
-            openAppendToDaily()
-        case .newNote:
-            let newWindow = openNewNoteWindow(forceNew: hasVisibleWindow(mode: .newNote))
-            showWindow(newWindow)
-        case .editVaultFile:
-            openEditVaultFile()
-        case .settings:
-            break
-        }
+        let targetWindow = mode == .newNote
+            ? openNewNoteWindow(forceNew: inNewWindow)
+            : buildWindow(mode: mode)
+        showWindow(targetWindow)
     }
 
-    private func shouldCloseVisibleWindow(for action: ShortcutAction) -> Bool {
-        guard let actionMode = action.noteMode else { return false }
-        guard let window else { return false }
-        return window.isVisible && mode(for: window) == actionMode
+    private func mostRecentWindow(mode: NoteMode) -> NSWindow? {
+        windowOrder.reversed().compactMap { managedWindows[$0] }
+            .first(where: { $0.mode == mode })?.window
+    }
+
+    private func rememberWindow(_ window: NSWindow) {
+        let identifier = ObjectIdentifier(window)
+        windowOrder.removeAll { $0 == identifier }
+        windowOrder.append(identifier)
     }
 
     private func closeWindow(_ targetWindow: NSWindow? = nil) {
@@ -439,8 +453,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func matches(_ event: NSEvent, action: ShortcutAction) -> Bool {
-        let shortcut = action.shortcut
+    private func matches(_ event: NSEvent, action: ShortcutAction, inNewWindow: Bool = false) -> Bool {
+        let shortcut = inNewWindow ? action.shortcut.addingShift : action.shortcut
         return ShortcutPreference.normalized(event.charactersIgnoringModifiers ?? "") == shortcut.key
             && ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == shortcut.modifiers
     }
@@ -459,9 +473,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return true
             }
 
-            for action in ShortcutAction.globalActions where self.matches(event, action: action) {
-                self.performShortcutAction(action)
-                return true
+            for action in ShortcutAction.globalActions {
+                if self.matches(event, action: action) {
+                    self.performShortcutAction(action)
+                    return true
+                }
+                if !action.shortcut.modifiers.contains(.shift),
+                   self.matches(event, action: action, inNewWindow: true) {
+                    self.performShortcutAction(action, inNewWindow: true)
+                    return true
+                }
             }
 
             guard ShortcutPreference.menuModifierFlags(from: event.modifierFlags) == .command else {
@@ -486,12 +507,14 @@ extension AppDelegate: NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         self.window = window
+        rememberWindow(window)
     }
 
     func windowWillClose(_ notification: Notification) {
         guard let closedWindow = notification.object as? NSWindow else { return }
         linkPreviewController.sourceWindowClosed(closedWindow)
         managedWindows.removeValue(forKey: ObjectIdentifier(closedWindow))
+        windowOrder.removeAll { $0 == ObjectIdentifier(closedWindow) }
         if window === closedWindow {
             window = managedWindows.values.first(where: { $0.window.isVisible })?.window
         }

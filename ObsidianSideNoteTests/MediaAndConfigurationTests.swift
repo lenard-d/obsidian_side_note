@@ -317,7 +317,7 @@ extension ObsidianSideNoteTests {
             atomically: true,
             encoding: .utf8
         )
-        try "Template body".write(
+        try "---\ncreated: {{date:YYYY-MM-DDTHH:mm:ss}}\n---\n{{date:YYYY-MM-DD}}\nTemplate body\n{{time:HH:mm}}".write(
             to: templatesURL.appendingPathComponent("Daily.md"),
             atomically: true,
             encoding: .utf8
@@ -330,11 +330,19 @@ extension ObsidianSideNoteTests {
         }
 
         VaultStore.saveVaultURL(temporaryVaultURL)
-        let note = try #require(VaultStore.ensureDailyNoteForToday(now: Date(timeIntervalSince1970: 1_780_328_430)))
+        let createdAt = Date(timeIntervalSince1970: 1_780_328_430)
+        let note = try #require(VaultStore.ensureDailyNoteForToday(now: createdAt))
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        let timestamp = formatter.string(from: createdAt)
+        let date = String(timestamp.prefix(10))
+        let time = String(timestamp.dropFirst(11).prefix(5))
 
         #expect(note.relativePath.hasPrefix("Journal/"))
         #expect(note.relativePath.hasSuffix(".md"))
-        #expect(try VaultStore.readNote(note) == "Template body")
+        #expect(try VaultStore.readNote(note) == "---\ncreated: \(timestamp)\n---\n\(date)\nTemplate body\n\(time)")
     }
 
     @Test func vaultStoreUsesPeriodicNotesSettingsAndMomentWeekdayTokens() throws {

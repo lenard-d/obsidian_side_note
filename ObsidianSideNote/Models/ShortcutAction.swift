@@ -79,6 +79,10 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         globalShortcutName
     }
 
+    var newWindowShortcutName: KeyboardShortcuts.Name? {
+        isGlobal ? KeyboardShortcuts.Name("newWindow.\(rawValue)") : nil
+    }
+
     var isGlobal: Bool {
         Self.globalActions.contains(self)
     }

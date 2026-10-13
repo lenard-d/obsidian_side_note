@@ -114,6 +114,9 @@ export function installEditorTestAdapter(view, helpers) {
       const selection = view.state.selection.main;
       return helpers.applyTextReplacement(view, selection.from, selection.to, text);
     },
+    replaceSelection(text) {
+      view.dispatch({...view.state.replaceSelection(text), userEvent: "input.type"});
+    },
     presentationStyles() {
       const checkbox = view.dom.querySelector(".task-checkbox");
       const bullet = view.dom.querySelector(".list-bullet-marker");

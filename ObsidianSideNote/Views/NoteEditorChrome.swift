@@ -3,7 +3,15 @@ import AppKit
 
 struct NoteEditorHeader: View {
     let mode: NoteMode
+    let hasSavedNote: Bool
+    let properties: NoteProperties
+    let editPropertiesSource: () -> Void
+    let renameNote: () -> Void
+    let deleteNote: () -> Void
+    let copyNoteLink: () -> Void
+    let showInFinder: () -> Void
     let closeWindow: () -> Void
+    @State private var isShowingProperties = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -13,11 +21,111 @@ struct NoteEditorHeader: View {
             WindowDragHandle()
                 .frame(maxWidth: .infinity, minHeight: 18, maxHeight: 18)
 
+            Menu {
+                Button("Properties…") { isShowingProperties = true }
+
+                if hasSavedNote {
+                    Divider()
+                    Button("Rename…", action: renameNote)
+                    Button("Copy Obsidian Link", action: copyNoteLink)
+                    Button("Show in Finder", action: showInFinder)
+                    Divider()
+                    Button("Move to Trash…", action: deleteNote)
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .accessibilityLabel("Note actions")
+            .accessibilityIdentifier("note-actions-menu")
+            .popover(isPresented: $isShowingProperties) {
+                NotePropertiesPopover(properties: properties) {
+                    isShowingProperties = false
+                    editPropertiesSource()
+                }
+            }
+
             WindowCloseButton(action: closeWindow)
         }
-        .padding(.horizontal, 16)
+        .padding(.leading, 16)
+        .padding(.trailing, 7)
         .padding(.vertical, 7)
         .background(WindowDragHandle())
+    }
+}
+
+struct NoteProperties: Equatable {
+    struct Entry: Identifiable, Equatable {
+        let key: String
+        let value: String
+
+        var id: String { key }
+    }
+
+    var hasFrontmatter = false
+    var entries: [Entry] = []
+    var hasError = false
+    var isSourceVisible = false
+
+    var sourceActionTitle: String {
+        if isSourceVisible { return "Hide YAML" }
+        return hasFrontmatter ? "Edit YAML" : "Add properties"
+    }
+}
+
+private struct NotePropertiesPopover: View {
+    let properties: NoteProperties
+    let editSource: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Properties")
+                .font(.headline)
+                .accessibilityIdentifier("note-properties-title")
+
+            Divider()
+
+            if properties.entries.isEmpty && !properties.hasError {
+                Text("No properties")
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(properties.entries) { entry in
+                            HStack(alignment: .top, spacing: 16) {
+                                Text(entry.key)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 92, alignment: .leading)
+                                Text(entry.value)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .accessibilityElement(children: .contain)
+                        }
+                    }
+                }
+                .frame(maxHeight: 240)
+            }
+
+            if properties.hasError {
+                Text("YAML could not be read. Open the source to fix it.")
+                    .foregroundStyle(.red)
+                    .font(.caption)
+            }
+
+            Divider()
+
+            Button(properties.sourceActionTitle, action: editSource)
+                .buttonStyle(.borderless)
+        }
+        .font(.system(size: 13))
+        .frame(width: 300, alignment: .leading)
+        .padding(14)
+        .background(Color(NSColor.windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -91,6 +199,7 @@ struct VaultSearchPanel: View {
             .buttonStyle(.borderless)
             .disabled(vaultName.isEmpty || filePath.isEmpty)
             .help("Open file in Obsidian")
+            .accessibilityLabel("Open file in Obsidian")
         }
     }
 }
