@@ -18,7 +18,9 @@ final class VaultSearchUITests: XCTestCase {
         let projects = vault.appendingPathComponent("Projects")
         try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
         try "# Projects\n\nFolder note content.".write(to: projects.appendingPathComponent("Projects.md"), atomically: true, encoding: .utf8)
-        let app = XCUIApplication()
+        let app = ProcessInfo.processInfo.environment["OSN_UI_APP_PATH"].map {
+            XCUIApplication(url: URL(fileURLWithPath: $0))
+        } ?? XCUIApplication()
 
         defer {
             app.terminate()

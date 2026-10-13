@@ -26,7 +26,7 @@ final class ObsidianSideNoteUITests: XCTestCase {
             to: vault.appendingPathComponent("Example.md"), atomically: true, encoding: .utf8
         )
         let app = testApplication()
-        app.launchArguments += ["-shortcut.newNote", "space", "-shortcut.newNote.modifiers", "1835008"]
+        app.launchArguments += ["-shortcut.newNote", "space", "-shortcut.newNote.modifiers", "7"]
         app.launchEnvironment["OSN_TEST_CONFIG_URL"] = vault.appendingPathComponent("config.json").path
         app.launchEnvironment["OSN_TEST_VAULT_PATH"] = vault.path
         app.launchEnvironment["OSN_TEST_EDIT_FILE_PATH"] = "Example.md"
@@ -60,7 +60,7 @@ final class ObsidianSideNoteUITests: XCTestCase {
 
         app.typeKey(XCUIKeyboardKey.space, modifierFlags: modifiers)
         XCTAssertEqual(app.windows.count, 3)
-        let newWindow = app.windows.containing(.staticText, identifier: "New Note").firstMatch
+        let newWindow = app.windows.containing(.staticText, identifier: "Create New Note").firstMatch
         XCTAssertTrue(newWindow.waitForExistence(timeout: 3))
         newWindow.textFields.firstMatch.click()
         newWindow.textFields.firstMatch.typeKey("a", modifierFlags: .command)
@@ -153,7 +153,7 @@ final class ObsidianSideNoteUITests: XCTestCase {
         app.typeKey("v", modifierFlags: [.command, .option, .control])
         let title = app.staticTexts["Edit Vault File"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
-        let window = app.windows.firstMatch
+        let window = app.windows["Edit Vault File"]
 
         // Send the drag through Finder so XCTest does not first activate the note app.
         for headerPoint in [CGVector(dx: 0.75, dy: 23), CGVector(dx: 0.5, dy: 4)] {
@@ -298,7 +298,12 @@ final class ObsidianSideNoteUITests: XCTestCase {
     }
 
     private func testApplication() -> XCUIApplication {
-        let app = XCUIApplication()
+        let app: XCUIApplication
+        if let path = ProcessInfo.processInfo.environment["OSN_UI_APP_PATH"] {
+            app = XCUIApplication(url: URL(fileURLWithPath: path))
+        } else {
+            app = XCUIApplication()
+        }
         app.launchArguments.append("--uitesting")
         return app
     }

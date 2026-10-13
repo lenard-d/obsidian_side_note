@@ -217,6 +217,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         configureLocalKeyEquivalents(for: window)
         window.delegate = self
+        window.title = mode.title
 
         // Set window properties for floating behavior
         window.level = .floating
@@ -309,6 +310,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         hostingView.rootView = contentView(mode: .editVaultFile, for: sourceWindow)
+        sourceWindow.title = NoteMode.editVaultFile.title
         managedWindows[ObjectIdentifier(sourceWindow)] = (sourceWindow, .editVaultFile)
         showWindow(sourceWindow)
         return sourceWindow
@@ -351,6 +353,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if !inNewWindow, let existingWindow = mostRecentWindow(mode: mode) {
             if existingWindow.isVisible {
                 existingWindow.orderOut(nil)
+                // Hiding can make an older window key. Keep this toggle's target last.
+                rememberWindow(existingWindow)
                 restoreAccessoryActivationPolicyIfNeeded()
             } else {
                 showWindow(existingWindow)
