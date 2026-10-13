@@ -344,6 +344,41 @@ extension ObsidianSideNoteTests {
         #expect((try? String(contentsOf: renamed.url, encoding: .utf8)) == "Capture")
     }
 
+    @MainActor
+    @Test func noteActionsRenameAndMoveOnlySelectedFileToTrash() throws {
+        let vaultURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: vaultURL, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: vaultURL)
+            UserDefaults.standard.removeObject(forKey: VaultStore.pathKey)
+            UserDefaults.standard.removeObject(forKey: VaultStore.bookmarkKey)
+            UserDefaults.standard.removeObject(forKey: "obsidianVault")
+        }
+
+        VaultStore.saveVaultURL(vaultURL)
+        let originalURL = vaultURL.appendingPathComponent("Original.md")
+        let otherURL = vaultURL.appendingPathComponent("Other.md")
+        try "Original body".write(to: originalURL, atomically: true, encoding: .utf8)
+        try "Other body".write(to: otherURL, atomically: true, encoding: .utf8)
+        let original = try #require(VaultStore.note(relativePath: "Original.md"))
+        let model = ContentViewModel(mode: .editVaultFile)
+        model.selectNote(original)
+        model.renameCurrentNote(to: "Renamed")
+
+        let renamedURL = vaultURL.appendingPathComponent("Renamed.md")
+        #expect(model.currentSavedNote?.relativePath == "Renamed.md")
+        #expect(FileManager.default.fileExists(atPath: renamedURL.path))
+        #expect(!FileManager.default.fileExists(atPath: originalURL.path))
+        #expect(FileManager.default.fileExists(atPath: otherURL.path))
+
+        #expect(model.trashCurrentNote())
+        #expect(!FileManager.default.fileExists(atPath: renamedURL.path))
+        #expect(FileManager.default.fileExists(atPath: otherURL.path))
+        #expect(model.currentSavedNote == nil)
+        #expect(model.noteText.isEmpty)
+    }
+
     private func clearNewNoteFolderPreferences() {
         UserDefaults.standard.removeObject(forKey: NewNotePreferences.useObsidianNewNoteFolderKey)
         UserDefaults.standard.removeObject(forKey: NewNotePreferences.folderPathKey)

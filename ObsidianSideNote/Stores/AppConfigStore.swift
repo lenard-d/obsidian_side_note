@@ -66,7 +66,7 @@ enum AppConfigStore {
     }
 
     private static var configReadURLs: [URL] {
-        guard configURLOverride == nil, !isRunningUnderXCTest else {
+        guard configURLOverride == nil, !isRunningUnderXCTest, !isRunningInUITest else {
             return [configURL]
         }
 

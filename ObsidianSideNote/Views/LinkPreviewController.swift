@@ -263,6 +263,7 @@ private struct LinkPreviewContentView: View {
     @State private var markdown: String
     @State private var focusRequestID = 0
     @State private var cursorEndRequestID = 0
+    @State private var noteProperties = NoteProperties()
     @FocusState private var isEditorFocused: Bool
     @StateObject private var commandDispatcher = MarkdownEditorCommandDispatcher()
 
@@ -296,6 +297,7 @@ private struct LinkPreviewContentView: View {
                 text: $markdown,
                 isFocused: $isEditorFocused,
                 focusRequestID: $focusRequestID,
+                properties: $noteProperties,
                 cursorEndRequestID: $cursorEndRequestID,
                 commandDispatcher: commandDispatcher,
                 insertMedia: { _ in },

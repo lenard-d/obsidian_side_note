@@ -7,6 +7,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     @Binding var text: String
     @FocusState.Binding var isFocused: Bool
     @Binding var focusRequestID: Int
+    @Binding var properties: NoteProperties
     @Binding var cursorEndRequestID: Int
     let commandDispatcher: MarkdownEditorCommandDispatcher
     let insertMedia: (String) -> Void
@@ -23,6 +24,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             text: $text,
             isFocused: $isFocused,
             focusRequestID: $focusRequestID,
+            properties: $properties,
             cursorEndRequestID: $cursorEndRequestID,
             commandDispatcher: commandDispatcher,
             insertMedia: insertMedia,
@@ -77,6 +79,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         @Binding private var text: String
         @FocusState.Binding private var isFocused: Bool
         @Binding private var focusRequestID: Int
+        @Binding private var properties: NoteProperties
         @Binding private var cursorEndRequestID: Int
         private let commandDispatcher: MarkdownEditorCommandDispatcher
         private let insertMedia: (String) -> Void
@@ -108,6 +111,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             text: Binding<String>,
             isFocused: FocusState<Bool>.Binding,
             focusRequestID: Binding<Int>,
+            properties: Binding<NoteProperties>,
             cursorEndRequestID: Binding<Int>,
             commandDispatcher: MarkdownEditorCommandDispatcher,
             insertMedia: @escaping (String) -> Void,
@@ -122,6 +126,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             _text = text
             _isFocused = isFocused
             _focusRequestID = focusRequestID
+            _properties = properties
             _cursorEndRequestID = cursorEndRequestID
             self.commandDispatcher = commandDispatcher
             self.insertMedia = insertMedia
@@ -221,7 +226,16 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 pendingCommand = command
                 return
             }
-            applyWebCommand(webCommand(for: command))
+            switch command {
+            case .togglePropertiesSource:
+                callEditorFunction("togglePropertiesSource")
+            case let .wrap(wrapper):
+                applyWebCommand(["type": "wrap", "wrapper": wrapper])
+            case .insertLink:
+                applyWebCommand(["type": "insertLink"])
+            case let .insertPrefix(prefix):
+                applyWebCommand(["type": "insertPrefix", "prefix": prefix])
+            }
         }
 
         func disconnectCommandDispatcher() {
@@ -231,7 +245,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private func applyPendingCommandIfNeeded() {
             guard isReady, let pendingCommand else { return }
             self.pendingCommand = nil
-            applyWebCommand(webCommand(for: pendingCommand))
+            requestCommand(pendingCommand)
         }
 
         private func applyWebCommand(_ command: [String: Any]) {
@@ -323,6 +337,17 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 if markdown != text {
                     text = markdown
                 }
+            case "properties":
+                let entries = (body["entries"] as? [[String: String]] ?? []).compactMap { entry -> NoteProperties.Entry? in
+                    guard let key = entry["key"], let value = entry["value"] else { return nil }
+                    return NoteProperties.Entry(key: key, value: value)
+                }
+                properties = NoteProperties(
+                    hasFrontmatter: body["hasFrontmatter"] as? Bool ?? false,
+                    entries: entries,
+                    hasError: body["error"] as? Bool ?? false,
+                    isSourceVisible: body["sourceVisible"] as? Bool ?? false
+                )
             case "focus":
                 isFocused = true
                 syncTextReplacementsToWebViewIfNeeded()
@@ -569,17 +594,6 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                     AppLogger.app.error("Markdown editor command \(name) failed: \(AppLogger.errorSummary(error))")
                 }
                 completion?(error)
-            }
-        }
-
-        private func webCommand(for command: MarkdownEditorCommand) -> [String: Any] {
-            switch command {
-            case let .wrap(wrapper):
-                return ["type": "wrap", "wrapper": wrapper]
-            case .insertLink:
-                return ["type": "insertLink"]
-            case let .insertPrefix(prefix):
-                return ["type": "insertPrefix", "prefix": prefix]
             }
         }
 

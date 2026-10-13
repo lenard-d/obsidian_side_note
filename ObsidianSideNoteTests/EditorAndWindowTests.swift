@@ -171,6 +171,127 @@ extension ObsidianSideNoteTests {
     }
 
     @MainActor
+    @Test func markdownEditorPresentsFrontmatterAsCollapsibleProperties() async throws {
+        let html = try MarkdownEditorResource.bundledHTML(testing: true)
+        let messageHandler = MarkdownEditorReadyMessageHandler()
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.userContentController.add(messageHandler, name: "editor")
+        defer {
+            configuration.userContentController.removeScriptMessageHandler(forName: "editor")
+        }
+
+        let webView = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 480),
+            configuration: configuration
+        )
+        webView.loadHTMLString(html, baseURL: nil)
+
+        let deadline = Date().addingTimeInterval(3)
+        while !messageHandler.isReady && messageHandler.errorMessage == nil && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(messageHandler.errorMessage == nil)
+        #expect(messageHandler.isReady)
+
+        let resultJSON = try #require(try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const source = '---\\ncreated: 2026-09-23T00:33:17\\ntags: [daily, review]\\n---\\n\\n# Today';
+              window.editor.setMarkdown(source);
+              const collapsed = window.editorTest.visibleText();
+              const properties = window.editor.getProperties();
+              window.editor.togglePropertiesSource();
+              const raw = window.editorTest.visibleText();
+              window.editor.togglePropertiesSource();
+              const hiddenAgain = window.editorTest.visibleText();
+              const sourceUnchanged = window.editorTest.getMarkdown() === source;
+              window.editor.setMarkdown('A file without properties');
+              const empty = window.editor.getProperties();
+              window.editor.togglePropertiesSource();
+              const added = window.editor.getProperties();
+              return JSON.stringify({sourceUnchanged, collapsed, properties, raw, hiddenAgain, empty, added});
+            })();
+            """
+        ) as? String)
+        let data = try #require(resultJSON.data(using: .utf8))
+        let result = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let properties = try #require(result["properties"] as? [String: Any])
+        let entries = try #require(properties["entries"] as? [[String: String]])
+        let empty = try #require(result["empty"] as? [String: Any])
+        let added = try #require(result["added"] as? [String: Any])
+        #expect(!(result["collapsed"] as? String ?? "").contains("created:"))
+        #expect(properties["hasFrontmatter"] as? Bool == true)
+        #expect(entries == [
+            ["key": "created", "value": "2026-09-23T00:33:17"],
+            ["key": "tags", "value": "daily, review"]
+        ])
+        #expect((result["raw"] as? String)?.contains("created:") == true)
+        #expect(!(result["hiddenAgain"] as? String ?? "").contains("created:"))
+        #expect(result["sourceUnchanged"] as? Bool == true)
+        #expect(empty["hasFrontmatter"] as? Bool == false)
+        #expect(added["hasFrontmatter"] as? Bool == true)
+        #expect(added["sourceVisible"] as? Bool == true)
+    }
+
+    @MainActor
+    @Test func markdownEditorUsesTextOnlyBlueSelection() async throws {
+        let html = try MarkdownEditorResource.bundledHTML(testing: true)
+        let messageHandler = MarkdownEditorReadyMessageHandler()
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.userContentController.add(messageHandler, name: "editor")
+        defer {
+            configuration.userContentController.removeScriptMessageHandler(forName: "editor")
+        }
+
+        let webView = WKWebView(
+            frame: NSRect(x: 0, y: 0, width: 640, height: 480),
+            configuration: configuration
+        )
+        webView.loadHTMLString(html, baseURL: nil)
+
+        let deadline = Date().addingTimeInterval(3)
+        while !messageHandler.isReady && messageHandler.errorMessage == nil && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(messageHandler.errorMessage == nil)
+        #expect(messageHandler.isReady)
+
+        let resultJSON = try #require(try await webView.evaluateJavaScript(
+            """
+            (() => {
+              window.editor.setMarkdown('Short\\nLonger text');
+              window.editor.focus();
+              window.editorTest.setSelectionRange(0, 8);
+              const line = document.querySelector('.cm-line');
+              const selection = window.getSelection();
+              return JSON.stringify({
+                color: getComputedStyle(line, '::selection').backgroundColor,
+                layerHidden: [...document.querySelectorAll('.cm-selectionBackground')].every(
+                  (element) => getComputedStyle(element).display === 'none'
+                ),
+                nativeSelection: selection?.toString(),
+                nativeRangeRects: selection?.rangeCount ? selection.getRangeAt(0).getClientRects().length : 0,
+                firstLineWidth: selection?.rangeCount ? selection.getRangeAt(0).getClientRects()[0]?.width : 0,
+                editorWidth: document.querySelector('.cm-content')?.getBoundingClientRect().width
+              });
+            })();
+            """
+        ) as? String)
+        let data = try #require(resultJSON.data(using: .utf8))
+        let result = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        #expect(result["color"] as? String == "rgb(36, 90, 168)")
+        #expect(result["layerHidden"] as? Bool == true)
+        #expect(result["nativeSelection"] as? String == "Short\nLo")
+        #expect((result["nativeRangeRects"] as? Int ?? 0) > 0)
+        #expect((result["firstLineWidth"] as? Double ?? 0) < (result["editorWidth"] as? Double ?? 0) / 2)
+    }
+
+    @MainActor
     @Test func markdownEditorBundledHTMLInitializesInWKWebViewAndRoundTripsMarkdown() async throws {
         let html = try MarkdownEditorResource.bundledHTML(testing: true)
         let messageHandler = MarkdownEditorReadyMessageHandler()
@@ -251,6 +372,14 @@ extension ObsidianSideNoteTests {
               const activeHeadingText = window.editorTest.visibleText();
               window.editorTest.selectAll();
               const selectAllText = window.editorTest.visibleText();
+              const linkSource = '[Example](https://example.com) and [[Page|Alias]]';
+              window.editor.setMarkdown(linkSource);
+              window.editorTest.setSelectionRange(1, 7);
+              const selectedLinkText = window.editorTest.visibleText();
+              const selectedLinkWidgetCount = document.querySelectorAll('.osn-markdown-link, .osn-wiki-link').length;
+              window.editorTest.setSelection(2);
+              const caretLinkText = window.editorTest.visibleText();
+              window.editor.setMarkdown(source);
               window.editorTest.setSelection(source.length);
               const checkboxAlignment = window.editorTest.taskCheckboxAlignment();
               const checkboxToggle = window.editorTest.firstTaskCheckboxMetrics();
@@ -277,6 +406,9 @@ extension ObsidianSideNoteTests {
                 bulletSpacerCount,
                 activeHeadingText,
                 selectAllText,
+                selectedLinkText,
+                selectedLinkWidgetCount,
+                caretLinkText,
                 checkboxCount,
                 bulletCount,
                 colors,
@@ -306,6 +438,9 @@ extension ObsidianSideNoteTests {
         let bulletSpacerCount = try #require(editorPresentation["bulletSpacerCount"] as? Int)
         let activeHeadingText = try #require(editorPresentation["activeHeadingText"] as? String)
         let selectAllText = try #require(editorPresentation["selectAllText"] as? String)
+        let selectedLinkText = try #require(editorPresentation["selectedLinkText"] as? String)
+        let selectedLinkWidgetCount = try #require(editorPresentation["selectedLinkWidgetCount"] as? Int)
+        let caretLinkText = try #require(editorPresentation["caretLinkText"] as? String)
         let checkboxCount = try #require(editorPresentation["checkboxCount"] as? Int)
         let bulletCount = try #require(editorPresentation["bulletCount"] as? Int)
         let colors = try #require(editorPresentation["colors"] as? [String])
@@ -344,8 +479,16 @@ extension ObsidianSideNoteTests {
         #expect(!bulletSpacerText.contains("- Plain"))
         #expect(bulletSpacerCount == 1)
         #expect(activeHeadingText.contains("### Heading"))
-        #expect(selectAllText.contains("### Heading"))
-        #expect(selectAllText.contains("- Plain"))
+        #expect(selectAllText.contains("Heading"))
+        #expect(selectAllText.contains("Task"))
+        #expect(!selectAllText.contains("### Heading"))
+        #expect(!selectAllText.contains("- Plain"))
+        #expect(!selectAllText.contains("[ ] Task"))
+        #expect(!selectAllText.contains("**Bold**"))
+        #expect(selectedLinkText.contains("Example and Alias"))
+        #expect(!selectedLinkText.contains("](https://example.com)"))
+        #expect(selectedLinkWidgetCount == 2)
+        #expect(caretLinkText.contains("[Example](https://example.com)"))
         #expect(checkboxCount == 2)
         #expect(bulletCount == 1)
         #expect(colors.allSatisfy { $0 == "rgb(255, 255, 255)" })

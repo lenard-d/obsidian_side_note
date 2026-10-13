@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.7 - 2026-10-13
+
+### Changed
+
+- Note shortcuts show or hide the most recent window for that action. Hidden windows keep their editor state.
+- Add Shift to a note shortcut to open a separate window. The extra shortcut follows changes made in Settings.
+- Keep Markdown previews visible during text selection and use a dark blue selection background that follows the selected text.
+- Hide YAML properties in the editor and show them in a native SwiftUI popover through the note actions menu.
+- Add Rename, Copy Obsidian Link, Show in Finder, and Move to Trash to the note actions menu.
+- Fill creation-time, date, and time placeholders in daily-note templates.
+- Protect hidden properties from accidental deletion and keep saving body edits when YAML contains circular references.
+- Keep another New Note draft intact when a note is moved to Trash.
+- Stop other windows from recreating a trashed file, and refresh a restored Daily Note when its date changes.
+
+### Developer
+
+- Added window-reuse, Shift shortcut, draft-preservation, and hidden-property safety tests.
+- Integrated the previously approved local editor and daily-note changes into the released source.
+
 ## 2.6 - 2026-09-20
 
 ### Changed

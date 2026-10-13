@@ -148,6 +148,29 @@ struct VaultStore {
         }
     }
 
+    static func moveToTrash(_ note: VaultNote) throws {
+        guard let vaultURL = selectedVaultURL,
+              note.url.standardizedFileURL.pathComponents.starts(with: vaultURL.standardizedFileURL.pathComponents),
+              note.url.pathExtension.lowercased() == "md" else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+
+        let didAccess = vaultURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess { vaultURL.stopAccessingSecurityScopedResource() }
+        }
+
+        NotificationCenter.default.post(name: .vaultNoteWillMoveToTrash, object: note.url.standardizedFileURL)
+        do {
+            try FileManager.default.trashItem(at: note.url, resultingItemURL: nil)
+        } catch {
+            NotificationCenter.default.post(name: .vaultNoteTrashFailed, object: note.url.standardizedFileURL)
+            throw error
+        }
+        VaultSearchIndexStore.invalidate()
+        NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
+    }
+
     static func note(relativePath: String) -> VaultNote? {
         guard let vaultURL = selectedVaultURL,
               !relativePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -323,11 +346,17 @@ struct VaultStore {
         return operation()
     }
 
+    static func dailyNoteTarget(now: Date = Date()) -> VaultNote? {
+        guard let vaultURL = selectedVaultURL else { return nil }
+        return withSelectedVaultAccess {
+            VaultPathResolver.note(relativePath: dailyNoteRelativePath(now: now, in: vaultURL), in: vaultURL)
+        }
+    }
+
     static func ensureDailyNoteForToday(now: Date = Date()) -> VaultNote? {
         guard let vaultURL = selectedVaultURL else { return nil }
         return withSelectedVaultAccess {
-            let relativePath = dailyNoteRelativePath(now: now, in: vaultURL)
-            guard let note = VaultPathResolver.note(relativePath: relativePath, in: vaultURL) else { return nil }
+            guard let note = dailyNoteTarget(now: now) else { return nil }
             let fileURL = note.url
 
             guard !FileManager.default.fileExists(atPath: fileURL.path) else {
@@ -339,7 +368,8 @@ struct VaultStore {
                     at: fileURL.deletingLastPathComponent(),
                     withIntermediateDirectories: true
                 )
-                try dailyTemplateText(in: vaultURL).write(to: fileURL, atomically: true, encoding: .utf8)
+                try dailyTemplateText(in: vaultURL, createdAt: now)
+                    .write(to: fileURL, atomically: true, encoding: .utf8)
                 VaultSearchIndexStore.invalidate()
                 NSWorkspace.shared.noteFileSystemChanged(vaultURL.path)
                 return note
@@ -449,13 +479,32 @@ struct VaultStore {
         return canonicalPath
     }
 
-    private static func dailyTemplateText(in vaultURL: URL) -> String {
+    private static func dailyTemplateText(in vaultURL: URL, createdAt: Date) -> String {
         let template = dailyNoteSettings(in: vaultURL).template
         guard !template.isEmpty else { return "" }
 
         let templatePath = URL(fileURLWithPath: template).pathExtension.isEmpty ? "\(template).md" : template
         guard let templateURL = VaultPathResolver.url(forRelativePath: templatePath, in: vaultURL) else { return "" }
-        return (try? String(contentsOf: templateURL, encoding: .utf8)) ?? ""
+        let templateText = (try? String(contentsOf: templateURL, encoding: .utf8)) ?? ""
+        let created = ObsidianDailyNoteDateFormatter.string(
+            from: createdAt,
+            format: "YYYY-MM-DDTHH:mm:ss",
+            localeIdentifier: "en"
+        )
+        let date = ObsidianDailyNoteDateFormatter.string(
+            from: createdAt,
+            format: "YYYY-MM-DD",
+            localeIdentifier: "en"
+        )
+        let time = ObsidianDailyNoteDateFormatter.string(
+            from: createdAt,
+            format: "HH:mm",
+            localeIdentifier: "en"
+        )
+        return templateText
+            .replacingOccurrences(of: "{{date:YYYY-MM-DDTHH:mm:ss}}", with: created)
+            .replacingOccurrences(of: "{{date:YYYY-MM-DD}}", with: date)
+            .replacingOccurrences(of: "{{time:HH:mm}}", with: time)
     }
 
     private static func defaultDailyNoteRelativePath(now: Date) -> String {

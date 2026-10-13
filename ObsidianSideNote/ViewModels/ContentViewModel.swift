@@ -41,9 +41,47 @@ final class ContentViewModel: ObservableObject {
     private var latestQueuedNoteWrite: QueuedNoteWrite?
     private var textAutosaveSuppressionValue: String?
     private var eventWindowNumber: Int?
+    private var currentNoteWasTrashed = false
+    private var trashObservers: [NSObjectProtocol] = []
 
     init(mode: NoteMode) {
         self.mode = mode
+        trashObservers = [.vaultNoteWillMoveToTrash, .vaultNoteTrashFailed].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { [weak self] notification in
+                self?.handleNoteTrash(notification)
+            }
+        }
+    }
+
+    deinit {
+        trashObservers.forEach(NotificationCenter.default.removeObserver)
+    }
+
+    private func handleNoteTrash(_ notification: Notification) {
+        guard let url = notification.object as? URL,
+              currentSavedNote?.url.standardizedFileURL == url else { return }
+        if notification.name == .vaultNoteTrashFailed {
+            currentNoteWasTrashed = false
+            saveErrorMessage = nil
+            startActiveNoteFileMonitorIfNeeded()
+            return
+        }
+        currentNoteWasTrashed = true
+        pendingSelectedNoteAutosave?.cancel()
+        pendingSelectedNoteAutosave = nil
+        selectedNoteAutosaveToken?.cancel()
+        selectedNoteAutosaveToken = nil
+        pendingNewNoteAutosave?.cancel()
+        pendingNewNoteAutosave = nil
+        // Finish any active write before the file leaves the vault.
+        notePersistenceQueue.sync { latestQueuedNoteWrite = nil }
+        activeNoteFileMonitor.stop()
+        saveErrorMessage = "This note was moved to Trash. Open another note to continue."
+    }
+
+    func windowDidBecomeKey(_ windowNumber: Int, now: Date = Date()) {
+        guard windowNumber == eventWindowNumber else { return }
+        refreshDailyNote(now: now)
     }
 
     var shouldShowSearchSuggestions: Bool {
@@ -60,6 +98,10 @@ final class ContentViewModel: ObservableObject {
         case .settings, .setup:
             return false
         }
+    }
+
+    var currentSavedNote: VaultNote? {
+        mode == .newNote ? createdNewNote : selectedNote
     }
 
     func start(clearSearchFocus: @escaping () -> Void, focusEditor: @escaping () -> Void) {
@@ -82,10 +124,12 @@ final class ContentViewModel: ObservableObject {
     func stop() {
         searchTask?.cancel()
         searchWork?.cancel()
-        flushSelectedNoteAutosave()
-        flushNewNoteAutosave()
-        if mode == .newNote {
-            NewNotePreferences.touchSession()
+        if !currentNoteWasTrashed {
+            flushSelectedNoteAutosave()
+            flushNewNoteAutosave()
+            if mode == .newNote {
+                NewNotePreferences.touchSession()
+            }
         }
         activeNoteFileMonitor.stop()
         removeSearchKeyMonitor()
@@ -95,6 +139,7 @@ final class ContentViewModel: ObservableObject {
     }
 
     func textDidChange() {
+        guard !currentNoteWasTrashed else { return }
         saveDraft()
         saveErrorMessage = nil
         if let suppressedText = textAutosaveSuppressionValue {
@@ -108,6 +153,7 @@ final class ContentViewModel: ObservableObject {
     }
 
     func titleDidChange() {
+        guard !currentNoteWasTrashed else { return }
         saveDraft()
         scheduleNewNoteAutosave()
     }
@@ -127,10 +173,101 @@ final class ContentViewModel: ObservableObject {
         }
     }
 
+    func copyCurrentNoteLink() {
+        guard let note = currentSavedNote,
+              let url = ObsidianURIBuilder.openFile(vaultName: vaultName, filePath: note.relativePath) else {
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+    }
+
+    func showCurrentNoteInFinder() {
+        guard let note = currentSavedNote else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([note.url])
+    }
+
+    func renameCurrentNote(to title: String) {
+        guard !currentNoteWasTrashed, currentSavedNote != nil else { return }
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else {
+            saveErrorMessage = "Enter a file name."
+            return
+        }
+
+        flushActiveNoteAutosave()
+        guard saveErrorMessage == nil, let note = currentSavedNote else { return }
+        activeNoteFileMonitor.stop()
+        guard let renamed = VaultStore.rename(note, toTitle: trimmedTitle) else {
+            saveErrorMessage = "Could not rename file."
+            startActiveNoteFileMonitorIfNeeded()
+            return
+        }
+
+        if mode == .newNote {
+            createdNewNote = renamed
+            noteTitle = renamed.title
+            UserDefaults.standard.set(renamed.relativePath, forKey: NewNotePreferences.draftFilePathKey)
+        } else {
+            selectedNote = renamed
+            noteTitle = renamed.relativePath
+            if mode == .editVaultFile { vaultSearchQuery = renamed.relativePath }
+        }
+        saveDraft()
+        lastSyncedActiveNoteText = noteText
+        saveErrorMessage = nil
+        startActiveNoteFileMonitorIfNeeded()
+    }
+
+    @discardableResult
+    func trashCurrentNote() -> Bool {
+        guard !currentNoteWasTrashed, let currentNote = currentSavedNote else { return false }
+        let ownsNewNoteDraft = mode == .newNote
+            && UserDefaults.standard.string(forKey: NewNotePreferences.draftFilePathKey) == currentNote.relativePath
+        if mode == .newNote {
+            pendingNewNoteAutosave?.cancel()
+            pendingNewNoteAutosave = nil
+            writeActiveNote(noteText, to: currentNote)
+        } else {
+            flushSelectedNoteAutosave()
+        }
+        guard saveErrorMessage == nil, let note = currentSavedNote else { return false }
+        activeNoteFileMonitor.stop()
+        do {
+            try VaultStore.moveToTrash(note)
+        } catch {
+            saveErrorMessage = "Could not move file to Trash: \(error.localizedDescription)"
+            startActiveNoteFileMonitorIfNeeded()
+            return false
+        }
+
+        selectedNote = nil
+        createdNewNote = nil
+        noteText = ""
+        noteTitle = ""
+        vaultSearchQuery = ""
+        lastSyncedActiveNoteText = nil
+        latestQueuedNoteWrite = nil
+        if ownsNewNoteDraft {
+            NewNotePreferences.clearDraft()
+        } else if mode != .newNote {
+            saveDraft()
+        }
+        currentNoteWasTrashed = true
+        saveErrorMessage = nil
+        return true
+    }
+
+    private func flushActiveNoteAutosave() {
+        if mode == .newNote { flushNewNoteAutosave() }
+        else { flushSelectedNoteAutosave() }
+    }
+
     func selectNote(_ note: VaultNote) {
         flushSelectedNoteAutosave()
         activeNoteFileMonitor.stop()
         isLoadingNote = true
+        currentNoteWasTrashed = false
         selectedNote = note
         noteTitle = note.relativePath
         loadText(from: note)
@@ -216,17 +353,27 @@ final class ContentViewModel: ObservableObject {
     private func loadDailyNoteIfNeeded() {
         guard mode == .appendDaily else { return }
 
-        loadDailyNoteFromVault()
+        refreshDailyNote()
     }
 
-    private func loadDailyNoteFromVault() {
+    func refreshDailyNote(now: Date = Date()) {
         guard mode == .appendDaily else { return }
-        guard let note = VaultStore.ensureDailyNoteForToday() else {
+        if let target = VaultStore.dailyNoteTarget(now: now),
+           selectedNote?.url.standardizedFileURL == target.url.standardizedFileURL { return }
+        guard let note = VaultStore.ensureDailyNoteForToday(now: now) else {
             saveErrorMessage = "Could not open today's daily note."
             return
         }
 
+        if selectedNote != nil, !currentNoteWasTrashed {
+            saveErrorMessage = nil
+            flushSelectedNoteAutosave()
+            guard saveErrorMessage == nil else { return }
+        }
+        activeNoteFileMonitor.stop()
+
         isLoadingNote = true
+        currentNoteWasTrashed = false
         selectedNote = note
         noteTitle = note.relativePath
         loadText(from: note)
@@ -428,7 +575,7 @@ final class ContentViewModel: ObservableObject {
     }
 
     private func startActiveNoteFileMonitorIfNeeded() {
-        guard let activeAutosavedNote else {
+        guard !currentNoteWasTrashed, let activeAutosavedNote else {
             activeNoteFileMonitor.stop()
             return
         }
@@ -439,7 +586,7 @@ final class ContentViewModel: ObservableObject {
     }
 
     func syncActiveNoteFromDiskIfNeeded() {
-        guard let activeAutosavedNote else { return }
+        guard !currentNoteWasTrashed, let activeAutosavedNote else { return }
 
         do {
             // Serialize reads with background autosaves so an external change can
@@ -515,7 +662,7 @@ final class ContentViewModel: ObservableObject {
     }
 
     private func flushSelectedNoteAutosave() {
-        guard (mode == .editVaultFile || mode == .appendDaily), !isLoadingNote, let selectedNote else { return }
+        guard !currentNoteWasTrashed, (mode == .editVaultFile || mode == .appendDaily), !isLoadingNote, let selectedNote else { return }
         pendingSelectedNoteAutosave?.cancel()
         pendingSelectedNoteAutosave = nil
         selectedNoteAutosaveToken?.cancel()
@@ -554,7 +701,7 @@ final class ContentViewModel: ObservableObject {
     }
 
     private func autosaveNewNote() {
-        guard mode == .newNote else { return }
+        guard mode == .newNote, !currentNoteWasTrashed else { return }
         let trimmedText = noteText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedText.isEmpty else {

@@ -63,6 +63,22 @@ struct ShortcutPreference {
         syncRecorderShortcut(for: action)
     }
 
+    static func acceptRecordedShortcut(
+        _ recorded: ShortcutDefinition,
+        previous: ShortcutDefinition,
+        for action: ShortcutAction
+    ) -> String? {
+        if let message = ShortcutPolicy.validationMessage(for: action, key: recorded.key, modifiers: recorded.modifiers) {
+            // The recorder saves its value before it calls validation.
+            restore(previous, for: action)
+            syncRecorderShortcut(for: action)
+            NotificationCenter.default.post(name: .shortcutPreferencesDidChange, object: nil)
+            return message
+        }
+        set(recorded.key, modifiers: recorded.modifiers, for: action)
+        return nil
+    }
+
     static func restore(_ shortcut: ShortcutDefinition, for action: ShortcutAction) {
         let normalizedValue = normalized(shortcut.key, fallback: action.defaultKey)
         let normalizedModifiers = menuModifierFlags(from: shortcut.modifiers)

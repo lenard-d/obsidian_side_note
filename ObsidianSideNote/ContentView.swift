@@ -18,6 +18,11 @@ struct ContentView: View {
     @StateObject private var viewModel: ContentViewModel
     @State private var titleFocusRequestID = 0
     @State private var editorFocusRequestID = 0
+    @State private var propertiesSourceRequestID = 0
+    @State private var noteProperties = NoteProperties()
+    @State private var renameTitle = ""
+    @State private var isRenamingNote = false
+    @State private var isDeletingNote = false
     @FocusState private var isTextEditorFocused: Bool
     @FocusState private var isVaultSearchFocused: Bool
 
@@ -53,6 +58,8 @@ struct ContentView: View {
                             text: $viewModel.noteText,
                             isFocused: $isTextEditorFocused,
                             focusRequestID: $editorFocusRequestID,
+                            properties: $noteProperties,
+                            propertiesSourceRequestID: $propertiesSourceRequestID,
                             cursorEndRequestID: $viewModel.cursorEndRequestID,
                             insertMedia: viewModel.insertMediaLink,
                             focusSearch: focusVaultSearch,
@@ -88,6 +95,11 @@ struct ContentView: View {
         .onDisappear {
             viewModel.stop()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            if let window = notification.object as? NSWindow {
+                viewModel.windowDidBecomeKey(window.windowNumber)
+            }
+        }
         .onExitCommand {
             closeWindow()
         }
@@ -102,6 +114,21 @@ struct ContentView: View {
         }
         .onChange(of: viewModel.vaultSearchQuery) { oldValue, newValue in
             viewModel.searchQueryDidChange()
+        }
+        .alert("Rename file", isPresented: $isRenamingNote) {
+            TextField("Name", text: $renameTitle)
+            Button("Rename") { viewModel.renameCurrentNote(to: renameTitle) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Enter a new file name.")
+        }
+        .alert("Move file to Trash?", isPresented: $isDeletingNote) {
+            Button("Move to Trash", role: .destructive) {
+                if viewModel.trashCurrentNote() { closeWindow() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(viewModel.currentSavedNote?.relativePath ?? "")
         }
     }
 
@@ -129,7 +156,20 @@ struct ContentView: View {
 
     private var header: some View {
         VStack(spacing: 0) {
-            NoteEditorHeader(mode: mode, closeWindow: closeWindow)
+            NoteEditorHeader(
+                mode: mode,
+                hasSavedNote: viewModel.currentSavedNote != nil,
+                properties: noteProperties,
+                editPropertiesSource: { propertiesSourceRequestID += 1 },
+                renameNote: {
+                    renameTitle = viewModel.currentSavedNote?.title ?? ""
+                    isRenamingNote = true
+                },
+                deleteNote: { isDeletingNote = true },
+                copyNoteLink: viewModel.copyCurrentNoteLink,
+                showInFinder: viewModel.showCurrentNoteInFinder,
+                closeWindow: closeWindow
+            )
 
             if mode == .newNote {
                 SelectAllOnFocusTextField(

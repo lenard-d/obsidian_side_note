@@ -15,8 +15,16 @@ enum ShortcutPolicy {
             return "Global shortcuts need Control or Option so they do not steal normal app commands."
         }
 
+        if action.isGlobal, shortcut.modifiers.contains(.shift) {
+            return "Shift is reserved for opening a new window."
+        }
+
         if let conflictingAction = ShortcutAction.allCases.first(where: { otherAction in
-            otherAction != action && ShortcutPreference.definition(for: otherAction) == shortcut
+            guard otherAction != action else { return false }
+            let otherShortcut = ShortcutPreference.definition(for: otherAction)
+            return otherShortcut == shortcut
+                || (otherAction.isGlobal && otherShortcut.addingShift == shortcut)
+                || (action.isGlobal && shortcut.addingShift == otherShortcut)
         }) {
             return "Already used by \(conflictingAction.title)."
         }
